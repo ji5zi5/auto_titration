@@ -1,0 +1,6 @@
+numpy>=1.26
+PyYAML>=6.0
+opencv-python>=4.9
+pyserial>=3.5
+scikit-learn>=1.4
+matplotlib>=3.8

@@ -1,0 +1,547 @@
+package kr.auto.titration.mobile
+
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import android.os.Build
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
+import kr.auto.titration.mobile.thermal.HikmicroNativeBackend
+import kr.auto.titration.mobile.thermal.HikmicroF1Mini2Stream
+import kr.auto.titration.mobile.thermal.HikmicroJnaMini2Stream
+import kr.auto.titration.mobile.thermal.HikmicroMini2ModuleType
+import kr.auto.titration.mobile.thermal.HikmicroTemperatureConversionAttempt
+import kr.auto.titration.mobile.thermal.Mini2RawStreamStatus
+import kr.auto.titration.mobile.thermal.Mini2OfficialRuntimeMode
+import kr.auto.titration.mobile.thermal.NativeLibraryLoadReport
+import kr.auto.titration.mobile.thermal.ThermalRawFrameSummary
+import kr.auto.titration.mobile.thermal.ThermalStatus
+import org.json.JSONArray
+import org.json.JSONObject
+
+private const val MINI2_VENDOR_ID = 0x2bdf
+private const val MINI2_PRODUCT_ID = 0x0102
+private const val USB_PERMISSION_ACTION = "kr.auto.titration.mobile.USB_PERMISSION"
+
+/**
+ * USB host probe for HIKMICRO Mini2 in phone-standalone mode.
+ *
+ * This class reports evidence status only. It may load the private Android
+ * HIKMICRO native libraries and request USB permission, but it must not invent
+ * calibrated Celsius from raw bytes. Until the Android native stream/converter is
+ * live-validated on the target phone, Mini2 frames remain raw_unverified or
+ * blocked and Celsius fields remain blank.
+ */
+class Mini2UsbProbe(private val context: Context) {
+    private val usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val nativeLibraryDir: String = context.applicationInfo.nativeLibraryDir.orEmpty()
+    private val permissionRequests: MutableSet<String> = mutableSetOf()
+    private val knownMini2ProductIds = setOf(
+        HikmicroMini2ModuleType.HIKMICRO_F1_PRODUCT_ID,
+        HikmicroMini2ModuleType.HIKMICRO_F2_PRODUCT_ID_0102,
+        HikmicroMini2ModuleType.HIKMICRO_F2_PRODUCT_ID_0101,
+    )
+    private val stateLock = Any()
+
+    @Volatile
+    private var receiverRegistered = false
+    private var permissionRequestCount = 0
+    private var lastPermissionRequestElapsedMs = 0L
+    private var lastPermissionDecisionElapsedMs = 0L
+    private var lastPermissionDeviceName = ""
+    private var lastPermissionGranted: Boolean? = null
+    private var pendingPermissionDeviceName = ""
+    private var lastUsbEvent = "none"
+    private var lastUsbEventElapsedMs = 0L
+    private var lastUsbEventDeviceName = ""
+
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(receiverContext: Context, intent: Intent) {
+            val action = intent.action.orEmpty()
+            val device = intent.usbDeviceExtra()
+            val elapsedMs = SystemClock.elapsedRealtime()
+            synchronized(stateLock) {
+                lastUsbEvent = action
+                lastUsbEventElapsedMs = elapsedMs
+                lastUsbEventDeviceName = device?.deviceName.orEmpty()
+                when (action) {
+                    USB_PERMISSION_ACTION -> {
+                        lastPermissionGranted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        lastPermissionDecisionElapsedMs = elapsedMs
+                        pendingPermissionDeviceName = ""
+                    }
+                    UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                        if (device != null && HikmicroMini2ModuleType.isHikmicroCandidate(device)) {
+                            permissionRequests.remove(device.deviceName)
+                            lastPermissionGranted = null
+                        }
+                    }
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                        if ((device != null && HikmicroMini2ModuleType.isHikmicroCandidate(device)) || device?.deviceName == pendingPermissionDeviceName) {
+                            permissionRequests.remove(device?.deviceName ?: pendingPermissionDeviceName)
+                            pendingPermissionDeviceName = ""
+                            lastPermissionGranted = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun startMonitoring() {
+        if (receiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(USB_PERMISSION_ACTION)
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        ContextCompat.registerReceiver(
+            context,
+            usbReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        receiverRegistered = true
+    }
+
+    fun stopMonitoring() {
+        if (!receiverRegistered) return
+        try {
+            context.unregisterReceiver(usbReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered by Android lifecycle; status polling can continue safely.
+        } finally {
+            receiverRegistered = false
+        }
+    }
+
+    fun probe(
+        requestPermissionIfMissing: Boolean = true,
+        forcePermissionRequest: Boolean = false,
+        forceNativeLoad: Boolean = false,
+        attemptRawStream: Boolean = false,
+        runtimeMode: Mini2OfficialRuntimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
+    ): JSONObject {
+        val mini2 = findMini2Candidate()
+        val hasPermission = mini2?.let { usbManager.hasPermission(it) } == true
+        val moduleType = mini2?.let { HikmicroMini2ModuleType.classify(it) } ?: HikmicroMini2ModuleType.UNSUPPORTED
+        val routeJson = HikmicroMini2ModuleType.routeJson(mini2)
+        val status = safeProbeStatus(
+            requestPermissionIfMissing = requestPermissionIfMissing,
+            forcePermissionRequest = forcePermissionRequest,
+            forceNativeLoad = forceNativeLoad,
+        )
+        val shouldAttemptNativeLoad = hasPermission || requestPermissionIfMissing
+        val nativeReport = try {
+            if (shouldAttemptNativeLoad) {
+                HikmicroNativeBackend.ensureLibrariesLoaded(
+                    nativeLibraryDir = nativeLibraryDir,
+                    forceRetry = forceNativeLoad,
+                )
+            } else {
+                HikmicroNativeBackend.notAttemptedReport()
+            }
+        } catch (error: Throwable) {
+            HikmicroNativeBackend.notAttemptedReport(
+                note = "native_load_exception ${error.javaClass.simpleName}: ${error.message ?: "no message"}",
+            )
+        }
+        val conversion = HikmicroTemperatureConversionAttempt.describe(
+            loadReport = nativeReport,
+            usbPermissionGranted = hasPermission,
+        )
+        val rawStreamStatus = if (attemptRawStream) {
+            safeRawStreamStatus(mini2, hasPermission, nativeReport, runtimeMode)
+        } else {
+            safePassiveRawStreamStatus(mini2, hasPermission, nativeReport)
+        }
+        val permissionSnapshot = permissionSnapshot(mini2, hasPermission)
+        val currentUsbPresence = currentUsbPresenceJson(
+            mini2 = mini2,
+            hasPermission = hasPermission,
+            status = status,
+            permissionSnapshot = permissionSnapshot,
+            routeJson = routeJson,
+        )
+        val rawStreamJson = rawStreamStatus.toJson()
+        val result = JSONObject()
+            .put("thermal_calibrated", status.calibrated)
+            .put("mini2_vendor_id", String.format("0x%04x", MINI2_VENDOR_ID))
+            .put("mini2_expected_product_id", "0x0140(F1),0x0102(F2),0x0101(F2)")
+            .put("mini2_status", status.state.name.lowercase())
+            .put("mini2_reason", status.reason)
+            .put("thermal_conversion_model", status.conversionModel)
+            .put("thermal_backend", status.backendName)
+            .put("mini2_official_module_type", moduleType.routeName)
+            .put("mini2_selected_backend", moduleType.backendName)
+            .put("mini2_route", routeJson)
+            .put("mini2_route_reason", routeJson.optString("reason"))
+            .put("raw_frame_status", rawStreamStatus.rawStreamStatus)
+            .put("raw_stream_status", rawStreamStatus.rawStreamStatus)
+            .put("temperature_conversion_status", conversion.temperatureStatus)
+            .put("hikmicro_native", nativeReport.toJson())
+            .put("temperature_attempt", conversion.toJson())
+            .put("raw_stream", rawStreamJson)
+            .put("passive_raw_stream", rawStreamJson)
+            .put("current_usb_presence", currentUsbPresence)
+            .put("mini2_runtime_mode", runtimeMode.name)
+            .put("android_native_library_dir", nativeLibraryDir)
+            .put("mini2_devices", devicesJson())
+            .put("mini2_permission_state", permissionSnapshot.optString("mini2_permission_state"))
+            .put("permission_request_count", permissionSnapshot.optInt("permission_request_count"))
+            .put("permission_pending", permissionSnapshot.optBoolean("permission_pending"))
+            .put("last_permission_request_elapsed_ms", permissionSnapshot.optLong("last_permission_request_elapsed_ms"))
+            .put("last_permission_decision_elapsed_ms", permissionSnapshot.optLong("last_permission_decision_elapsed_ms"))
+            .put("last_usb_event", permissionSnapshot.optString("last_usb_event"))
+            .put("last_usb_event_elapsed_ms", permissionSnapshot.optLong("last_usb_event_elapsed_ms"))
+            .put("usb_receiver_registered", permissionSnapshot.optBoolean("usb_receiver_registered"))
+
+        if (attemptRawStream) {
+            result.put("last_stream_attempt", rawStreamJson)
+        } else {
+            result.put("last_stream_attempt", JSONObject.NULL)
+        }
+
+        if (mini2 != null) {
+            result
+                .put("mini2_device_name", mini2.deviceName)
+                .put("mini2_product_id_detected", String.format("0x%04x", mini2.productId))
+                .put("mini2_vendor_id_detected", String.format("0x%04x", mini2.vendorId))
+                .put("mini2_known_product", moduleType.isSupported)
+                .put("mini2_interface_count", mini2.interfaceCount)
+                .put("mini2_usb_permission", hasPermission)
+        }
+        return result
+    }
+
+    fun safeProbeStatus(
+        requestPermissionIfMissing: Boolean = true,
+        forcePermissionRequest: Boolean = false,
+        forceNativeLoad: Boolean = false,
+    ): ThermalStatus {
+        return try {
+            probeStatus(
+                requestPermissionIfMissing = requestPermissionIfMissing,
+                forcePermissionRequest = forcePermissionRequest,
+                forceNativeLoad = forceNativeLoad,
+            )
+        } catch (error: Throwable) {
+            ThermalStatus.blocked("Mini2 status probe failed safely: ${error.javaClass.simpleName}: ${error.message ?: "no message"}")
+        }
+    }
+
+    fun latestRawFrameSummary(): ThermalRawFrameSummary? {
+        return try {
+            val mini2 = findMini2Candidate() ?: return null
+            if (!usbManager.hasPermission(mini2)) return null
+            val moduleType = HikmicroMini2ModuleType.classify(mini2)
+            if (moduleType != HikmicroMini2ModuleType.F2) return null
+            HikmicroJnaMini2Stream.latestRawFrameSummary(mini2)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun latestRawStreamStatus(
+        runtimeMode: Mini2OfficialRuntimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
+    ): Mini2RawStreamStatus? {
+        return try {
+            val mini2 = findMini2Candidate() ?: return null
+            if (!usbManager.hasPermission(mini2)) return null
+            val moduleType = HikmicroMini2ModuleType.classify(mini2)
+            if (moduleType != HikmicroMini2ModuleType.F2) return null
+            HikmicroJnaMini2Stream.peekActiveStatus(mini2, runtimeMode)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun probeStatus(
+        requestPermissionIfMissing: Boolean = true,
+        forcePermissionRequest: Boolean = false,
+        forceNativeLoad: Boolean = false,
+    ): ThermalStatus {
+        val mini2 = findMini2Candidate()
+            ?: return ThermalStatus.blocked("Mini2 USB device not found on Android USB host")
+        val moduleType = HikmicroMini2ModuleType.classify(mini2)
+        if (!moduleType.isSupported) {
+            return ThermalStatus.blocked(HikmicroMini2ModuleType.routeReason(mini2.vendorId, mini2.productId))
+        }
+
+        if (!usbManager.hasPermission(mini2)) {
+            val requested = if (requestPermissionIfMissing) {
+                requestPermissionOnce(mini2, forcePermissionRequest)
+            } else {
+                false
+            }
+            val state = permissionSnapshot(mini2, hasPermission = false).optString("mini2_permission_state")
+            return if (requested) {
+                ThermalStatus.blocked("USB permission requested; waiting for Android grant")
+            } else if (state == "denied") {
+                ThermalStatus.blocked("USB permission denied; tap Mini2 USB 확인 to retry")
+            } else {
+                ThermalStatus.blocked("USB permission pending; waiting for Android grant")
+            }
+        }
+
+        return try {
+            HikmicroNativeBackend.statusForUsbPermission(
+                usbPermissionGranted = true,
+                nativeLibraryDir = nativeLibraryDir,
+                forceRetry = forceNativeLoad,
+                preferredModuleType = moduleType,
+            )
+        } catch (error: Throwable) {
+            ThermalStatus.blocked("Mini2 native library status failed safely: ${error.javaClass.simpleName}: ${error.message ?: "no message"}")
+        }
+    }
+
+    fun findMini2Device(): UsbDevice? = findMini2Candidate()
+
+    fun findMini2Candidate(): UsbDevice? {
+        return usbManager.deviceList.values
+            .filter { device -> HikmicroMini2ModuleType.isHikmicroCandidate(device) }
+            .sortedWith(
+                compareByDescending<UsbDevice> { HikmicroMini2ModuleType.classify(it).isSupported }
+                    .thenByDescending { it.productId in knownMini2ProductIds }
+                    .thenBy { it.deviceName },
+            )
+            .firstOrNull()
+    }
+
+    fun requestPermission(): Boolean {
+        val device = findMini2Candidate() ?: return false
+        return requestPermission(device)
+    }
+
+    fun requestPermission(device: UsbDevice): Boolean {
+        val mutabilityFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            /*
+             * UsbManager.requestPermission returns the grant result by filling
+             * EXTRA_DEVICE and EXTRA_PERMISSION_GRANTED into this PendingIntent.
+             * If it is immutable, Android can deliver our action without those
+             * fill-in extras, which looks exactly like a false denial.
+             */
+            PendingIntent.FLAG_MUTABLE
+        } else {
+            0
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or mutabilityFlag
+        val permissionIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(USB_PERMISSION_ACTION).setPackage(context.packageName),
+            flags,
+        )
+        synchronized(stateLock) {
+            permissionRequestCount += 1
+            lastPermissionRequestElapsedMs = SystemClock.elapsedRealtime()
+            lastPermissionDeviceName = device.deviceName
+            pendingPermissionDeviceName = device.deviceName
+            lastPermissionGranted = null
+        }
+        usbManager.requestPermission(device, permissionIntent)
+        return true
+    }
+
+    private fun requestPermissionOnce(device: UsbDevice, forcePermissionRequest: Boolean = false): Boolean {
+        if (forcePermissionRequest) {
+            permissionRequests.remove(device.deviceName)
+            synchronized(stateLock) {
+                pendingPermissionDeviceName = ""
+                lastPermissionGranted = null
+            }
+        }
+        return if (permissionRequests.add(device.deviceName)) {
+            requestPermission(device)
+        } else {
+            false
+        }
+    }
+
+    private fun rawStreamStatus(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        nativeReport: NativeLibraryLoadReport,
+        runtimeMode: Mini2OfficialRuntimeMode,
+    ): Mini2RawStreamStatus {
+        if (mini2 == null) {
+            return Mini2RawStreamStatus.blockedNativeStream(
+                "Mini2 USB device not found; cannot open official HIKMICRO stream",
+                discovery = "hikmicro_official_stream_blocked_device_not_found",
+            )
+        }
+        if (!hasPermission) {
+            return Mini2RawStreamStatus.blockedUsbPermission("USB permission is required before opening Mini2 raw stream")
+        }
+        val moduleType = HikmicroMini2ModuleType.classify(mini2)
+        if (!moduleType.isSupported) {
+            return Mini2RawStreamStatus.blockedNativeStream(
+                HikmicroMini2ModuleType.routeReason(mini2.vendorId, mini2.productId),
+                discovery = "hikmicro_official_route_unsupported",
+            )
+        }
+        if (!nativeReport.coreLoadedFor(moduleType)) {
+            return Mini2RawStreamStatus.blockedNativeUsbLibrary(
+                nativeReport.coreMissingReasonFor(moduleType).ifBlank { "HIKMICRO ${moduleType.routeName.uppercase()} native core is not loaded" },
+                discovery = "native_symbol_discovery_blocked_by_${moduleType.routeName}_library_load",
+            )
+        }
+        if (moduleType == HikmicroMini2ModuleType.F1) {
+            return HikmicroF1Mini2Stream.ensureStreaming(
+                usbManager = usbManager,
+                device = mini2,
+                nativeLibraryDir = nativeLibraryDir,
+                nativeReport = nativeReport,
+                cacheDirPath = context.cacheDir.absolutePath,
+            )
+        }
+        return HikmicroJnaMini2Stream.ensureStreaming(
+            context = context,
+            usbManager = usbManager,
+            device = mini2,
+            nativeLibraryDir = nativeLibraryDir,
+            nativeReport = nativeReport,
+            runtimeMode = runtimeMode,
+        )
+    }
+
+    private fun safeRawStreamStatus(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        nativeReport: NativeLibraryLoadReport,
+        runtimeMode: Mini2OfficialRuntimeMode,
+    ): Mini2RawStreamStatus {
+        return try {
+            rawStreamStatus(mini2, hasPermission, nativeReport, runtimeMode)
+        } catch (error: Throwable) {
+            Mini2RawStreamStatus.blockedNativeStream(
+                "raw_stream_exception ${error.javaClass.simpleName}: ${error.message ?: "no message"}",
+                discovery = "raw_stream_exception",
+            )
+        }
+    }
+
+    private fun passiveRawStreamStatus(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        nativeReport: NativeLibraryLoadReport,
+    ): Mini2RawStreamStatus {
+        if (mini2 != null && hasPermission) {
+            val moduleType = HikmicroMini2ModuleType.classify(mini2)
+            if (moduleType == HikmicroMini2ModuleType.F2 && nativeReport.coreLoadedFor(moduleType)) {
+                HikmicroJnaMini2Stream.peekActiveStatus(
+                    device = mini2,
+                    runtimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
+                )?.let { return it }
+            }
+        }
+        return Mini2RawStreamStatus.blockedNativeStream(
+            "Mini2 official HCUSBSDK/JNI stream is not started by passive status polling; WebView auto-probe or Mini2 USB 확인 starts one explicit stream probe",
+            discovery = "hikmicro_official_passive_poll_crash_guard",
+        )
+    }
+
+    private fun safePassiveRawStreamStatus(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        nativeReport: NativeLibraryLoadReport,
+    ): Mini2RawStreamStatus {
+        return try {
+            passiveRawStreamStatus(mini2, hasPermission, nativeReport)
+        } catch (error: Throwable) {
+            Mini2RawStreamStatus.blockedNativeStream(
+                "passive_raw_stream_exception ${error.javaClass.simpleName}: ${error.message ?: "no message"}",
+                discovery = "passive_raw_stream_exception",
+            )
+        }
+    }
+
+    private fun currentUsbPresenceJson(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        status: ThermalStatus,
+        permissionSnapshot: JSONObject,
+        routeJson: JSONObject,
+    ): JSONObject = JSONObject()
+        .put("state", status.state.name.lowercase())
+        .put("reason", status.reason)
+        .put("device_present", mini2 != null)
+        .put("has_permission", hasPermission)
+        .put("permission_state", permissionSnapshot.optString("mini2_permission_state"))
+        .put("permission_pending", permissionSnapshot.optBoolean("permission_pending"))
+        .put("last_usb_event", permissionSnapshot.optString("last_usb_event"))
+        .put("last_usb_event_elapsed_ms", permissionSnapshot.optLong("last_usb_event_elapsed_ms"))
+        .put("last_usb_event_device_name", permissionSnapshot.optString("last_usb_event_device_name"))
+        .put("route", routeJson)
+        .put("route_reason", routeJson.optString("reason"))
+        .put("official_module_type", routeJson.optString("module_type"))
+        .put("selected_backend", routeJson.optString("backend"))
+
+    private fun devicesJson(): JSONArray = JSONArray(
+        usbManager.deviceList.values
+            .sortedBy { it.deviceName }
+            .map { device ->
+                JSONObject()
+                    .put("device_name", device.deviceName)
+                    .put("vendor_id", String.format("0x%04x", device.vendorId))
+                    .put("product_id", String.format("0x%04x", device.productId))
+                    .put("official_module_type", HikmicroMini2ModuleType.classify(device).routeName)
+                    .put("selected_backend", HikmicroMini2ModuleType.classify(device).backendName)
+                    .put("route_reason", HikmicroMini2ModuleType.routeReason(device.vendorId, device.productId))
+                    .put("interface_count", device.interfaceCount)
+                    .put("is_hikmicro_vendor", HikmicroMini2ModuleType.isHikmicroCandidate(device))
+                    .put("has_permission", usbManager.hasPermission(device))
+            },
+    )
+
+    private fun permissionSnapshot(device: UsbDevice?, hasPermission: Boolean): JSONObject {
+        synchronized(stateLock) {
+            val pending = pendingPermissionDeviceName.isNotBlank()
+            val permissionState = when {
+                hasPermission -> "granted"
+                lastPermissionGranted == false && lastPermissionDeviceName == device?.deviceName -> "denied"
+                pending -> "requested"
+                device == null -> "device_not_found"
+                else -> "not_requested"
+            }
+            return JSONObject()
+                .put("mini2_permission_state", permissionState)
+                .put("permission_request_count", permissionRequestCount)
+                .put("permission_pending", pending)
+                .put("last_permission_request_elapsed_ms", lastPermissionRequestElapsedMs)
+                .put("last_permission_decision_elapsed_ms", lastPermissionDecisionElapsedMs)
+                .put("last_permission_device_name", lastPermissionDeviceName)
+                .put("pending_permission_device_name", pendingPermissionDeviceName)
+                .put("last_permission_granted", lastPermissionGranted ?: JSONObject.NULL)
+                .put("last_usb_event", lastUsbEvent)
+                .put("last_usb_event_elapsed_ms", lastUsbEventElapsedMs)
+                .put("last_usb_event_device_name", lastUsbEventDeviceName)
+                .put("usb_receiver_registered", receiverRegistered)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.usbDeviceExtra(): UsbDevice? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        } else {
+            getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        }
+    }
+
+    /** Legacy compatibility for older mobile-frame protocol tests. */
+    fun attachThermalFields(frame: JSONObject): JSONObject {
+        val evidence = probe(requestPermissionIfMissing = false)
+        frame.put("thermal_calibrated", false)
+        frame.put("thermal_status", evidence.optString("mini2_status", "blocked"))
+        frame.put("thermal_raw_status", evidence.optString("mini2_status", "blocked"))
+        frame.put("thermal_raw_note", evidence.optString("mini2_reason", "Mini2 not calibrated"))
+        frame.put("mini2", evidence)
+        return frame
+    }
+}

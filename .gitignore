@@ -1,0 +1,54 @@
+__pycache__/
+*.py[cod]
+.venv/
+.venv-*/
+.tools/
+.arduino-cli/
+.omx/
+_workspace/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+*.tmp
+
+# Build and release outputs.
+dist/
+*.zip
+*.apk
+*.exe
+website/live/*
+!website/live/.gitkeep
+
+# Local ad-hoc screenshots and experiment exports.
+1.jpg
+2.jpg
+image.png
+auto-titration-live-*.csv
+오류모음/
+머신러닝용 파일모음/
+
+# Keep only app-required data fixtures, constants, and compact trained model JSONs.
+data/*
+!data/raw/
+data/raw/*
+!data/raw/.gitkeep
+!data/labeled/
+data/labeled/*
+!data/labeled/.gitkeep
+!data/labeled/*.json
+!data/fixtures/
+!data/fixtures/**
+!data/chemistry_constants/
+!data/chemistry_constants/**
+
+# Local cleanup/quarantine area.
+trash/
+
+# Large/generated Mini2 reverse-engineering artifacts.
+data/hik_memory_dump/
+data/hik_memory_dump_scan/
+data/hik_image_ptrs/
+data/reverse/
+data/mini2_formula_research/
+data/trace_confirm_*.json

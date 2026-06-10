@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- HIKMICRO Mini2/Mini2 V2: keep Android attach routing vendor-tolerant because product IDs vary by firmware/USB mode. -->
+    <usb-device vendor-id="11231" />
+    <usb-device vendor-id="8367" />
+</resources>

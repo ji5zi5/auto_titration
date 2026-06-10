@@ -1,0 +1,64 @@
+experiment:
+  experiment_id: demo-strong-acid-strong-base
+  titration_type: strong_acid_strong_base
+  sample_name: HCl
+  sample_concentration_M: 0.1
+  sample_volume_ml: 10.0
+  sample_valence: 1
+  titrant_name: NaOH
+  titrant_concentration_M: 0.1
+  titrant_valence: 1
+  indicator: phenolphthalein
+
+visible_camera:
+  device_index: 0
+  width: 1280
+  height: 720
+  roi:
+    x: 420
+    y: 220
+    width: 260
+    height: 260
+
+thermal_camera:
+  enabled: true
+  # Probe result: Mini2 V2 is readable on index 1 with ANY/MSMF, but DSHOW is blank.
+  device_index: 1
+  backend: msmf
+  width: null
+  height: null
+  roi: auto
+
+pump:
+  # Metadata/calibration section only for the status-only collector.
+  # The camera collection app does not send RUN_RATE/STOP commands.
+  enabled: false
+  mode: dry_run
+  port: null
+  baudrate: 115200
+  ml_per_step: 0.005
+  max_volume_ml: 100.0
+  max_rate_ml_per_s: 0.5
+  max_steps: 1000000
+  run_rate_ml_per_s: null
+  # Temporary estimate for data collection. Replace after water calibration.
+  estimated_ml_per_second: 0.05
+
+collection:
+  sample_interval_s: 0.2
+  # Set to null for continuous collection until Ctrl+C.
+  max_frames: null
+
+output:
+  directory: data/raw
+  filename: null
+
+analysis:
+  operational_mode: live_color_plus_palette
+  # Acquisition/display may target about 25 fps where hardware allows.
+  target_capture_fps: 25
+  # Status/reanalysis is intentionally slower and configurable.
+  status_update_hz: 2
+  retrospective_window_s: 15
+  no_auto_stop: true
+  store_full_thermal_matrices: false

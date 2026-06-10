@@ -1,0 +1,32 @@
+[포스터용 머신러닝 설명]
+
+본 연구에서는 실제 적정 중 얻을 수 있는 주입량, HSV 색 변화, ROI 온도 변화를 이용해 당량점 부피를 예측하였다. 학습 단계에서는 이론 당량점 부피를 기준으로 각 프레임을 당량점 부근과 비부근으로 라벨링하였고, 실제 예측 단계에서는 이론 당량점 정보를 입력하지 않고 센서값만 사용하였다.
+
+산과 염기의 세기에 따라 색 변화와 중화열 변화 양상이 달라지므로, 하나의 통합 모델이 아니라 적정 종류별 모델을 적용하였다. Random Forest와 Extra Trees 분류 모델로 당량점 부근 프레임을 찾고, 점수가 높은 프레임들의 주입량을 종합하여 최종 당량점 부피를 산출하였다.
+
+[포스터용 결과 문장]
+
+단일 통합 모델의 평균 상대오차는 6.03%였으나, 적정 종류별 모델을 적용하였을 때 평균 상대오차는 1.27%, 평균 절대오차는 0.392 mL로 감소하였다. 이는 적정 종류에 따라 다른 색 변화와 온도 변화 패턴을 구분해 학습하는 방식이 당량점 예측에 효과적임을 보여준다.
+
+[사용한 모델]
+
+강산-강염기: Extra Trees 기반 프레임 분류 모델
+강산-약염기: Extra Trees 기반 프레임 분류 모델
+약산-강염기: Random Forest 기반 프레임 분류 모델
+약산-약염기: Extra Trees 기반 프레임 분류 모델
+
+[주의 문장]
+
+현재 결과는 총 12개 CSV를 바탕으로 한 결과이며, 적정 종류별 데이터 수가 3개씩으로 제한되어 있다. 따라서 실제 적용 가능성은 확인하였지만, 더 많은 반복 실험을 통해 모델의 일반화 성능을 추가로 검증할 필요가 있다.
+
+[그래프 파일]
+
+docs/poster_assets/ml_01_model_comparison.png
+docs/poster_assets/ml_02_typewise_mape.png
+docs/poster_assets/ml_03_actual_vs_predicted.png
+docs/poster_assets/ml_04_prediction_workflow.png
+docs/poster_assets/ml_05_method_family_comparison.png
+docs/poster_assets/ml_06_regression_algorithm_comparison.png
+docs/poster_assets/ml_07_run_error_by_condition.png
+docs/poster_assets/ml_08_sensor_curves_by_type.png
+docs/poster_assets/ml_09_selected_model_by_type.png

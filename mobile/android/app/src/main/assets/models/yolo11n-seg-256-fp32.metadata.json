@@ -1,0 +1,33 @@
+{
+  "asset_path": "models/yolo11n-seg-256-fp32.tflite",
+  "sha256": "cd5d5e71804ee40747750d61d17f67c6bfb8cc4391773dac5288a9397f41d22e",
+  "source_model": "yolo11n-seg.pt",
+  "source_model_sha256": "55ed65c56c91713d23e8402371c6c49a6fd84f257f7dce452e8d70e41dcbe152",
+  "export_command": "yolo export model=yolo11n-seg.pt format=tflite imgsz=256 nms=False half=False int8=False",
+  "input_size": 256,
+  "accepted_classes": [
+    "cup",
+    "bottle",
+    "wine glass",
+    "bowl",
+    "vase",
+    "beaker",
+    "flask",
+    "glass",
+    "container"
+  ],
+  "model_class_count": 80,
+  "runtime": "Google AI Edge LiteRT",
+  "litert_version": "2.1.5",
+  "output_tensor_contract": {
+    "detection_tensor": "(batch, 4 + classes + mask_dim, predictions) actual export observed (1, 116, 1344)",
+    "prototype_tensor": "(batch, mask_dim, proto_h, proto_w) exported TFLite endpoint observed (1, 64, 64, 32)",
+    "mask_dim": 32,
+    "predictions": 1344,
+    "classes": 80,
+    "nms": "False"
+  },
+  "placeholder_model": false,
+  "export_artifact": ".omx/model-export/yolo11n-seg_saved_model/yolo11n-seg_float32.tflite",
+  "parity_policy": "YOLO success allowed only after runtime loads this asset and tensor contract validates; no luma/center fallback."
+}

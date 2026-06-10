@@ -1,0 +1,6 @@
+﻿model,poster_label,mape_percent,mae_ml,rmse_ml,variant,method_key
+extra_trees_leaf3,Extra Trees leaf=3,6.029798,2.012708,3.059868,all_types:window0.15:top40,frame_zone_classifier:extra_trees_leaf3:all_types:window0.15:top40
+random_forest,Random Forest,7.018768,2.174935,2.80026,window0.4:top60,frame_zone_classifier:random_forest:window0.4:top60
+logistic,Logistic Regression,8.931924,2.388108,3.145199,all_types:window0.15:top100,frame_zone_classifier:logistic:all_types:window0.15:top100
+extra_trees,Extra Trees,9.641854,2.709609,3.786766,all_types:window0.15:weighted_median_top20,frame_zone_classifier:extra_trees:all_types:window0.15:weighted_median_top20
+gradient_boosting,Gradient Boosting,12.752698,3.86048,5.20905,all_types:window0.16:median_top40,frame_zone_classifier:gradient_boosting:all_types:window0.16:median_top40
