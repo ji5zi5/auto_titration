@@ -71,13 +71,14 @@ def write_quick_start() -> None:
 
 1. AutoTitration.exe를 더블클릭한다.
 2. 브라우저가 자동으로 열리면 일반 카메라, Mini2, 펌프 상태를 확인한다.
-3. 처음 실행 시 Python 패키지 설치 때문에 시간이 걸릴 수 있다.
+3. 처음 실행 시 필요한 Python 패키지를 자동 설치하므로 시간이 걸릴 수 있다.
 4. Arduino를 나중에 꽂아도 앱이 자동 재연결을 시도한다.
 5. Arduino가 없어도 녹화와 CSV 저장은 가능하다.
 
 필요 조건
 - Windows
 - Python 3 설치
+- 첫 실행 시 패키지 설치를 위한 인터넷 연결 권장
 - Mini2 온도 변환용 vendor/hikmicro_analyzer DLL 폴더 포함
 - 펌프 사용 시 Arduino USB 연결 및 IDE 시리얼 모니터 종료
 """
@@ -85,11 +86,15 @@ def write_quick_start() -> None:
 
 
 def main() -> int:
+    global PACKAGE_DIR
+
     exe = RELEASE_DIR / "AutoTitration.exe"
     if not exe.exists():
         print(f"missing launcher exe: {exe}", file=sys.stderr)
         return 2
 
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    PACKAGE_DIR = RELEASE_DIR / f"auto_titration_windows_stage_{stamp}"
     if PACKAGE_DIR.exists():
         shutil.rmtree(PACKAGE_DIR)
     PACKAGE_DIR.mkdir(parents=True)
@@ -100,7 +105,6 @@ def main() -> int:
     (PACKAGE_DIR / "data" / "raw").mkdir(parents=True, exist_ok=True)
     write_quick_start()
 
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     archive_base = RELEASE_DIR / f"auto-titration-windows-{stamp}"
     archive_path = shutil.make_archive(str(archive_base), "zip", PACKAGE_DIR)
     print(archive_path)

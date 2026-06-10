@@ -28,6 +28,35 @@ if "%AUTO_FRAMES%"=="" set "AUTO_FRAMES=999999"
 if "%CLEAN_OLD%"=="" set "CLEAN_OLD=1"
 if "%VISIBLE_ROI_DETECTOR%"=="" set "VISIBLE_ROI_DETECTOR=yolo"
 if "%AUTO_INSTALL_YOLO%"=="" set "AUTO_INSTALL_YOLO=1"
+if "%AUTO_INSTALL_REQUIREMENTS%"=="" set "AUTO_INSTALL_REQUIREMENTS=1"
+
+if /I not "%AUTO_INSTALL_REQUIREMENTS%"=="0" (
+  echo Checking Python dependencies...
+  %PYTHON_CMD% -c "import cv2, numpy, serial, sklearn, yaml" >nul 2>nul
+  if errorlevel 1 (
+    echo Installing required Python packages. First run can take several minutes...
+    %PYTHON_CMD% -m pip install -r requirements.txt
+    if errorlevel 1 (
+      echo Python package install failed. Check internet connection and Python/pip installation.
+      pause
+      exit /b 1
+    )
+  )
+)
+
+if /I "%VISIBLE_ROI_DETECTOR%"=="yolo" if not "%AUTO_INSTALL_YOLO%"=="0" (
+  echo Checking optional YOLO dependency...
+  %PYTHON_CMD% -c "import ultralytics" >nul 2>nul
+  if errorlevel 1 (
+    echo Installing optional YOLO package. This can take several minutes...
+    %PYTHON_CMD% -m pip install -r requirements-yolo.txt
+    if errorlevel 1 (
+      echo YOLO install failed. The app can still run if VISIBLE_ROI_DETECTOR is changed from yolo.
+      pause
+      exit /b 1
+    )
+  )
+)
 
 if /I not "%CLEAN_OLD%"=="0" (
   echo Closing old Auto Titration server/collector processes for this folder...
