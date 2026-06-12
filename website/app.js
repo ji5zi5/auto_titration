@@ -497,10 +497,19 @@ function csvPredictedPh(csv) {
   return predictedEquivalencePhFromCsv(csv);
 }
 
+function predictionSourceLabel(csv) {
+  const source = String(csv?.predicted_equivalence_source || '').trim();
+  if (source === 'ml_json_regression_model') return '모델 예측';
+  if (source === 'live_feature_peak_estimator') return '센서 peak 추정';
+  if (source) return source;
+  return '';
+}
+
 function updateConcentrationModePreview(csv = latestCsvStatus) {
   const predictedVolume = parseFiniteNumber(csv?.predicted_equivalence_volume_ml);
   const concentration = parseFiniteNumber(csv?.sample_concentration_from_predicted_equivalence_M);
   const ph = csvPredictedPh(csv);
+  const sourceLabel = predictionSourceLabel(csv);
 
   setText('calcPredictedEquivalenceValue', formatMl(predictedVolume, 3));
   setText('calcSampleConcentrationValue', formatMolar(concentration, 5));
@@ -509,7 +518,8 @@ function updateConcentrationModePreview(csv = latestCsvStatus) {
 
   if (Number.isFinite(predictedVolume) && Number.isFinite(concentration)) {
     const warning = csv?.predicted_equivalence_pH_warning ? ` · ${csv.predicted_equivalence_pH_warning}` : '';
-    setText('calcModeStatus', warning ? `계산 완료${warning}` : '계산 완료');
+    const prefix = sourceLabel ? `${sourceLabel} 완료` : '예측 계산 완료';
+    setText('calcModeStatus', warning ? `${prefix}${warning}` : prefix);
   } else if (csv?.state === 'recording' || csv?.recording) {
     setText('calcModeStatus', '녹화 중 · 종료하면 자동 계산');
   } else if (csv?.state === 'stopped') {
@@ -527,14 +537,10 @@ function updateConcentrationCalculationPreview({ writeTheory = true } = {}) {
       const theoryInput = $('theoryEquivalenceInput');
       if (theoryInput) theoryInput.value = calculatedTheory.toFixed(2);
     }
-    const concentrationFromTheory = calculateSampleConcentrationM({
-      ...chemistry,
-      titrantVolumeMl: Number($('theoryEquivalenceInput')?.value || calculatedTheory),
-    });
-    setText('calculatedConcentrationValue', formatMolar(concentrationFromTheory));
+    setText('calculatedConcentrationValue', '-');
     const label = $('calculatedConcentrationValue');
     if (label) {
-      label.title = `nMV=n'M'V' · 이론 당량점 ${formatMl(calculatedTheory, 2)}`;
+      label.title = `예측 농도 대기 · 이론 당량점 검산값 ${formatMl(calculatedTheory, 2)}`;
     }
   } else {
     setText('calculatedConcentrationValue', '-');
@@ -655,20 +661,19 @@ function applyCsvStatus(csv) {
     if (label) {
       const predictedVolume = parseFiniteNumber(csv.predicted_equivalence_volume_ml);
       const error = parseFiniteNumber(csv.predicted_sample_concentration_error_percent);
-      const bits = ['예측 당량점'];
+      const bits = [predictionSourceLabel(csv) || '예측 당량점'];
       if (Number.isFinite(predictedVolume)) bits.push(`Veq ${formatMl(predictedVolume, 3)}`);
       if (Number.isFinite(error)) bits.push(`입력 농도 대비 ${error >= 0 ? '+' : ''}${error.toFixed(2)}%`);
       label.title = bits.join(' · ');
     }
-  } else if (hasFiniteNumber(csv.sample_concentration_from_injected_M)) {
-    setText('calculatedConcentrationValue', formatMolar(csv.sample_concentration_from_injected_M));
+  } else {
+    setText('calculatedConcentrationValue', '-');
     const label = $('calculatedConcentrationValue');
     if (label) {
-      const error = parseFiniteNumber(csv.sample_concentration_error_percent);
-      label.title = Number.isFinite(error) ? `현재 주입량 역산 · 입력 농도 대비 ${error >= 0 ? '+' : ''}${error.toFixed(2)}%` : "현재 주입량 역산 농도";
+      label.title = hasFiniteNumber(csv.sample_concentration_from_injected_M)
+        ? '예측 농도 대기 · 현재 주입량 역산값은 최종 농도 표시에서 제외'
+        : '예측 농도 대기';
     }
-  } else {
-    updateConcentrationCalculationPreview({ writeTheory: false });
   }
   updateConcentrationModePreview(csv);
   setText('equivalenceDistanceValue', formatMl(csv.distance_to_equivalence_ml));
