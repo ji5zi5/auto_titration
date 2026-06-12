@@ -21,6 +21,7 @@ import io
 import importlib
 import json
 import os
+import pickle
 import queue
 import sys
 import threading
@@ -47,6 +48,7 @@ from auto_titrator.data_schema import DEFAULT_COLUMNS  # noqa: E402
 from auto_titrator.equivalence_analysis import estimate_equivalence_point  # noqa: E402
 from auto_titrator.ml_features import derive_ml_features  # noqa: E402
 from auto_titrator.ml_predict import load_optional_model, predict_row  # noqa: E402
+from auto_titrator.typewise_live_model import load_typewise_model, predict_typewise_equivalence  # noqa: E402
 from auto_titrator.feature_history import FeatureSample  # noqa: E402
 from auto_titrator.live_app import classify_status  # noqa: E402
 from auto_titrator.mobile_bridge import MobileBridge, MobileBridgeError  # noqa: E402
@@ -135,7 +137,42 @@ CSV_START_METADATA_KEYS = frozenset(
 )
 
 REJECTED_YOLO_VISIBLE_CLASSES = frozenset({"person", "face", "hand"})
-DEFAULT_LIVE_ML_MODEL = ROOT / "data" / "labeled" / "theory-equivalence-holdout-session16-model.json"
+DEFAULT_LIVE_ML_MODEL = ""
+DEFAULT_TYPEWISE_LIVE_ML_MODEL = ROOT / "data" / "labeled" / "typewise-current-volume-classifier.pkl"
+
+# These columns are valid for CSV audit/diagnostics, but must never be inputs to
+# a live prediction model.  Several of them directly encode the user's typed
+# concentration, the calculated theoretical equivalence point, or a label made
+# from that theoretical value.  Loading such a model made the dashboard show the
+# theory value as if it were an ML prediction.
+LIVE_ML_FORBIDDEN_FEATURE_COLUMNS = frozenset(
+    {
+        "sample_concentration_M",
+        "sample_concentration_from_theoretical_equivalence_M",
+        "sample_concentration_from_predicted_equivalence_M",
+        "calculated_theoretical_equivalence_volume_ml",
+        "theoretical_equivalence_volume_ml",
+        "theoretical_equivalence_time_s",
+        "theoretical_equivalence_pH",
+        "distance_to_equivalence_ml",
+        "time_to_equivalence_s",
+        "equivalence_window_label",
+        "equivalence_window_ml",
+        "sample_concentration_error_percent",
+        "predicted_sample_concentration_error_percent",
+        "actual_equivalence_volume_ml",
+        "reference_equivalence_volume_ml",
+        "candidate_error_ml",
+        "candidate_abs_error_ml",
+        "is_good_candidate",
+        "zone_label",
+        "progress",
+        "candidate_fraction_of_run",
+        "run_volume_max_ml",
+        "run_duration_s",
+        "row_count",
+    }
+)
 class Mini2PartsReader(Protocol):
     def read_frame_parts(self): ...
 
@@ -1169,9 +1206,16 @@ def build_pump_timeline_fields(
 class LiveCsvBuffer:
     """Thread-safe scalar CSV buffer exposed to the browser for ML training data."""
 
-    def __init__(self, *, output_path: str | Path, prediction_model: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        output_path: str | Path,
+        prediction_model: dict[str, Any] | None = None,
+        typewise_prediction_model: dict[str, Any] | None = None,
+    ) -> None:
         self.output_path = Path(output_path)
         self._prediction_model = prediction_model
+        self._typewise_prediction_model = typewise_prediction_model
         self._condition = threading.Condition()
         self._rows: list[dict[str, Any]] = []
         self._fieldnames: list[str] = []
@@ -1279,7 +1323,7 @@ class LiveCsvBuffer:
             injected_volume_ml=float(volume),
             visible_features=visible_features,
             thermal_features=thermal_features,
-            status_label=str(row.get("status_label") or row.get("equivalence_window_label") or "unknown"),
+            status_label=str(row.get("status_label") or "unknown"),
             status_confidence=float(_finite_float_or_none(row.get("status_confidence")) or 0.0),
             source_quality=str(row.get("source_quality") or "live_csv"),
             warnings=warnings,
@@ -1287,6 +1331,34 @@ class LiveCsvBuffer:
 
     def _refresh_fieldnames_locked(self) -> None:
         self._fieldnames = csv_fieldnames_for_rows(self._rows) if self._rows else list(DEFAULT_COLUMNS)
+
+    def _apply_typewise_prediction_model_locked(self) -> bool:
+        if self._typewise_prediction_model is None or not self._rows:
+            return False
+        titration_type = str(
+            self._experiment_metadata.get("titration_type")
+            or self._rows[-1].get("titration_type")
+            or "strong_acid_strong_base"
+        )
+        try:
+            predicted = predict_typewise_equivalence(self._typewise_prediction_model, self._rows, titration_type)
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            print(f"Warning: typewise live ML prediction failed; using fallback. Reason: {exc}", flush=True)
+            return False
+        predicted_volume = _finite_float_or_none(predicted.get("predicted_equivalence_volume_ml"))
+        if predicted_volume is None or predicted_volume <= 0:
+            return False
+        candidate_index = predicted.pop("candidate_index", None)
+        if candidate_index is None:
+            target = self._rows[-1]
+        else:
+            target = self._rows[max(0, min(int(candidate_index), len(self._rows) - 1))]
+        target.update({key: value for key, value in predicted.items() if key != "model_key"})
+        if predicted.get("model_key"):
+            target["predicted_equivalence_model_key"] = predicted["model_key"]
+        target.update(_predicted_result_fields_from_row(target, self._experiment_metadata))
+        self._refresh_fieldnames_locked()
+        return True
 
     def _apply_prediction_model_locked(self) -> bool:
         if self._prediction_model is None or not self._rows:
@@ -1308,6 +1380,8 @@ class LiveCsvBuffer:
 
     def _finalize_predicted_equivalence_locked(self) -> None:
         if any(_finite_float_or_none(row.get("predicted_equivalence_volume_ml")) is not None for row in self._rows):
+            return
+        if self._apply_typewise_prediction_model_locked():
             return
         if self._apply_prediction_model_locked():
             return
@@ -1411,6 +1485,7 @@ class LiveCsvBuffer:
             "predicted_equivalence_confidence",
             "predicted_equivalence_source",
             "predicted_equivalence_evidence",
+            "predicted_equivalence_model_key",
         )
         for row in reversed(self._rows):
             if _finite_float_or_none(row.get("predicted_equivalence_volume_ml")) is None:
@@ -5142,9 +5217,32 @@ def load_live_prediction_model(path: Any) -> dict[str, Any] | None:
     if not raw:
         return None
     try:
-        return load_optional_model(raw)
+        model = load_optional_model(raw)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"Warning: live ML model unavailable; using peak fallback. Reason: {exc}", flush=True)
+        return None
+    if model is None:
+        return None
+    feature_columns = {str(column) for column in model.get("feature_columns", [])}
+    offenders = sorted(feature_columns & LIVE_ML_FORBIDDEN_FEATURE_COLUMNS)
+    if offenders:
+        print(
+            "Warning: live ML model rejected because it uses label/theory leakage columns; "
+            f"using typewise/peak fallback. Columns: {', '.join(offenders[:12])}",
+            flush=True,
+        )
+        return None
+    return model
+
+
+def load_typewise_live_prediction_model(path: Any) -> dict[str, Any] | None:
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    try:
+        return load_typewise_model(raw)
+    except (OSError, ValueError, AttributeError, pickle.UnpicklingError, ImportError) as exc:
+        print(f"Warning: typewise live ML model unavailable; using regression/peak fallback. Reason: {exc}", flush=True)
         return None
 
 
@@ -5195,8 +5293,15 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    typewise_prediction_model = load_typewise_live_prediction_model(
+        getattr(args, "typewise_ml_model", DEFAULT_TYPEWISE_LIVE_ML_MODEL)
+    )
     prediction_model = load_live_prediction_model(getattr(args, "ml_model", DEFAULT_LIVE_ML_MODEL))
-    live_csv_buffer = LiveCsvBuffer(output_path=output, prediction_model=prediction_model)
+    live_csv_buffer = LiveCsvBuffer(
+        output_path=output,
+        prediction_model=prediction_model,
+        typewise_prediction_model=typewise_prediction_model,
+    )
     color_extractor = ColorFeatureExtractor()
     visible_roi_detector = str(getattr(args, "visible_roi_detector", "yolo")).strip().lower()
     live_stream_port = int(getattr(args, "live_stream_port", 0) or 0)
@@ -6292,6 +6397,7 @@ def build_live_payload(
         "predicted_equivalence_confidence": _json_float(row.get("predicted_equivalence_confidence")),
         "predicted_equivalence_source": row.get("predicted_equivalence_source", ""),
         "predicted_equivalence_evidence": row.get("predicted_equivalence_evidence", ""),
+        "predicted_equivalence_model_key": row.get("predicted_equivalence_model_key", ""),
         "thermal_mode": thermal_features.get("thermal_source", ""),
         "thermal_calibrated": thermal_calibrated,
         "thermal_conversion_status": thermal_conversion_status,
@@ -6428,6 +6534,7 @@ def build_live_payload(
             "predicted_equivalence_confidence",
             "predicted_equivalence_source",
             "predicted_equivalence_evidence",
+            "predicted_equivalence_model_key",
             "indicator_endpoint_volume_ml",
             "indicator_endpoint_offset_ml",
             "standard_solution_uncertainty_note",
@@ -6590,7 +6697,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--metadata-jpeg", default=default_metadata_jpeg())
     parser.add_argument("--dll-dir", default=default_dll_dir())
     parser.add_argument("--output", default=str(ROOT / "data" / "raw" / "windows-live-mini2-visible.csv"))
-    parser.add_argument("--ml-model", default=str(DEFAULT_LIVE_ML_MODEL), help="saved JSON equivalence model used at CSV stop before live peak fallback; empty disables")
+    parser.add_argument(
+        "--typewise-ml-model",
+        default=str(DEFAULT_TYPEWISE_LIVE_ML_MODEL),
+        help="trusted sklearn typewise classifier artifact used at CSV stop; empty disables",
+    )
+    parser.add_argument(
+        "--ml-model",
+        default=str(DEFAULT_LIVE_ML_MODEL),
+        help="legacy simple JSON regression model used only after leakage safety checks; empty disables",
+    )
     parser.add_argument("--stream-every", type=int, default=5, help="rewrite output CSV every N rows so the dashboard can poll it live; 0 disables")
     parser.add_argument("--preview-dir", default=str(ROOT / "website" / "live"), help="write latest visible.bmp and thermal.json for the web app; empty disables")
     parser.add_argument("--preview-every", type=int, default=5, help="rewrite live preview files every N rows; 0 disables")

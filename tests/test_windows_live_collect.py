@@ -333,6 +333,50 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertIn('set "LIVE_STREAM_JPEG_QUALITY=60"', launcher)
         self.assertIn('set "ROI_CLICK_ENABLED=1"', launcher)
 
+    def test_default_legacy_json_model_is_disabled(self):
+        self.assertEqual(windows_live_collect.DEFAULT_LIVE_ML_MODEL, "")
+
+    def test_live_prediction_model_rejects_theory_leakage_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "leaky-model.json"
+            model_path.write_text(
+                json.dumps(
+                    {
+                        "model_type": "linear_regression_v1",
+                        "feature_columns": ["sample_concentration_M", "visible_color_delta"],
+                        "target_column": "theoretical_equivalence_volume_ml",
+                        "bias": 0.0,
+                        "weights": [200.0, 0.1],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            model = windows_live_collect.load_live_prediction_model(model_path)
+
+        self.assertIsNone(model)
+
+    def test_live_prediction_model_accepts_sensor_only_json_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "sensor-model.json"
+            model_path.write_text(
+                json.dumps(
+                    {
+                        "model_type": "linear_regression_v1",
+                        "feature_columns": ["visible_color_delta", "thermal_roi_avg"],
+                        "target_column": "reference_equivalence_volume_ml",
+                        "bias": 1.0,
+                        "weights": [2.0, 0.01],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            model = windows_live_collect.load_live_prediction_model(model_path)
+
+        self.assertIsNotNone(model)
+        self.assertEqual(model["feature_columns"], ["visible_color_delta", "thermal_roi_avg"])
+
     def test_main_allows_roi_processing_to_fallback_when_converter_files_are_missing(self):
         seen = {}
 
@@ -1511,6 +1555,75 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(predicted_rows[0]["predicted_equivalence_volume_ml"], "10.0")
         self.assertEqual(predicted_rows[0]["sample_concentration_from_predicted_equivalence_M"], "0.1")
         self.assertEqual(predicted_rows[0]["predicted_equivalence_pH"], "7.0")
+
+    def test_live_csv_buffer_prefers_typewise_classifier_before_peak_fallback(self):
+        class FakeTypewiseEstimator:
+            classes_ = [0, 1]
+
+            def predict_proba(self, features):
+                scores = np.array([float(row.get("visible_color_delta") or 0.0) for row in features], dtype=float)
+                if scores.max() > 0:
+                    scores = scores / scores.max()
+                return np.column_stack([1.0 - scores, scores])
+
+        model = {
+            "artifact_type": "typewise_frame_zone_classifier_v1",
+            "feature_columns": ["injected_volume_ml", "visible_color_delta", "titration_type"],
+            "categorical_columns": ["titration_type"],
+            "models": {
+                "strong_acid_strong_base": {
+                    "estimator": FakeTypewiseEstimator(),
+                    "model_name": "fake_extra_trees",
+                    "window_ml": 0.3,
+                    "aggregate_mode": "top1",
+                    "development_mape_percent": 0.47,
+                    "selected_method_key": "fake:typewise",
+                }
+            },
+        }
+        buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv"),
+            typewise_prediction_model=model,
+        )
+        buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            theoretical_equivalence_volume_ml=10.0,
+            started_monotonic_s=100.0,
+            started_epoch_s=200.0,
+            experiment_metadata={
+                "titration_type": "strong_acid_strong_base",
+                "sample_concentration_M": 0.1,
+                "sample_volume_ml": 10.0,
+                "sample_valence": 1,
+                "titrant_concentration_M": 0.1,
+                "titrant_valence": 1,
+            },
+        )
+        for index, volume, color_delta in [
+            (1, 8.0, 0.1),
+            (2, 10.0, 1.0),
+            (3, 12.0, 0.2),
+        ]:
+            buffer.add(
+                {
+                    "frame_id": index,
+                    "time_s": float(index),
+                    "injected_volume_ml": volume,
+                    "visible_color_delta": color_delta,
+                    "titration_type": "strong_acid_strong_base",
+                },
+                now_monotonic_s=100.0 + volume,
+            )
+
+        stopped = buffer.stop_recording()
+        rows = list(csv.DictReader(io.StringIO(buffer.to_csv_bytes().decode("utf-8-sig"))))
+        predicted_rows = [row for row in rows if row.get("predicted_equivalence_volume_ml")]
+
+        self.assertEqual(stopped["predicted_equivalence_source"], "typewise_frame_zone_classifier")
+        self.assertEqual(stopped["predicted_equivalence_volume_ml"], 10.0)
+        self.assertEqual(stopped["sample_concentration_from_predicted_equivalence_M"], 0.1)
+        self.assertEqual(len(predicted_rows), 1)
+        self.assertEqual(predicted_rows[0]["predicted_equivalence_model_key"], "fake:typewise")
 
     def test_live_csv_buffer_records_experiment_metadata_from_start_payload(self):
         buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))

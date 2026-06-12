@@ -499,6 +499,7 @@ function csvPredictedPh(csv) {
 
 function predictionSourceLabel(csv) {
   const source = String(csv?.predicted_equivalence_source || '').trim();
+  if (source === 'typewise_frame_zone_classifier') return '적정 종류별 분류 모델';
   if (source === 'ml_json_regression_model') return '모델 예측';
   if (source === 'live_feature_peak_estimator') return '센서 peak 추정';
   if (source) return source;
@@ -664,6 +665,7 @@ function applyCsvStatus(csv) {
       const bits = [predictionSourceLabel(csv) || '예측 당량점'];
       if (Number.isFinite(predictedVolume)) bits.push(`Veq ${formatMl(predictedVolume, 3)}`);
       if (Number.isFinite(error)) bits.push(`입력 농도 대비 ${error >= 0 ? '+' : ''}${error.toFixed(2)}%`);
+      if (csv.predicted_equivalence_model_key) bits.push(String(csv.predicted_equivalence_model_key));
       label.title = bits.join(' · ');
     }
   } else {

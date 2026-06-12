@@ -37,6 +37,7 @@ data/raw/*
 data/labeled/*
 !data/labeled/.gitkeep
 !data/labeled/*.json
+!data/labeled/*.pkl
 !data/fixtures/
 !data/fixtures/**
 !data/chemistry_constants/
