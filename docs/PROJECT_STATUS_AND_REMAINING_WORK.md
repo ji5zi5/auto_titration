@@ -173,6 +173,67 @@ MicroTA_Release_x64.dll
 libusb-1.0.dll
 ```
 
+
+## 3.2.1 Mini2 온도 분석 경로 분류
+
+온도 분석은 두 단계로 나눈다.
+
+1. Mini2 raw frame을 섭씨 온도 행렬로 변환한다.
+2. 변환된 256x192 온도 행렬에서 ROI/전체 행렬 통계를 뽑아 CSV와 ML feature로 저장한다.
+
+현재 Windows 본경로:
+
+```text
+Mini2 UVC 256x344 raw frame
+→ upper 256x192 thermal raw matrix
+→ addline/metadata block
+→ HIKMICRO Analyzer MTlib_OL.dll
+→ point 구조체 offset +0x10 int32 temperature
+→ temperature_c = point_i32_at_0x10 / 64.0
+```
+
+현재 본경로 파일:
+
+```text
+auto_titrator/official_hikmicro.py
+auto_titrator/mini2_live.py
+tools/mini2_mtlib_official_matrix_win.py
+tools/mini2_official_mtlib_worker_win.py
+vendor/hikmicro_analyzer/MTlib_OL.dll
+```
+
+온도 분석 feature는 다음처럼 ROI와 전체 행렬을 모두 기록한다.
+
+```text
+thermal_roi_avg/min/max/std/range/iqr
+thermal_roi_p05/p25/p50/p75/p95
+thermal_roi_hot_fraction/cold_fraction/delta
+thermal_matrix_avg/min/max/std/range/iqr
+thermal_matrix_p05/p25/p50/p75/p95
+thermal_raw_* 보조 feature
+thermal_frame_rate_hz, thermal_time_s, abs_sync_offset_ms
+```
+
+실험용 변환 경로 분류:
+
+- 현재 인정: `MTlib_OL.dll` official matrix path, `point_i32_at_0x10 / 64.0`.
+- 검증/증거용: same-file raw lookup, `metadata_u16[284]` 보정 후보식.
+- 폐기/본경로 아님: raw 단순 `/1024`, raw 단순 `/8192`, raw 단순 `/64`, 전역 선형식, min/max-only scaling, palette/fake-color RGB 분석.
+- 탐색용 잔재: MicroJITA, MicroTA, MicroJPEG, MT_SubFunction, MicroPixeler, TPI 관련 probe 스크립트.
+
+관련 보고서:
+
+```text
+data/mini2_internal_uncompress_probe/ir00001_raw_conversion_report.md
+data/mini2_internal_uncompress_probe/ir00001_formula_analysis.md
+data/mini2_multi_image_formula/multi_image_formula_report.md
+data/mini2_multi_image_formula/formula_sweep/formula_sweep_report.md
+data/mini2_rjpeg_raw_research/mini2_rjpeg_raw_research_report.md
+docs/validation_protocol.md
+```
+
+현재 clone에는 수십 개 probe의 결과 JSON이 모두 남아 있지는 않다. 그러므로 새 작업자는 “스크립트가 있다”는 이유만으로 성공 경로라고 판단하면 안 된다. 현재 공식 주장 경로는 `MTlib_OL.dll` 기반 Windows 경로이고, 나머지는 Android 공식앱 역분석 또는 검증용 참고로 본다.
+
 ## 3.3 일반 카메라와 ROI
 
 구현된 기능은 다음과 같다.

@@ -228,6 +228,130 @@ temperature_c = 공식 처리 결과 int 값 / 64.0
 
 Android 쪽 Mini2 섭씨 변환은 아직 Windows처럼 완전히 검증된 본경로가 아니다.
 
+
+## 4.5 Mini2 온도 분석 인수인계
+
+Mini2 온도 분석은 변환 경로와 분석 feature를 구분해서 이해해야 한다.
+
+현재 Windows에서 인정하는 본경로는 다음이다.
+
+```text
+Mini2 UVC 256x344 raw frame
+→ 위쪽 256x192 thermal raw matrix 분리
+→ addline/metadata block과 함께 HIKMICRO Analyzer MTlib_OL.dll 호출
+→ DLL이 point 구조체를 채움
+→ point 구조체 offset +0x10의 int32 값을 읽음
+→ temperature_c = point_i32_at_0x10 / 64.0
+→ 256x192 섭씨 온도 행렬 생성
+→ ROI 통계와 전체 행렬 통계를 CSV에 저장
+```
+
+핵심 파일:
+
+```text
+auto_titrator/official_hikmicro.py
+auto_titrator/mini2_live.py
+tools/mini2_mtlib_official_matrix_win.py
+tools/mini2_official_mtlib_worker_win.py
+vendor/hikmicro_analyzer/MTlib_OL.dll
+```
+
+중요한 점:
+
+- `MTlib_OL.dll`이 현재 Windows 본경로의 공식 변환 DLL이다.
+- `0x10`은 DLL 이름이 아니라 point 출력 구조체 안의 offset이다.
+- `/64`는 raw 픽셀에 직접 적용하는 식이 아니라, `MTlib_OL.dll`이 채운 point 구조체의 int32 temperature 값을 섭씨로 바꾸는 scale이다.
+- `temperature_c = point_i32_at_0x10 / 64.0`이라고 정리한다.
+
+CSV/ML에 쓰는 온도 분석값은 단일 온도 하나가 아니다. 온도 행렬에서 ROI와 전체 행렬 통계를 뽑는다.
+
+대표 저장/분석 feature:
+
+```text
+thermal_roi_avg
+thermal_roi_min
+thermal_roi_max
+thermal_roi_std
+thermal_roi_range
+thermal_roi_iqr
+thermal_roi_p05 / p25 / p50 / p75 / p95
+thermal_roi_hot_fraction
+thermal_roi_cold_fraction
+thermal_roi_delta
+thermal_matrix_avg / min / max / std / range / iqr / p05 / p25 / p50 / p75 / p95
+thermal_raw_* 보조 feature
+thermal_frame_rate_hz
+thermal_time_s
+abs_sync_offset_ms
+```
+
+실험용 변환 경로는 많이 있었지만, 현재 인수인계 기준으로는 아래처럼 분류한다.
+
+### 현재 인정 경로
+
+```text
+MTlib_OL.dll official matrix path
+```
+
+- Windows 본경로다.
+- 공식 Analyzer DLL을 호출한다.
+- point offset `0x10`의 int32 값을 `/64`해서 섭씨로 쓴다.
+- `auto_titrator/official_hikmicro.py`와 `tools/mini2_mtlib_official_matrix_win.py`를 기준으로 본다.
+
+### 증거/검증용 경로
+
+```text
+same-file raw lookup
+metadata_u16[284] 보정 후보식
+```
+
+관련 문서:
+
+```text
+data/mini2_internal_uncompress_probe/ir00001_raw_conversion_report.md
+data/mini2_internal_uncompress_probe/ir00001_formula_analysis.md
+data/mini2_multi_image_formula/multi_image_formula_report.md
+data/mini2_multi_image_formula/formula_sweep/formula_sweep_report.md
+```
+
+해석:
+
+- 같은 이미지 안에서는 raw 값과 CSV 온도가 lookup으로 0 오차 대응될 수 있었다.
+- 여러 이미지 전체로 보면 같은 raw 값이 다른 온도를 가질 수 있어 전역 `T=f(raw)` 식은 반증되었다.
+- `metadata_u16[284]`를 이용한 후보식은 오차가 작았지만 공식 SDK 복원은 아니므로 본경로로 쓰지 않는다.
+
+### 폐기 또는 본경로 아님
+
+```text
+raw_u16 단순 /1024
+raw_u16 단순 /8192
+raw_u16 /64
+전역 선형식 T = a*raw+b
+min/max-only scaling
+palette/fake-color RGB 분석
+같은 파일 CSV lookup을 실시간 일반식처럼 쓰는 방법
+```
+
+이 경로들은 공식 온도 변환이라고 보고하면 안 된다.
+
+### 아직 탐색용으로만 남은 경로
+
+```text
+MicroJITA_Release_x64.dll grayToTemperature 계열
+MicroTA_Release_x64.dll TempAnalyzer 계열
+MicroJPEG_Release_x64.dll radiometric JPEG parsing 계열
+MT_SubFunction 계열
+MicroPixeler / TPI 계열
+```
+
+이 스크립트들은 `tools/mini2_*_probe_win.py`에 많이 남아 있다. 일부 결과 JSON은 현재 clone에 남아 있지 않으므로, 성공/폐기 판단은 남아 있는 보고서와 현재 본경로 코드 기준으로 한다. 새로 이어받는 사람은 이 경로들을 다시 본경로처럼 주장하지 말고, 공식앱 역분석이나 Android 포팅 때 참고 자료로만 본다.
+
+검증 프로토콜은 다음 문서를 같이 본다.
+
+```text
+docs/validation_protocol.md
+```
+
 ## 5. 소프트웨어 구조
 
 처음 보는 사람은 아래 파일부터 보면 된다.
