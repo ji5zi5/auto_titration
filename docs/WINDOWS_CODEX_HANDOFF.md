@@ -1,6 +1,6 @@
 # Windows Codex 인수인계 문서
 
-이 문서는 이 프로젝트를 Windows 환경의 Codex가 바로 이어받기 위한 요약이다. 2026-07-13 기준 현재 repo의 핵심 상태, 실행법, 모델 연결, 주의할 점을 정리한다.
+이 문서는 이 프로젝트를 Windows 환경의 Codex가 바로 이어받기 위한 요약이다. 2026-07-13 기준 현재 repo의 핵심 상태, 실행법, 모델 연결, 수정해야 할 점을 정리한다. 전체 진행 현황과 남은 작업은 `docs/PROJECT_STATUS_AND_REMAINING_WORK.md`에 더 자세히 정리되어 있다.
 
 ## 1. 현재 프로젝트 한 줄 요약
 
@@ -11,7 +11,7 @@
 ## 2. 현재 git / 배포 상태
 
 - Repo: `https://github.com/ji5zi5/auto_titration`
-- 최신 확인 commit: `b274086 Use the honest typewise model for live equivalence prediction`
+- 문서 작성 전 최신 확인 commit: `84500bd Add Android handoff context for Windows Codex`
 - 최신 release: `v0.1.3 Windows 실행본`
 - Release URL: `https://github.com/ji5zi5/auto_titration/releases/tag/v0.1.3`
 - Windows 배포 ZIP은 EXE 하나로 완전 독립 실행되는 구조가 아니다. ZIP 안에 코드, DLL, 모델, requirements가 같이 들어 있고 `AutoTitration.exe`는 `launchers/windows/21_open_dashboard_server.bat`를 실행하는 런처다.
@@ -510,17 +510,24 @@ mobile/android/app/src/main/java/com/hik/viewercommon/
 
 이 파일들은 우리 앱의 UI 기능 파일이라기보다 HIKMICRO SDK/JNA/JNI 인터페이스를 맞추기 위한 참고/bridge 성격이 강하다. 수정할 때는 `kr/auto/titration/mobile/thermal/` 쪽 실제 사용 코드와 같이 봐야 한다.
 
-### 12.6 Android 작업 시 절대 지킬 것
+### 12.6 Android에서 수정해야 할 점
 
-- Windows에서 검증된 `/64` 공식 DLL 경로와 Android raw 경로를 섞어 말하지 않는다.
-- Android Mini2 변환이 안 되면 `blocked` 또는 `raw_unverified`로 남긴다.
-- 임의 affine/lookup/가짜색 변환으로 ℃라고 표시하지 않는다.
-- Android CSV 열 이름은 Windows CSV와 최대한 맞춘다.
-- 펌프 명령은 기존 Arduino 펌웨어와 맞게 `a`, `b`, `c`를 유지한다.
-- 자동정지 기능을 넣지 않는다.
-- 새 기능 구현 후 최소한 Android 관련 테스트와 Python schema parity 테스트를 같이 본다.
+Android는 현재 완성본이 아니라 Windows 기능을 따라가기 위한 수정 대상이다. 다음 항목을 실제 코드와 기기에서 확인하면서 고친다.
+
+- Mini2 USB 권한 흐름을 실제 폰에서 확인하고, 권한 허용 후 native stream까지 이어지게 수정한다.
+- Android Mini2 섭씨 변환은 공식 `.so` 호출 경로로 검증한다. 검증 전에는 `thermal_calibrated=false` 또는 `raw_unverified`로 남긴다.
+- Windows에서 검증된 공식 DLL `/64` 결과와 Android raw frame 결과를 같은 것으로 단정하지 말고, 공식 앱/Windows 결과와 비교해 검증한다.
+- 임의 affine, lookup, fake-color 변환으로 ℃ 값을 만들어 표시하던 흔적이 있으면 제거한다.
+- Android CSV 열 이름을 Windows CSV와 맞춘다. Android 전용 열은 의미가 섞이지 않게 별도 prefix를 둔다.
+- Bluetooth 펌프 명령은 기존 Arduino 펌웨어와 맞게 `a`, `b`, `c`로 전송되게 수정한다.
+- 녹화 시작/종료와 펌프 시작/정지의 시간 관계를 Android CSV에 남기도록 수정한다.
+- Android 앱에서도 자동정지는 넣지 않는다. 시작과 정지는 사람이 누르고, 앱은 기록과 예측 보조만 한다.
+- Android에서 Python pickle을 직접 쓰기 어렵기 때문에 ML 적용 방식은 JSON/Kotlin 경량 모델, TFLite 변환, 또는 Windows 분석 서버 중 하나로 정리한다.
+- 새 기능 구현 후 Android build, Android 단위 테스트, Python schema parity 테스트를 같이 확인한다.
 
 ## 13. Windows Codex가 이어서 할 가능성이 높은 작업
+
+더 자세한 전체 목록은 `docs/PROJECT_STATUS_AND_REMAINING_WORK.md`의 `4. 앞으로 수정해야 할 점 전체 목록`을 기준으로 본다. 여기에는 핵심만 압축한다.
 
 우선순위 높은 작업:
 
