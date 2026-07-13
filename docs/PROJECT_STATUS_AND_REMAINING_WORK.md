@@ -1,7 +1,7 @@
 # 자동 적정 프로젝트 진행 현황 및 남은 수정점
 
-작성 기준: 2026-07-13  
-목적: Windows 쪽 Codex 또는 다른 개발자가 이 repo를 바로 이어받아, 현재까지 구현된 내용과 앞으로 수정해야 할 일을 헷갈리지 않도록 정리한다.  
+작성 기준: 2026-07-13
+목적: Windows 쪽 Codex 또는 다른 개발자가 이 repo를 바로 이어받아, 현재까지 구현된 내용과 앞으로 수정해야 할 일을 헷갈리지 않도록 정리한다.
 범위: Windows 수집 앱, Mini2 열화상 처리, Arduino 시린지 펌프, 화학 계산, 머신러닝, Android 포팅, 문서/포스터 작업을 모두 포함한다.
 
 ## 1. 프로젝트 목표 요약
@@ -30,25 +30,24 @@
 ### 2.1 저장소
 
 - GitHub repo: `https://github.com/ji5zi5/auto_titration`
-- 이 문서 작성 직전 확인 commit: `84500bd Add Android handoff context for Windows Codex`
 - Windows 실행본 release: `v0.1.3 Windows 실행본`
 - release URL: `https://github.com/ji5zi5/auto_titration/releases/tag/v0.1.3`
 
 ### 2.2 사용자가 실제로 실행하는 Windows 경로
 
-Windows에서 사용자가 주로 만지는 폴더는 다음 중 하나다.
+Windows에는 프로젝트 폴더를 하나만 둔다.
 
 ```text
-C:\Users\Jio\Downloads\auto_titration_20260513-170048
-C:\Users\Jio\Downloads\auto_titration_windows
+C:\Users\Jio\Downloads\auto_titration
 ```
 
 WSL에서는 다음 경로로 접근한다.
 
 ```text
-/mnt/c/Users/Jio/Downloads/auto_titration_20260513-170048
-/mnt/c/Users/Jio/Downloads/auto_titration_windows
+/mnt/c/Users/Jio/Downloads/auto_titration
 ```
+
+예전에 쓰던 `auto_titration_20260513-170048`, `auto_titration_windows` 같은 중복 폴더는 삭제 대상이다. 새 Codex가 작업할 때도 복사본을 새로 만들지 말고 위 폴더 하나만 사용한다.
 
 ### 2.3 일반 실행법
 
