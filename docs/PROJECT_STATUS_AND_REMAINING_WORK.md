@@ -615,69 +615,80 @@ typewise_frame_zone_classifier
 
 ## 4.3 P0 - Android 앱 수정점
 
-사용자가 Windows 환경에서 이어서 작업하려는 핵심 중 하나다. Android는 “완성본”이 아니라 “수정해야 할 대상”으로 인수인계해야 한다.
+사용자가 Windows 환경에서 이어서 작업하려는 핵심 중 하나다. Android는 “완성본”이 아니라 “수정해야 할 대상”이다. 현재 Android 계획의 1순위는 앱 UI나 CSV가 아니라 공식 HIKMICRO 앱의 Mini2 호출 경로를 찾아 우리 앱에서 최소 재현하는 것이다.
 
-수정할 점:
+P0 수정 목표:
 
-1. Android Studio에서 실제 build 확인
-   - `mobile/android` 열기
-   - `gradlew.bat assembleDebug` 또는 Android Studio build 실행
-   - missing SDK, Gradle plugin, Kotlin version 문제 기록
+```text
+공식앱이 Mini2를 여는 정확한 순서를 찾는다.
+그 순서를 우리 Android 코드에서 최소 구현한다.
+실제 Mini2 frame callback이 들어오는지 확인한다.
+frame shape와 온도 변환을 공식 앱/Windows DLL 결과와 비교한다.
+```
 
-2. 앱 첫 화면 동작 확인
-   - WebView만 떠 있는지
-   - native camera preview가 실제 표시되는지
-   - 버튼이 bridge로 연결되는지
-   - crash log가 남는지
+P0 작업 순서:
 
-3. 스마트폰 카메라 frame 표시 수정
-   - CameraX preview가 끊기지 않게 표시되어야 함
-   - ROI 드래그가 좌표 변환 오류 없이 잡혀야 함
-   - 화면에 다른 위치가 선택되는 버그가 있으면 좌표계부터 고쳐야 함
+1. 공식 앱/APK/XAPK 분석부터 다시 한다.
+   - `docs/hikmicro_apk_androguard_summary.txt`를 읽는다.
+   - JADX, apktool, androguard로 Mini2 관련 class와 method를 다시 찾는다.
+   - 공식 앱에서 USB 권한, 장치 enum, register/login, stream start가 어디서 호출되는지 call path를 뽑는다.
 
-4. Android Mini2 USB 권한 흐름 수정
-   - USB-C Mini2 연결 시 permission dialog 확인
-   - `Mini2UsbProbe.kt`에서 VID/PID와 interface가 잡히는지 확인
-   - 권한 허용 후 native stream으로 넘어가는지 확인
+2. native `.so` 호출 관계를 확인한다.
+   - `libHCUSBSDK.so`
+   - `libMTlib.so`
+   - `lib_thermal_module.so`
+   - `libusbCam_host.so`
+   - `libuvc.so`
+   - Ghidra/IDA로 export symbol, string, error code, callback 관련 이름을 확인한다.
 
-5. Android Mini2 섭씨 변환 수정
-   - 공식 `.so` 호출 순서를 실제로 맞춰야 함
-   - `docs/hikmicro_apk_androguard_summary.txt` 먼저 읽기
-   - `libHCUSBSDK.so`, `libMTlib.so`, `lib_thermal_module.so`, `libusbCam_host.so`, `libuvc.so` 관계 확인
-   - 공식 처리 결과가 int temperature matrix를 주는지 확인
-   - 그 int 값이 Windows처럼 `/64`로 섭씨가 되는지 검증
-   - 검증 전에는 `thermal_calibrated=false` 또는 `raw_unverified`로 표시
+3. 공식 앱의 실제 실행 흐름을 추적한다.
+   - 가능하면 logcat으로 공식 앱 실행 로그를 본다.
+   - 가능하면 Frida 같은 동적 추적으로 USB/stream/native 함수 호출 순서를 확인한다.
+   - 목표는 앱 전체 복붙이 아니라 Mini2를 여는 최소 call sequence를 얻는 것이다.
 
-6. Android CSV schema 수정
-   - Windows CSV 열 이름과 최대한 맞추기
-   - Android 전용 열은 prefix를 명확히 붙이기
-   - 최소한 적정 종류, 농도, 주입량, RGB/HSV, thermal ROI, 펌프 상태, 예측값은 Windows와 같은 의미로 남기기
+4. 우리 Android 코드와 비교한다.
+   - `Mini2UsbProbe.kt`
+   - `thermal/HikmicroF1Mini2Stream.kt`
+   - `thermal/HikmicroJnaMini2Stream.kt`
+   - `thermal/HikmicroNativeBackend.kt`
+   - `com/hcusbsdk/`
+   - `com/hik/f2module/`
+   - 공식 앱과 다르게 호출하는 부분을 찾는다.
 
-7. Bluetooth 펌프 연결 수정
-   - HC-05/HC-06 같은 Bluetooth SPP 모듈 사용 여부 확인
-   - 페어링된 장치 목록 표시
-   - 연결 성공/실패 표시
-   - 녹화 시작 시 `b`, 종료 시 `c`, 후퇴 시 `a` 전송
-   - 펌프가 없어도 카메라/CSV 테스트는 가능하게 분리
+5. 최소 Mini2 stream 경로만 먼저 구현한다.
+   - USB 권한 요청
+   - SDK 초기화
+   - device enum 또는 register/login
+   - F2/Mini2 module type 설정
+   - stream parameter 설정
+   - `USB_StartStreamCallback` 또는 같은 역할의 함수 호출
+   - frame callback 수신
 
-8. Android 로컬 저장 수정
-   - CSV를 Downloads 또는 앱 export 폴더에 저장
-   - 저장 완료 후 파일 경로 표시
-   - 가능하면 session zip export도 유지
+6. frame evidence를 먼저 저장한다.
+   - width, height, type, sequence
+   - raw byte size
+   - fps
+   - error code
+   - callback count
+   - 공식 앱 또는 Windows와 shape 비교
 
-9. Android ML 적용 방식 결정
-   - Python pickle은 Android에서 직접 쓰기 어렵다.
-   - 선택지는 셋이다.
-     - 모델을 JSON/간단한 Kotlin rule로 export
-     - TFLite/ONNX 등 모바일용으로 변환
-     - Android는 수집만 하고 Windows/Python에서 예측
-   - 전람회 일정상 가장 안전한 것은 Android 수집 + Windows 분석 또는 JSON/Kotlin 경량 모델이다.
+7. 온도 변환은 frame 수신 이후에 한다.
+   - 공식 처리 함수가 int temperature matrix를 주는지 확인한다.
+   - Windows 공식 DLL의 `/64` 결과와 비교한다.
+   - 검증 전에는 `thermal_calibrated=false` 또는 `raw_unverified`로 둔다.
 
-10. Android UI에서 필요 없는 설명 제거
-    - 실험 중 화면은 카메라, 열화상, ROI, 주입량, 녹화, 펌프, 예측 결과 중심이면 된다.
-    - 긴 설명 대시보드는 모바일에서 방해가 된다.
+P0에서 후순위로 미룰 것:
 
-## 4.4 P1 - Mini2 Android 공식 SDK 분석 계속
+- Android 화면 예쁘게 만들기
+- YOLO ROI 개선
+- CSV export 확장
+- Bluetooth 펌프 연결
+- Android ML 적용
+- WebView UI 세부 정리
+
+이 후순위 작업들은 Mini2 공식 호출 경로가 잡힌 뒤에 진행한다.
+
+## 4.4 P0 - Mini2 Android 공식앱 역분석 계속
 
 공식 앱/APK 분석을 이어가야 할 때 참고할 자료는 다음이다.
 

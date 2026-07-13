@@ -437,18 +437,55 @@ mobile/android/app/src/main/jniLibs/arm64-v8a/
 docs/hikmicro_apk_androguard_summary.txt
 ```
 
-Android는 아직 Windows 본경로와 같은 수준으로 검증된 완성본이 아니다. 이어서 수정할 핵심은 다음이다.
+Android는 아직 Windows 본경로와 같은 수준으로 검증된 완성본이 아니다. 다음 작업의 1순위는 UI, CSV, YOLO, ML, Bluetooth가 아니다. 1순위는 공식 HIKMICRO 앱이 Mini2를 여는 최소 호출 경로를 역분석해서 우리 앱에서 재현하는 것이다.
 
-- Android Studio에서 실제 build 성공시키기
-- 스마트폰 카메라 preview와 ROI 좌표 오류 수정
-- USB-C Mini2 권한 요청과 native stream 연결 확인
-- HIKMICRO 공식 `.so` 호출 경로로 섭씨 변환 검증
-- 검증 전 thermal 값은 `raw_unverified` 또는 `thermal_calibrated=false`로 표시
-- Bluetooth SPP로 Arduino 펌프에 `a`, `b`, `c` 전송
-- Android CSV schema를 Windows CSV와 맞추기
-- Python pickle 모델을 Android에서 어떻게 쓸지 결정하기
+Android 쪽 P0 목표:
 
-Android에서 Python pickle을 직접 쓰기는 어렵다. 선택지는 다음 중 하나다.
+```text
+공식앱 APK/XAPK 분석
+→ Mini2 관련 Java/JNA/JNI call path 추출
+→ 어떤 .so 함수가 어떤 순서로 호출되는지 정리
+→ 우리 Android 코드에서 최소 호출 순서 재현
+→ 실제 Mini2 frame callback 수신
+→ 256x344 또는 공식 frame shape 확인
+→ 공식 앱/Windows 결과와 비교해 섭씨 변환 검증
+```
+
+P0에서 봐야 할 도구와 자료:
+
+```text
+JADX 또는 apktool: Java/Kotlin/decompiled call path 확인
+androguard: manifest, class, method, call graph 보조 분석
+Ghidra 또는 IDA: libHCUSBSDK.so, libMTlib.so, lib_thermal_module.so 등 native symbol/string 확인
+logcat: 공식 앱 실행 중 로그와 에러 코드 확인
+Frida 등 동적 추적: 가능하면 공식 앱의 실제 함수 호출 순서 확인
+```
+
+P0에서 찾아야 하는 최소 흐름:
+
+```text
+USB 권한 요청
+→ HCUSBSDK 초기화
+→ 장치 enum 또는 register/login
+→ F2/Mini2 module type 설정
+→ stream parameter 설정
+→ USB_StartStreamCallback 또는 같은 역할의 함수 호출
+→ frame callback 수신
+→ thermal 처리 함수로 온도 행렬 또는 int temperature matrix 생성
+→ Windows 공식 DLL 결과와 비교
+```
+
+이 단계가 끝나기 전에는 아래 작업을 후순위로 둔다.
+
+- Android 화면 예쁘게 다듬기
+- YOLO ROI 개선
+- CSV export 확장
+- Bluetooth 펌프 연동
+- Android ML 적용
+
+단, 공식앱 코드를 통째로 복붙하는 것이 목표는 아니다. 목표는 Mini2를 여는 데 필요한 호출 순서와 데이터 구조만 뽑아 우리 앱에서 최소 재현하는 것이다. 섭씨 변환이 검증되기 전에는 thermal 값은 `raw_unverified` 또는 `thermal_calibrated=false`로 남긴다.
+
+Android에서 Python pickle을 직접 쓰기는 어렵다. Mini2 호출 경로가 해결된 뒤에야 ML 적용 방식을 정한다. 선택지는 다음 중 하나다.
 
 1. Android는 수집만 하고 Windows/Python에서 예측한다.
 2. 모델을 JSON/Kotlin 경량 모델로 변환한다.
@@ -520,19 +557,21 @@ Android에서 Python pickle을 직접 쓰기는 어렵다. 선택지는 다음 �
 
 그 다음 할 일:
 
-1. UI에서 불필요한 설명 줄이기
-2. CSV 품질 진단 추가
-3. Android build 성공시키기
-4. Android 카메라/ROI 좌표 수정
-5. Android Mini2 stream 확인
-6. Android Bluetooth 펌프 확인
+1. 공식앱 APK/XAPK를 JADX, apktool, androguard로 다시 분석
+2. Mini2 관련 Java/JNA/JNI call path를 문서화
+3. `libHCUSBSDK.so`, `libMTlib.so`, `lib_thermal_module.so` 호출 순서를 찾기
+4. 공식앱의 stream callback 흐름을 우리 Android 코드와 비교
+5. 우리 앱에서 Mini2 최소 호출 경로만 재현
+6. 실제 Mini2 frame callback이 들어오는지 확인
+7. frame shape와 온도 변환을 Windows 공식 DLL 결과와 비교
 
 나중에 할 일:
 
-1. Android 단독 섭씨 변환 완성
-2. Android ML 적용 방식 결정
-3. 새 실험 데이터로 모델 재검증
-4. release ZIP 또는 installer 정리
+1. Android 화면/ROI/CSV 정리
+2. Android Bluetooth 펌프 확인
+3. Android ML 적용 방식 결정
+4. 새 실험 데이터로 모델 재검증
+5. release ZIP 또는 installer 정리
 
 ## 12. 수정 후 검증 방법
 
