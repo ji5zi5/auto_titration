@@ -334,7 +334,193 @@ py -3 packaging\windows\create_release_zip.py
 - 포스터 적정 종류별 성능표: `docs/포스터_적정종류별_성능표.csv`
 - 포스터 이미지: `docs/poster_assets/`, `docs/poster_visuals/`
 
-## 12. Windows Codex가 이어서 할 가능성이 높은 작업
+## 12. Android 앱 개발 인수인계
+
+Windows 환경으로 옮겨서 Android 앱을 이어 만들 경우, 먼저 아래 파일들을 읽는다. 현재 Android는 완성된 실사용 본경로라기보다 `Windows collector와 기능을 맞추기 위한 companion/standalone scaffold`에 가깝다. 단, 이미 공식 앱/SDK 구조를 뜯어본 흔적과 네이티브 라이브러리 복사본이 있으므로 새로 처음부터 만들 필요는 없다.
+
+### 12.1 Android 프로젝트 위치
+
+```text
+mobile/android/
+mobile/android/settings.gradle.kts
+mobile/android/build.gradle.kts
+mobile/android/app/build.gradle.kts
+mobile/android/app/src/main/AndroidManifest.xml
+mobile/android/README.md
+```
+
+주요 Kotlin 코드 위치:
+
+```text
+mobile/android/app/src/main/java/kr/auto/titration/mobile/
+```
+
+핵심 파일:
+
+- `MainActivity.kt` — Android 앱 진입점.
+- `AndroidBridge.kt` — WebView/Android native bridge.
+- `MobileFeatureClient.kt` — 노트북 서버로 mobile feature frame 전송.
+- `Mini2UsbProbe.kt` — Android USB host 관점에서 Mini2 연결/권한 상태 확인.
+- `session/PhoneRunSession.kt` — 폰 단독/세션 기록 흐름.
+- `data/LocalCsvWriter.kt` — 모바일 로컬 CSV 저장.
+- `data/CsvFeatureRow.kt`, `data/CsvSchema.kt` — Android CSV schema.
+- `chemistry/EquivalenceCalculator.kt` — Android 쪽 농도/당량 계산.
+- `pump/BluetoothPumpTransport.kt` — Bluetooth Classic SPP 펌프 전송.
+- `pump/PumpCommandContract.kt` — `a`, `b`, `c` 펌프 명령 계약.
+- `vision/VisibleFeatureExtractor.kt` — 스마트폰 카메라 RGB/HSV feature 추출.
+- `vision/YoloSegmentationDetector.kt` — Android YOLO segmentation ROI 후보.
+- `ml/LiteRtYoloSegmenter.kt` — TFLite YOLO 실행 경로.
+- `thermal/ThermalFrameModels.kt`, `thermal/ThermalModels.kt` — thermal frame data model.
+- `thermal/Mini2ValidationGate.kt` — Mini2 thermal 값이 calibrated인지 raw_unverified인지 막는 gate.
+- `thermal/HikmicroF1Mini2Stream.kt`, `thermal/HikmicroJnaMini2Stream.kt` — HIKMICRO native stream 접근 시도 경로.
+
+Android YOLO 모델 asset:
+
+```text
+mobile/android/app/src/main/assets/models/yolo11n-seg-256-fp32.tflite
+mobile/android/app/src/main/assets/models/yolo11n-seg-256-fp32.metadata.json
+```
+
+Android native library 위치:
+
+```text
+mobile/android/app/src/main/jniLibs/arm64-v8a/
+```
+
+중요한 `.so` 예시:
+
+```text
+libHCUSBSDK.so
+libMTlib.so
+libAnalyzeData.so
+lib_thermal_module.so
+libMicroJITA_Release_v8a.so
+libMicroJPEG_Release_v8a.so
+libusbCam_host.so
+libuvc.so
+libusb-1.0.so
+```
+
+이 `.so`들은 Android에서 Mini2를 직접 다루기 위해 공식 앱/APK 쪽 구조를 참고해 넣은 것이다. 라이선스/배포 문제는 따로 확인해야 하며, 전람회 시연용 로컬 개발 기준으로 다룬다.
+
+### 12.2 Android에서 목표로 해야 하는 기능
+
+Android 최종 목표는 Windows 웹 대시보드의 주요 기능을 폰 단독 또는 companion 형태로 옮기는 것이다.
+
+필수 기능:
+
+1. 스마트폰 카메라 화면 표시.
+2. RGB/HSV feature 추출.
+3. ROI 수동 지정 또는 YOLO 후보 지정.
+4. USB-C Mini2 연결 권한 확인.
+5. Mini2 raw/temperature frame 수집.
+6. thermal 값이 공식 변환으로 검증되기 전에는 `thermal_calibrated=false` 유지.
+7. Bluetooth 펌프에 `b` 시작, `c` 정지, `a` 후퇴 명령 전송.
+8. 녹화 시작/종료와 CSV 저장.
+9. Windows CSV schema와 최대한 같은 열 이름 유지.
+10. 노트북 companion 모드에서는 `/api/mobile/ingest`로 feature frame 전송.
+
+주의: Android에서 Mini2 ℃ 변환이 검증되기 전까지 임의 근사식으로 ℃ 값을 만들면 안 된다. 공식 native library 호출 또는 공식 앱 분석으로 확인된 경로만 `thermal_calibrated=true`로 둘 수 있다.
+
+### 12.3 Android 빌드/테스트 예상 명령
+
+Windows에서 Android Studio로 여는 것이 가장 쉽다. CLI에서는 다음 위치에서 실행한다.
+
+```bat
+cd mobile\android
+gradlew.bat assembleDebug
+```
+
+WSL/Linux에서는:
+
+```bash
+cd mobile/android
+./gradlew assembleDebug
+```
+
+단, 현재 Windows Codex 환경에서 Gradle/Android SDK가 없으면 설치부터 필요할 수 있다.
+
+### 12.4 공식 HIKMICRO 프로그램 참고 위치
+
+Mini2 / HIKMICRO 관련 구현은 아래 공식 Windows 프로그램과 추출된 DLL을 참고한다.
+
+공식 Analyzer 설치 위치:
+
+```text
+C:\Program Files\HIKMICRO Analyzer\HIKMICRO Analyzer
+```
+
+WSL 경로:
+
+```text
+/mnt/c/Program Files/HIKMICRO Analyzer/HIKMICRO Analyzer
+```
+
+중요 파일 예시:
+
+```text
+HIKMICRO Analyzer.exe
+HCUSBSDK.dll
+MTlib_OL.dll
+FormatConversion.dll
+MicroJITA_Release_x64.dll
+MicroJPEG_Release_x64.dll
+MicroRVP_Release_x64.dll
+MicroRVR_Release_x64.dll
+MicroTA_Release_x64.dll
+libusb-1.0.dll
+ExamplePic/Standard/*.jpeg
+```
+
+우리 repo에 복사해둔 Windows DLL 위치:
+
+```text
+vendor/hikmicro_analyzer/
+```
+
+Windows collector는 기본적으로 여기의 DLL을 사용한다.
+
+공식 Analyzer 실행 wrapper/공용 설치 흔적:
+
+```text
+C:\Users\Public\AnalyzerTool\RunAnalyzerExe
+/mnt/c/Users/Public/AnalyzerTool/RunAnalyzerExe
+```
+
+여기에는 `RunAnalyzerExe.exe`, `run.bat`, Qt DLL, 로그 등이 있다. 공식 프로그램 실행 방식이나 프로세스 트리 확인할 때 참고한다.
+
+### 12.5 공식 앱/APK 분석 자료 위치
+
+Android 공식 앱 구조 분석 요약:
+
+```text
+docs/hikmicro_apk_androguard_summary.txt
+```
+
+이 파일은 androguard로 APK/XAPK를 뜯어본 결과를 요약한 문서다. Android native 호출 순서나 package/class 이름을 다시 볼 때 먼저 읽는다.
+
+관련 Kotlin namespace도 공식 앱 구조를 맞춰 흉내 낸 부분이 있다.
+
+```text
+mobile/android/app/src/main/java/com/hcusbsdk/
+mobile/android/app/src/main/java/com/hik/f2module/
+mobile/android/app/src/main/java/com/hik/viewer/
+mobile/android/app/src/main/java/com/hik/viewercommon/
+```
+
+이 파일들은 우리 앱의 UI 기능 파일이라기보다 HIKMICRO SDK/JNA/JNI 인터페이스를 맞추기 위한 참고/bridge 성격이 강하다. 수정할 때는 `kr/auto/titration/mobile/thermal/` 쪽 실제 사용 코드와 같이 봐야 한다.
+
+### 12.6 Android 작업 시 절대 지킬 것
+
+- Windows에서 검증된 `/64` 공식 DLL 경로와 Android raw 경로를 섞어 말하지 않는다.
+- Android Mini2 변환이 안 되면 `blocked` 또는 `raw_unverified`로 남긴다.
+- 임의 affine/lookup/가짜색 변환으로 ℃라고 표시하지 않는다.
+- Android CSV 열 이름은 Windows CSV와 최대한 맞춘다.
+- 펌프 명령은 기존 Arduino 펌웨어와 맞게 `a`, `b`, `c`를 유지한다.
+- 자동정지 기능을 넣지 않는다.
+- 새 기능 구현 후 최소한 Android 관련 테스트와 Python schema parity 테스트를 같이 본다.
+
+## 13. Windows Codex가 이어서 할 가능성이 높은 작업
 
 우선순위 높은 작업:
 
@@ -361,7 +547,7 @@ py -3 packaging\windows\create_release_zip.py
 - full 25fps 온도행렬 CSV 저장
 - 모델 성능을 새 데이터 없이 과장하는 변경
 
-## 13. 빠른 장애 대응
+## 14. 빠른 장애 대응
 
 ### 웹은 뜨는데 카메라가 안 뜸
 
@@ -390,7 +576,7 @@ py -3 packaging\windows\create_release_zip.py
 - `ml_json_regression_model`이 뜨면 legacy JSON을 수동 지정한 것일 수 있다.
 - `sample_concentration_M` 등 누수 feature 모델은 현재 loader가 거부해야 정상이다.
 
-## 14. 마지막으로 기억할 프로젝트 원칙
+## 15. 마지막으로 기억할 프로젝트 원칙
 
 - 목표는 산업용 자동적정기가 아니라 전람회용 자동 적정 보조장치다.
 - 당량점과 종말점은 구분한다.
