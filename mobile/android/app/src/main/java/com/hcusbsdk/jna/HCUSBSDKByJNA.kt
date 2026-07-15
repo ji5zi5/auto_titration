@@ -6,6 +6,10 @@ import com.sun.jna.Pointer
 import com.sun.jna.Structure
 
 interface HCUSBSDKByJNA : Library {
+    fun interface FStreamCallBack : Callback {
+        fun invoke(userId: Int, frameInfo: Pointer?, user: Pointer?)
+    }
+
     fun USB_Init(): Boolean
     fun USB_Cleanup(): Boolean
     fun USB_GetLastError(): Int
@@ -17,10 +21,6 @@ interface HCUSBSDKByJNA : Library {
     fun USB_StartStreamCallback(userId: Int, callbackParam: Pointer): Int
     fun USB_StopChannel(userId: Int, channel: Int): Boolean
     fun USB_Logout(userId: Int): Boolean
-}
-
-fun interface FStreamCallBack_JNA : Callback {
-    fun invoke(userId: Int, frameInfo: Pointer?, user: Pointer?)
 }
 
 @Structure.FieldOrder(
@@ -106,7 +106,7 @@ class USB_DEVICE_REG_RES : Structure() {
 class USB_STREAM_CALLBACK_PARAM : Structure() {
     @JvmField var dwSize: Int = 0
     @JvmField var dwStreamType: Int = 0
-    @JvmField var fnStreamCallBack: FStreamCallBack_JNA? = null
+    @JvmField var fnStreamCallBack: HCUSBSDKByJNA.FStreamCallBack? = null
     @JvmField var pUser: Pointer? = null
     @JvmField var byRes: ByteArray = ByteArray(128)
 }

@@ -15,7 +15,7 @@ import com.hcusbsdk.Interface.USB_THERMAL_STREAM_PARAM
 import com.hcusbsdk.Interface.USB_USER_LOGIN_INFO
 import com.hcusbsdk.Interface.USB_VIDEO_PARAM
 import com.hcusbsdk.jna.HCUSBSDK
-import com.hcusbsdk.jna.FStreamCallBack_JNA
+import com.hcusbsdk.jna.HCUSBSDKByJNA
 import com.hcusbsdk.jna.USB_STREAM_CALLBACK_PARAM as JnaUSB_STREAM_CALLBACK_PARAM
 import com.sun.jna.Pointer
 
@@ -71,7 +71,7 @@ class F2UsbModuleHelper private constructor() {
     private var callbackKeepAlive: FStreamCallBack? = null
 
     @Volatile
-    private var jnaCallbackKeepAlive: FStreamCallBack_JNA? = null
+    private var jnaCallbackKeepAlive: HCUSBSDKByJNA.FStreamCallBack? = null
 
     @Volatile
     private var startedElapsedMs: Long = 0L
@@ -166,7 +166,7 @@ class F2UsbModuleHelper private constructor() {
 
 
     fun startStreamPreviewJNA(
-        fStreamCallBack: FStreamCallBack_JNA,
+        fStreamCallBack: HCUSBSDKByJNA.FStreamCallBack,
         size: Size,
         frameRate: Int,
         videoCodingType: Int,
@@ -178,7 +178,7 @@ class F2UsbModuleHelper private constructor() {
             fnStreamCallBack = fStreamCallBack
         }
         val officialInterfaceCallback = FStreamCallBack { _, _ ->
-            // official startStreamPreviewJNA$1 compatibility callback slot; real frames arrive through FStreamCallBack_JNA.
+            // official startStreamPreviewJNA$1 compatibility callback slot; real frames arrive through HCUSBSDKByJNA.FStreamCallBack.
         }
         val interfaceCallbackParam = USB_STREAM_CALLBACK_PARAM().apply {
             dwSize = 0

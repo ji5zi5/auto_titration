@@ -57,7 +57,7 @@ class JavaInterface private constructor() {
     val m_fnStreamCallBack = arrayOfNulls<FStreamCallBack>(10_000)
 
     @JvmField
-    val m_fnStreamCallBack_jna = com.hcusbsdk.jna.FStreamCallBack_JNA { callbackUserId, framePointer, _ ->
+    val m_fnStreamCallBack_jna = com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack { callbackUserId, framePointer, _ ->
         m_fnStreamCallBack[callbackUserId]!!.fStreamCallback(callbackUserId, framePointer?.toInterfaceFrame())
     }
 
@@ -199,7 +199,7 @@ class JavaInterface private constructor() {
     ): Int {
         if (userId < 0 || userId >= m_fnStreamCallBack.size) return -1
         val callback = param.fnStreamCallBack ?: return -1
-        val jnaCallback = cbParam.fnStreamCallBack ?: com.hcusbsdk.jna.FStreamCallBack_JNA { callbackUserId, framePointer, _ ->
+        val jnaCallback = cbParam.fnStreamCallBack ?: com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack { callbackUserId, framePointer, _ ->
             callback.fStreamCallback(callbackUserId, framePointer?.toInterfaceFrame())
         }
         synchronized(m_fnStreamCallBack) {
