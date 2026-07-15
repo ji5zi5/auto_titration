@@ -113,7 +113,7 @@ class b : a {
             }
         }
         val kLongest = if (unit != 2) longestKChars + 0.1f else longestKChars - 0.5f
-        val packageCount = uploadInfo.lineNum.toInt() + uploadInfo.boxNum.toInt()
+        val packageCount = uploadPackageCount(uploadInfo.lineNum, uploadInfo.boxNum)
         invokeOsd(callback, OsdBgCallbackBean(globals.v(), basic.getEnableCenterTem(), basic.getEnableHighTem(), basic.getEnableLowTem(), packageCount, longest, kLongest))
     }
 
@@ -175,12 +175,14 @@ class b : a {
         return if (unit != 2) chars + 0.1f else chars - 0.5f
     }
 
-    private fun textBoxSize(unit: Int, max: Float, min: Float, cen: Float, maxMarker: Char, minMarker: Char, cenMarker: Char): Float {
+    internal fun uploadPackageCount(lineNum: Byte, boxNum: Byte): Int = lineNum.toInt() + boxNum.toInt()
+
+    internal fun textBoxSize(unit: Int, max: Float, min: Float, cen: Float, maxMarker: Char, minMarker: Char, cenMarker: Char): Float {
         val chars = maxOf(textChars(max, maxMarker), textChars(min, minMarker), textChars(cen, cenMarker))
         return if (unit != 2) chars + 0.1f else chars - 0.5f
     }
 
     private fun textChars(value: Float, accuracy: Byte?): Int = d3.b.a.b(value).length + if (accuracy == 43.toByte()) 0 else 1
 
-    private fun textChars(value: Float, marker: Char): Int = d3.b.a.b(value).length + if (marker == '+') 0 else 1
+    internal fun textChars(value: Float, marker: Char): Int = d3.b.a.b(value).length + if (marker == '+') 0 else 1
 }

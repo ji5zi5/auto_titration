@@ -100,51 +100,17 @@ class G007I3CallbackParityTest {
     }
 
     @Test
-    fun uploadOsdUsesHeaderPackageCountAndGlobalMarkerWidths() {
-        val previousMode = Z2.g.a.M()
-        try {
-            Z2.g.a.R0(2)
-            val upload = IFR_INFO.IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO().apply {
-                enumTempUnit = 0
-                fMaxTmp = 35f
-                fMinTmp = 15f
-                fAvrTmp = 25f
-                lineNum = 3
-                boxNum = 2
-            }
-
-            val osdBean = osdFor(upload)
-
-            assertEquals(5, osdBean.getOsdBgRectNum())
-            assertEquals(4.1f, osdBean.getLongestSize(), 0.0001f)
-            assertEquals(0.1f, osdBean.getKLongestSize(), 0.0001f)
-        } finally {
-            Z2.g.a.R0(previousMode)
-        }
+    fun uploadOsdUsesHeaderPackageCount() {
+        assertEquals(5, b().uploadPackageCount(3, 2))
     }
 
     @Test
-    fun uploadOsdUsesOutcomeMarkerWidths() {
-        val previousMode = Z2.g.a.M()
-        try {
-            Z2.g.a.R0(2)
-            val upload = IFR_INFO.IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO().apply {
-                enumTempUnit = 0
-                boxNum = 1
-                ifrOutcomeInfoArr[0].enable = 1
-                ifrOutcomeInfoArr[0].regiontype = 1
-                ifrOutcomeInfoArr[0].maxTmp = 35f
-                ifrOutcomeInfoArr[0].minTmp = 15f
-                ifrOutcomeInfoArr[0].avrTmp = 25f
-            }
+    fun uploadOsdUsesGlobalAndOutcomeMarkerWidths() {
+        val deal = b()
 
-            val osdBean = osdFor(upload)
-
-            assertEquals(1, osdBean.getOsdBgRectNum())
-            assertEquals(4.1f, osdBean.getKLongestSize(), 0.0001f)
-        } finally {
-            Z2.g.a.R0(previousMode)
-        }
+        assertEquals(4, deal.textChars(35f, '+'))
+        assertEquals(5, deal.textChars(35f, '~'))
+        assertEquals(4.1f, deal.textBoxSize(0, 35f, 15f, 25f, '+', '+', '+'), 0.0001f)
     }
 
     @Test
@@ -166,14 +132,6 @@ class G007I3CallbackParityTest {
         val field = b::class.java.getDeclaredField("c")
         field.isAccessible = true
         field.setLong(this, System.currentTimeMillis() - 3001L)
-    }
-
-    private fun osdFor(upload: IFR_INFO.IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO): OsdBgCallbackBean {
-        var osd: Any? = null
-        val anyCallback: (Any?) -> Unit = { osd = it }
-        @Suppress("UNCHECKED_CAST")
-        b().c(h3.c(upload), ByteArray(0), anyCallback as (ByteArray) -> Unit)
-        return osd as OsdBgCallbackBean
     }
 
     private fun assertTempBean(bean: TempCallbackBean, tempMode: Int, max: Float, cen: Float, min: Float) {

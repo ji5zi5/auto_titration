@@ -9,9 +9,9 @@ import org.junit.Test
 
 class EnumerateDeviceTest {
     @Test
-    fun officialPermissionActionAndMutabilityBoundaryArePreserved() {
+    fun officialPermissionActionAndFlagBoundaryArePreserved() {
         assertEquals("com.android.example.USB_PERMISSION", EnumerateDevice.USB_PERMISSION_ACTION)
-        assertEquals(PendingIntent.FLAG_MUTABLE, EnumerateDevice.permissionIntentFlags(30))
+        assertEquals(PendingIntent.FLAG_ONE_SHOT, EnumerateDevice.permissionIntentFlags(30))
         assertEquals(PendingIntent.FLAG_IMMUTABLE, EnumerateDevice.permissionIntentFlags(31))
     }
 

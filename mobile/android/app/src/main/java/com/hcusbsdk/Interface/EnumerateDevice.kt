@@ -96,6 +96,6 @@ class EnumerateDevice {
                 (vendorId == 11231 && productId in 1281..1536)
 
         internal fun permissionIntentFlags(sdkInt: Int): Int =
-            if (sdkInt <= Build.VERSION_CODES.R) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
+            if (sdkInt <= Build.VERSION_CODES.R) PendingIntent.FLAG_ONE_SHOT else PendingIntent.FLAG_IMMUTABLE
     }
 }
