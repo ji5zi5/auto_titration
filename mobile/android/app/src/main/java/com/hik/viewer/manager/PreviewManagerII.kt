@@ -1,7 +1,7 @@
 package com.hik.viewer.manager
 
-import android.graphics.Bitmap
 import android.util.Size
+import android.view.SurfaceView
 import com.hcusbsdk.Interface.FStreamCallBack
 import com.hcusbsdk.Interface.USB_FRAME_INFO
 import com.hcusbsdk.jna.USB_FRAME_INFO as JnaUSB_FRAME_INFO
@@ -44,6 +44,8 @@ class PreviewManagerII private constructor() {
     private var activeOnFrame: ((F2StreamFrame) -> Unit)? = null
     private var latestProcessedFrame: OfficialProcessedF2Frame? = null
     private var latestOfficialOfflinePreviewInfo: PreviewInfoDataBean? = null
+    private var viewerSurfaceView: SurfaceView? = null
+    private var renderer: V2.f? = null
     @Volatile
     internal var latestOfficialOsdBgCallbackBean: com.hik.viewercommon.data.bean.OsdBgCallbackBean? = null
     @Volatile
@@ -78,12 +80,49 @@ class PreviewManagerII private constructor() {
         latestProcessedFrame?.takeIf { it.frameCounter == frameCounter }
     }
 
-    /** Hands the official g3 NV12 output through the recovered GYUV/NV21 bitmap path. */
-    fun renderOfficialNv12Preview(nv12: ByteArray, width: Int, height: Int): Bitmap {
+    /**
+     * Recovered PreviewManagerII.l0 renderer binding: X2.a/X2.c factory first,
+     * followed by the module-dependent a/b/c renderer branch.
+     */
+    fun l0(viewerSurfaceView: SurfaceView) {
+        bindOfficialRenderer(
+            viewerSurfaceView = viewerSurfaceView,
+            useM4 = l2.k.a("useM4", true),
+            isF2Module = Z2.a.a.p().k() in 8..12,
+            useNonF1Processing = Z2.a.a.t(),
+        )
+    }
+
+    internal fun bindOfficialRenderer(
+        viewerSurfaceView: SurfaceView,
+        useM4: Boolean,
+        isF2Module: Boolean,
+        useNonF1Processing: Boolean,
+    ): V2.f {
+        val factory: X2.b = if (useM4) X2.c() else X2.a()
+        val selected = when {
+            !isF2Module -> factory.a(viewerSurfaceView)
+            useNonF1Processing -> factory.c(viewerSurfaceView)
+            else -> factory.b(viewerSurfaceView)
+        }
+        synchronized(lifecycleLock) {
+            renderer?.c()
+            renderer?.release()
+            this.viewerSurfaceView = viewerSurfaceView
+            renderer = selected
+        }
+        return selected
+    }
+
+    fun i1(picSize: Size): ByteArray? = synchronized(lifecycleLock) { renderer?.e(picSize) }
+
+    fun W(picSize: Size): com.hik.library.player.d? = synchronized(lifecycleLock) { renderer?.f(picSize) }
+
+    /** Compatibility validator only; rendering is exclusively owned by V2.f. */
+    @Deprecated("Bind a SurfaceView through l0; PreviewManagerII no longer returns bitmaps")
+    fun renderOfficialNv12Preview(nv12: ByteArray, width: Int, height: Int) {
         require(width > 0 && height > 0)
         require(nv12.size >= width * height * 3 / 2)
-        val nv21 = k3.a.a.g(nv12, Size(width, height))
-        return k3.a.a.a(nv21, width, height)
     }
 
     fun closePreviewCallback() {
@@ -93,6 +132,7 @@ class PreviewManagerII private constructor() {
             latestProcessedFrame = null
             latestOfficialOfflinePreviewInfo = null
             cleanupProcessorsLocked()
+            cleanupRendererLocked()
             stopConsumerLocked()
             stopCallbackExecutorLocked()
         }
@@ -174,6 +214,7 @@ class PreviewManagerII private constructor() {
         activeProcessor = processor
         installOfficialProcessorCallbacks(processor)
         val previewStreamInfo = processor.d(packet.bytes)
+        handOffOfficialFrame(previewStreamInfo, packet)
         return OfficialProcessedF2Frame(
             frameCounter = packet.frameCounter,
             packetSize = packet.bytes.size,
@@ -181,8 +222,22 @@ class PreviewManagerII private constructor() {
             height = packet.packetHeight,
             previewStreamInfo = previewStreamInfo,
             isOffStreamInfo = packet.isOffStreamInfo,
-            processorBucket = if (packet.streamingNew) "g3.e" else "g3.d",
+            processorBucket = processor.javaClass.name,
         )
+    }
+
+    private fun handOffOfficialFrame(previewStreamInfo: PreviewStreamInfo, packet: BufferedF2Packet) {
+        val previewInfo = previewStreamInfo.getPreviewInfoData()
+        val nv12Data = previewInfo.getByteArrDst()
+        if (nv12Data.isEmpty() || packet.packetWidth <= 0 || packet.packetHeight <= 0) return
+        val size = Size(packet.packetWidth, packet.packetHeight)
+        val frameNumStamp = packet.frameCounter.toInt()
+        val activeRenderer = synchronized(lifecycleLock) { renderer } ?: return
+        if (Z2.a.a.t()) {
+            activeRenderer.j(null, nv12Data, size, frameNumStamp, null, null)
+        } else {
+            activeRenderer.h(null, nv12Data, size, frameNumStamp)
+        }
     }
 
     private fun installOfficialProcessorCallbacks(processor: g3.a) {
@@ -201,6 +256,13 @@ class PreviewManagerII private constructor() {
     private fun cleanupProcessorsLocked() {
         activeProcessor?.k()
         activeProcessor = null
+    }
+
+    private fun cleanupRendererLocked() {
+        renderer?.c()
+        renderer?.release()
+        renderer = null
+        viewerSurfaceView = null
     }
 
     private fun stopCallbackExecutorLocked() {

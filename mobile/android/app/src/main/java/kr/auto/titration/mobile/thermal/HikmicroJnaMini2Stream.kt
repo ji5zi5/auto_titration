@@ -1,12 +1,11 @@
 package kr.auto.titration.mobile.thermal
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.SystemClock
 import android.util.Base64
+import android.view.SurfaceView
 import com.hcusbsdk.Interface.JavaInterface
 import com.hik.f2module.F2StreamFrame
 import com.hik.f2module.F2StreamAttemptDiagnostic
@@ -14,7 +13,6 @@ import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
 import com.hik.viewer.manager.OfficialProcessedF2Frame
 import com.hik.viewer.manager.PreviewManagerII
-import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
@@ -63,6 +61,11 @@ object HikmicroJnaMini2Stream {
     private val f2Api: F2UsbModuleApi = F2UsbModuleApi.INSTANCE
     private val f2Helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
     // startedElapsedMs is owned by F2UsbModuleHelper; this adapter reads activeStartedElapsedMs().
+
+    /** Binds the official SurfaceView renderer; WebView remains an extraction-only observer. */
+    fun bindOfficialPreviewSurface(surfaceView: SurfaceView) {
+        PreviewManagerII.INSTANCE.l0(surfaceView)
+    }
 
     @Synchronized
     fun ensureStreaming(
@@ -472,30 +475,12 @@ object HikmicroJnaMini2Stream {
                 packetEvidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
             )
         }
-        return buildYuvPreviewFrameFromOfficial(
-            officialNv12 = officialNv12,
-            matrixWidth = officialFrame.width.takeIf { it > 0 } ?: transportWidth.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_WIDTH,
-            matrixHeight = officialFrame.height.takeIf { it > 0 } ?: transportHeight.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_HEIGHT,
-            previewRotationDegrees = previewRotationDegrees,
-            rawValues = rawValues,
-            stats = stats,
-            metadata = metadata,
-            packetStatus = packetStatus,
-            evidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
-        )
-    }
-
-    private fun buildYuvPreviewFrameFromOfficial(
-        officialNv12: ByteArray,
-        matrixWidth: Int,
-        matrixHeight: Int,
-        previewRotationDegrees: Int,
-        rawValues: IntArray?,
-        stats: RawStats?,
-        metadata: HikmicroF2TemperatureMetadata?,
-        packetStatus: String,
-        evidencePrefixHex: String,
-    ): ThermalPreviewFrame {
+        val matrixWidth = officialFrame.width.takeIf { it > 0 }
+            ?: transportWidth.takeIf { it > 0 }
+            ?: HIKMICRO_THERMAL_IMAGE_WIDTH
+        val matrixHeight = officialFrame.height.takeIf { it > 0 }
+            ?: transportHeight.takeIf { it > 0 }
+            ?: HIKMICRO_THERMAL_IMAGE_HEIGHT
         val pixelCount = matrixWidth * matrixHeight
         if (pixelCount <= 0 || pixelCount > MAX_PREVIEW_PIXELS || officialNv12.size < pixelCount * 3 / 2) {
             return ThermalPreviewFrame(
@@ -511,34 +496,17 @@ object HikmicroJnaMini2Stream {
                 deviceTemperatureSummary = metadata.validatedDeviceGlobalTemperatureSummary(),
                 packetClassification = "official_g3_preview_stream_info",
                 packetStatus = packetStatus,
-                packetEvidencePrefixHex = evidencePrefixHex,
+                packetEvidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
             )
         }
-        val sourceBitmap = PreviewManagerII.INSTANCE.renderOfficialNv12Preview(officialNv12, matrixWidth, matrixHeight)
-        val bitmap = if (previewRotationDegrees == 0) {
-            sourceBitmap
-        } else {
-            Bitmap.createBitmap(
-                sourceBitmap,
-                0,
-                0,
-                sourceBitmap.width,
-                sourceBitmap.height,
-                Matrix().apply { postRotate(previewRotationDegrees.toFloat()) },
-                true,
-            ).also { sourceBitmap.recycle() }
-        }
-        val renderedWidth = bitmap.width
-        val renderedHeight = bitmap.height
-        val dataUrl = ByteArrayOutputStream().use { output ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 70, output)
-            bitmap.recycle()
-            "data:image/jpeg;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
-        }
+        val extractedPicture = PreviewManagerII.INSTANCE.i1(android.util.Size(matrixWidth, matrixHeight))
+        val dataUrl = extractedPicture?.takeIf { it.isNotEmpty() }?.let {
+            "data:image/jpeg;base64,${Base64.encodeToString(it, Base64.NO_WRAP)}"
+        }.orEmpty()
         return ThermalPreviewFrame(
             dataUrl = dataUrl,
-            width = renderedWidth,
-            height = renderedHeight,
+            width = matrixWidth,
+            height = matrixHeight,
             previewRotationDegrees = previewRotationDegrees,
             rawAvg = stats?.average,
             rawMin = stats?.min,
@@ -549,7 +517,7 @@ object HikmicroJnaMini2Stream {
             deviceTemperatureSummary = metadata.validatedDeviceGlobalTemperatureSummary(),
             packetClassification = "official_g3_preview_stream_info",
             packetStatus = packetStatus,
-            packetEvidencePrefixHex = evidencePrefixHex,
+            packetEvidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
         )
     }
 
