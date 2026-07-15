@@ -71,6 +71,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation("com.google.ai.edge.litert:litert:$liteRtVersion")
+    implementation("com.google.code.gson:gson:2.11.0")
 }
 
 val hikmicroRedistributionApproved = providers.gradleProperty("hikmicroRedistributionApproved")
