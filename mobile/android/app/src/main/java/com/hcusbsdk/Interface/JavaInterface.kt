@@ -1,8 +1,6 @@
 package com.hcusbsdk.Interface
 
 import android.content.Context
-import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbManager
 import com.hcusbsdk.jna.HCUSBSDK
 import com.hcusbsdk.jna.HCUSBSDKByJNA
 import com.hcusbsdk.jna.USB_COMMON_COND as JnaUSB_COMMON_COND
@@ -92,6 +90,7 @@ class JavaInterface private constructor() {
     private var nativeBridge: NativeBridge = NoopNativeBridge
 
     private val contextDeviceInfos = mutableListOf<USB_DEVICE_INFO>()
+    private val enumerateDevice = EnumerateDevice()
 
     private object NoopNativeBridge : NativeBridge {
         override fun USB_Init(): Boolean = false
@@ -136,37 +135,27 @@ class JavaInterface private constructor() {
     fun USB_GetDeviceCount(context: Context): Int {
         releaseAllDeviceConnections()
         m_iEnumType = ENUM_TYPE_JAVA
-        val usbManager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
-        if (usbManager == null) {
-            contextDeviceInfos.clear()
-            return 0
-        }
-        val opened = mutableListOf<USB_DEVICE_INFO>()
-        usbManager.deviceList.values
-            .filter { it.isHikmicroCandidate() }
-            .sortedWith(compareBy<UsbDevice> { it.deviceName })
-            .forEach { device ->
-                val connection = runCatching { usbManager.openDevice(device) }.getOrNull()
-                if (connection != null) {
-                    opened += USB_DEVICE_INFO().apply {
-                        dwSize = 0
-                        dwIndex = opened.size + 1
-                        dwVID = device.vendorId
-                        dwPID = device.productId
-                        szManufacturer = safeUsbString { device.manufacturerName }
-                        szDeviceName = device.deviceName
-                        szSerialNumber = safeUsbString { device.serialNumber }
-                        byHaveAudio = 0
-                        dwFd = connection.fileDescriptor
-                        usbDeviceConnection = connection
-                    }
-                }
+        val count = enumerateDevice.EnumDevice(context)
+        val opened = enumerateDevice.drainEnumeratedDevices().mapIndexed { index, enumeratedDevice ->
+            val device = enumeratedDevice.device
+            USB_DEVICE_INFO().apply {
+                dwSize = 0
+                dwIndex = index + 1
+                dwVID = device.vendorId
+                dwPID = device.productId
+                szManufacturer = safeUsbString { device.manufacturerName }
+                szDeviceName = device.deviceName
+                szSerialNumber = safeUsbString { device.serialNumber }
+                byHaveAudio = 0
+                dwFd = enumeratedDevice.fileDescriptor
+                usbDeviceConnection = enumeratedDevice.connection
             }
+        }
         synchronized(contextDeviceInfos) {
             contextDeviceInfos.clear()
             contextDeviceInfos.addAll(opened)
         }
-        return opened.size
+        return count
     }
 
     fun USB_EnumDevices(count: Int, devices: Array<USB_DEVICE_INFO>): Boolean {
@@ -316,6 +305,7 @@ class JavaInterface private constructor() {
     }
 
     fun releaseAllDeviceConnections() {
+        enumerateDevice.releaseOpenedConnections()
         synchronized(contextDeviceInfos) {
             contextDeviceInfos.forEach { it.closeConnection() }
             contextDeviceInfos.clear()
@@ -373,9 +363,6 @@ class JavaInterface private constructor() {
             target.byRes = byRes.copyOf()
         }
     }
-
-    private fun UsbDevice.isHikmicroCandidate(): Boolean =
-        vendorId == 11231 || vendorId == 0x20af || vendorId == 8367
 
     private fun safeUsbString(read: () -> String?): String =
         runCatching { read().orEmpty() }.getOrDefault("")
