@@ -11,6 +11,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Test
@@ -254,6 +255,13 @@ class PreviewManagerIIF2BufferingTest {
         } finally {
             manager.closePreviewCallback()
             Z2.a.a.u(previousProfile)
+        }
+    }
+
+    @Test
+    fun officialRendererRejectsLumaOnlySubstituteBeforeGyuvHandoff() {
+        assertThrows(IllegalArgumentException::class.java) {
+            manager.renderOfficialNv12Preview(ByteArray(4), width = 2, height = 2)
         }
     }
 

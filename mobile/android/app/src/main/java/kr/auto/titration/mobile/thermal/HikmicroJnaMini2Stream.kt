@@ -2,27 +2,33 @@ package kr.auto.titration.mobile.thermal
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.SystemClock
 import android.util.Base64
+import com.hcusbsdk.Interface.JavaInterface
 import com.hik.f2module.F2StreamFrame
 import com.hik.f2module.F2StreamAttemptDiagnostic
 import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
+import com.hik.viewer.manager.OfficialProcessedF2Frame
+import com.hik.viewer.manager.PreviewManagerII
 import java.io.ByteArrayOutputStream
+import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONObject
 
-private const val STREAM_RETRY_INTERVAL_MS = 30_500L
 const val FRAME_WAIT_TIMEOUT_MS = 30_000L
 private const val MAX_CAPTURE_BYTES = 512 * 1024
 private const val HIKMICRO_THERMAL_IMAGE_WIDTH = 256
 private const val HIKMICRO_THERMAL_IMAGE_HEIGHT = 192
+private const val HIKMICRO_OFFICIAL_MAX_PROVED_WIDTH = 384
+private const val HIKMICRO_OFFICIAL_MAX_PROVED_HEIGHT = 288
 private const val HIKMICRO_DEFAULT_DISPLAY_ROTATION_DEGREES = 90
 private const val HIKMICRO_RAW_BYTES_PER_PIXEL = 2
-private const val MAX_PREVIEW_PIXELS = HIKMICRO_THERMAL_IMAGE_WIDTH * HIKMICRO_THERMAL_IMAGE_HEIGHT
+private const val MAX_PREVIEW_PIXELS = HIKMICRO_OFFICIAL_MAX_PROVED_WIDTH * HIKMICRO_OFFICIAL_MAX_PROVED_HEIGHT
 private const val THERMAL_PREVIEW_JSON_KEY = "thermal_preview_data_url"
 
 enum class Mini2OfficialRuntimeMode {
@@ -41,16 +47,18 @@ object HikmicroJnaMini2Stream {
     private var latestFrameSnapshot: StreamFrameSnapshot? = null
 
     @Volatile
-    private var lastAttemptElapsedMs: Long = 0L
-
-    @Volatile
     private var lastFailureReason: String = "not_started"
 
     @Volatile
     private var lastStreamStageReport: String = "not_started"
 
     @Volatile
+    private var lastInvalidPacketDiagnostic: Mini2InvalidPacketDiagnostic? = null
+
+    @Volatile
     private var thermalPreviewRotationDegrees: Int = HIKMICRO_DEFAULT_DISPLAY_ROTATION_DEGREES
+
+    private var previewSuccessTimes: Long = 0L
 
     private val f2Api: F2UsbModuleApi = F2UsbModuleApi.INSTANCE
     private val f2Helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
@@ -72,7 +80,7 @@ object HikmicroJnaMini2Stream {
         latestFrameSnapshot?.let { snapshot ->
             if (now - snapshot.capturedElapsedMs <= FRAME_WAIT_TIMEOUT_MS) {
                 return snapshot.toStatus(
-                    "Mini2 F2 raw preview frame observed through official F2 module callback; mode=$modeLabel; route=$route; stages=$lastStreamStageReport; Celsius still blocked until fixture validation",
+                    "Mini2 F2 raw preview frame observed through official F2 module callback; mode=$modeLabel; route=$route; stages=$lastStreamStageReport; device-reported Celsius summary is allowed only when provenance=device_global_summary; full-matrix Celsius remains unproved and blocked",
                     route = route,
                 )
             }
@@ -91,39 +99,14 @@ object HikmicroJnaMini2Stream {
 
         if (f2Helper.isStreamingForDevice(device.deviceName)) {
             val elapsed = now - f2Helper.activeStartedElapsedMs()
-            if (elapsed >= FRAME_WAIT_TIMEOUT_MS) {
-                lastFailureReason = "restart stalled HIKMICRO stream attempt after ${elapsed}ms without F2 frame callback"
-                lastStreamStageReport = "${f2Helper.lastStageReport}; restart stalled HIKMICRO stream attempt"
-                f2Helper.closeSession()
-            } else {
-                return Mini2RawStreamStatus.streamAttemptStarted(
-                    reason = "F2 official module stream attempt is active_session_reuse_no_restart and no frame callback has arrived yet; mode=$modeLabel; route=$route; elapsedMs=$elapsed; stages=${f2Helper.lastStageReport}; lastFailure=$lastFailureReason",
-                    discovery = "hikmicro_official_f2_module_callback_waiting_for_frame",
-                    selectedBackend = HikmicroMini2ModuleType.F2.backendName,
-                    stageReport = f2Helper.lastStageReport,
-                    deviceRoute = route,
-                    fd = f2Helper.activeSelectedFd(),
-                    userId = f2Helper.activeUserId(),
-                    channel = f2Helper.activeChannel(),
-                )
-            }
+            lastFailureReason = "explicit manual confirm forces fresh official retry after ${elapsed}ms without F2 frame callback"
+            lastStreamStageReport = "${f2Helper.lastStageReport}; explicit_manual_confirm_full_cleanup_before_fresh_start elapsedMs=$elapsed"
+            f2Helper.closeSession()
         }
-
-        if (now - lastAttemptElapsedMs < STREAM_RETRY_INTERVAL_MS) {
-            return Mini2RawStreamStatus.streamAttemptStarted(
-                reason = "Retry throttled after previous F2 official module attempt; mode=$modeLabel; route=$route; stages=$lastStreamStageReport; lastFailure=$lastFailureReason",
-                discovery = "hikmicro_official_f2_module_retry_throttled",
-                selectedBackend = HikmicroMini2ModuleType.F2.backendName,
-                stageReport = lastStreamStageReport,
-                deviceRoute = route,
-                fd = f2Helper.activeSelectedFd(),
-                userId = f2Helper.activeUserId(),
-                channel = f2Helper.activeChannel(),
-            )
-        }
-        lastAttemptElapsedMs = now
 
         return try {
+            lastInvalidPacketDiagnostic = null
+            previewSuccessTimes = 0L
             f2Helper.closeSession()
             val open = f2Api.openUsbModule(
                 context = context,
@@ -139,8 +122,21 @@ object HikmicroJnaMini2Stream {
 
             val start = f2Api.startStreamPreview(
                 context = context,
-                callback = { frame -> captureOfficialF2Frame(frame) },
-                streamingNew = true,
+                callback = { frame ->
+                    captureOfficialF2Frame(frame)
+                    onOfficialPreviewSuccess(context.cacheDir)
+                },
+                onInvalidPacketSizeTimeout = { packetSize, elapsedMs ->
+                    lastInvalidPacketDiagnostic = Mini2InvalidPacketDiagnostic(
+                        observedPacketSize = packetSize,
+                        elapsedMs = elapsedMs,
+                        allowedPacketSizes = f2Helper.activeProfileResolution()?.profile?.allowedPacketSizes ?: emptySet(),
+                        userId = f2Helper.activeUserId(),
+                        channel = f2Helper.activeChannel(),
+                        fd = f2Helper.activeSelectedFd(),
+                        profileClass = f2Helper.activeProfileResolution()?.profile?.officialClassName ?: "",
+                    )
+                },
             )
             lastStreamStageReport = start.stageReport
             if (!start.ok) {
@@ -151,6 +147,9 @@ object HikmicroJnaMini2Stream {
                     stageReport = start.stageReport,
                     route = route,
                     attemptDiagnostics = start.attemptDiagnostics,
+                    callbackEntryCount = javaCallbackEntryCount(),
+                    callbackEntryDetail = javaCallbackEntryDetail(),
+                    invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
                     fd = failedAttempt?.fd ?: f2Helper.activeSelectedFd(),
                     userId = failedAttempt?.userId ?: f2Helper.activeUserId(),
                     channel = failedAttempt?.channel ?: start.channel,
@@ -187,7 +186,7 @@ object HikmicroJnaMini2Stream {
             val frameAgeMs = now - snapshot.capturedElapsedMs
             if (frameAgeMs <= FRAME_WAIT_TIMEOUT_MS) {
                 return snapshot.toStatus(
-                    "Mini2 F2 raw preview frame observed during passive_status_peek through official F2 module callback; mode=$modeLabel; route=$route; stages=$lastStreamStageReport; Celsius still blocked until fixture validation",
+                    "Mini2 F2 raw preview frame observed during passive_status_peek through official F2 module callback; mode=$modeLabel; route=$route; stages=$lastStreamStageReport; device-reported Celsius summary is allowed only when provenance=device_global_summary; full-matrix Celsius remains unproved and blocked",
                     route = route,
                 )
             }
@@ -206,6 +205,9 @@ object HikmicroJnaMini2Stream {
                     selectedBackend = HikmicroMini2ModuleType.F2.backendName,
                     stageReport = lastStreamStageReport,
                     deviceRoute = route,
+                    callbackEntryCount = javaCallbackEntryCount(),
+                    callbackEntryDetail = javaCallbackEntryDetail(),
+                    invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
                 )
             }
             return null
@@ -225,15 +227,17 @@ object HikmicroJnaMini2Stream {
                 fd = fd,
                 userId = userId,
                 channel = channel,
+                callbackEntryCount = javaCallbackEntryCount(),
+                callbackEntryDetail = javaCallbackEntryDetail(),
+                invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
             )
         }
 
         lastFailureReason = "passive_status_peek found stalled HIKMICRO stream attempt after ${elapsed}ms without F2 frame callback; no new stream opened"
         lastStreamStageReport = "${f2Helper.lastStageReport}; passive_status_peek stalled_without_frame elapsedMs=$elapsed"
-        f2Helper.closeSession()
         return Mini2RawStreamStatus(
             rawStreamStatus = "blocked_native_stream",
-            reason = "$lastFailureReason; press Mini2 USB 확인 to restart an explicit official-primary probe",
+            reason = "$lastFailureReason; passive_status_peek is read-only and leaves the active official session untouched; press Mini2 USB 확인 to restart an explicit official-primary probe",
             nativeSymbolDiscovery = "hikmicro_official_f2_module_passive_peek_stalled",
             selectedBackend = HikmicroMini2ModuleType.F2.backendName,
             stageReport = lastStreamStageReport,
@@ -241,6 +245,9 @@ object HikmicroJnaMini2Stream {
             fd = fd,
             userId = userId,
             channel = channel,
+            callbackEntryCount = javaCallbackEntryCount(),
+            callbackEntryDetail = javaCallbackEntryDetail(),
+            invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
         )
     }
 
@@ -306,6 +313,9 @@ object HikmicroJnaMini2Stream {
             userId = f2Helper.activeUserId(),
             channel = f2Helper.activeChannel(),
             attemptDiagnostics = attemptDiagnostics.map { it.toJson() },
+            callbackEntryCount = javaCallbackEntryCount(),
+            callbackEntryDetail = javaCallbackEntryDetail(),
+            invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
         )
 
     private fun blockedNativeStreamWithStage(
@@ -316,6 +326,9 @@ object HikmicroJnaMini2Stream {
         fd: Int = f2Helper.activeSelectedFd(),
         userId: Int = f2Helper.activeUserId(),
         channel: Int = f2Helper.activeChannel(),
+        callbackEntryCount: Long = javaCallbackEntryCount(),
+        callbackEntryDetail: String = javaCallbackEntryDetail(),
+        invalidPacketDiagnostic: Mini2InvalidPacketDiagnostic? = lastInvalidPacketDiagnostic,
     ): Mini2RawStreamStatus =
         Mini2RawStreamStatus(
             rawStreamStatus = "blocked_native_stream",
@@ -328,7 +341,14 @@ object HikmicroJnaMini2Stream {
             userId = userId,
             channel = channel,
             attemptDiagnostics = attemptDiagnostics.map { it.toJson() },
+            callbackEntryCount = callbackEntryCount,
+            callbackEntryDetail = callbackEntryDetail,
+            invalidPacketDiagnostic = invalidPacketDiagnostic,
         )
+
+    private fun javaCallbackEntryCount(): Long = JavaInterface.getInstance().streamCallbackEntryCount
+
+    private fun javaCallbackEntryDetail(): String = JavaInterface.getInstance().lastStreamCallbackEntryDetail
 
     private fun closeSessionAfterStartFailure(reason: String): String {
         f2Helper.closeSession()
@@ -350,11 +370,27 @@ object HikmicroJnaMini2Stream {
         .put("user_id", userId)
         .put("start_path", startPath)
         .put("verbose_only", verboseOnly)
+        .put("profile_class", profileClass)
+        .put("profile_module_id", profileModuleId)
+        .put("profile_firmware_date", profileFirmwareDate)
+        .put("profile_allowed_sizes", org.json.JSONArray(profileAllowedSizes.toList()))
 
     private fun captureOfficialF2Frame(frame: F2StreamFrame) {
         val bytes = frame.bytes.copyOf(frame.bytes.size.coerceIn(0, MAX_CAPTURE_BYTES))
         val previewRotation = thermalPreviewRotationDegrees
-        val preview = buildPreviewFrame(bytes, frame.width, frame.height, previewRotation)
+        val officialFrame = PreviewManagerII.INSTANCE.latestOfficialProcessedFrame(frame.frameCounter)
+        val preview = if (officialFrame != null) {
+            buildPreviewFrameFromOfficial(officialFrame, frame.width, frame.height, previewRotation)
+        } else {
+            ThermalPreviewFrame(
+                width = frame.width.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_WIDTH,
+                height = frame.height.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_HEIGHT,
+                previewRotationDegrees = previewRotation,
+                packetClassification = "official_preview_stream_info_missing",
+                packetStatus = "unsupported_no_official_data_object",
+                packetEvidencePrefixHex = bytes.prefixHexForStatus(),
+            )
+        }
         latestFrameSnapshot = StreamFrameSnapshot(
             frameCounter = max(1L, frame.frameCounter),
             callbackUserId = frame.callbackUserId,
@@ -374,54 +410,126 @@ object HikmicroJnaMini2Stream {
             rawMatrixWidth = preview.rawMatrixWidth,
             rawMatrixHeight = preview.rawMatrixHeight,
             rawValues = preview.rawValues,
+            deviceTemperatureSummary = preview.deviceTemperatureSummary,
+            packetClassification = preview.packetClassification,
+            packetStatus = preview.packetStatus,
+            packetEvidencePrefixHex = preview.packetEvidencePrefixHex,
             capturedElapsedMs = SystemClock.elapsedRealtime(),
         )
     }
 
-    private fun buildPreviewFrame(bytes: ByteArray, width: Int, height: Int, previewRotationDegrees: Int): ThermalPreviewFrame {
-        if (bytes.size >= 4 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte()) {
+    @Synchronized
+    internal fun onOfficialPreviewSuccess(cacheDir: File): Long {
+        previewSuccessTimes += 1L
+        if (previewSuccessTimes == 10L) {
+            f2Helper.onPreviewFrameForCalibrationPrefetch(cacheDir, previewSuccessTimes)
+        }
+        return previewSuccessTimes
+    }
+
+    @Synchronized
+    internal fun resetOfficialPreviewSuccessCounter() {
+        previewSuccessTimes = 0L
+    }
+
+
+    private fun buildPreviewFrameFromOfficial(
+        officialFrame: OfficialProcessedF2Frame,
+        transportWidth: Int,
+        transportHeight: Int,
+        previewRotationDegrees: Int,
+    ): ThermalPreviewFrame {
+        val previewData = officialFrame.previewStreamInfo.getPreviewInfoData()
+        val officialNv12 = previewData.getByteArrDst()
+        val rawBytes = previewData.getOffByteArrRawData().takeIf { it.isNotEmpty() }
+            ?: previewData.getByteArrRawData().takeIf { it.isNotEmpty() }
+        val rawValues = rawBytes?.decodeOfficialRaw16(officialFrame.width, officialFrame.height)
+        val stats = rawValues?.let { summarizeAllRawValues(it) }
+        val metadata: HikmicroF2TemperatureMetadata? = when (val streamInfo = officialFrame.previewStreamInfo.getIStreamInfo()) {
+            is h3.c -> streamInfo.a().toMetadata()
+            is h3.b -> streamInfo.a().toMetadata()
+            else -> null
+        }
+        val packetStatus = if (officialFrame.previewStreamInfo.getIStreamInfo() is h3.c) {
+            "official_preview_stream_info_offline_upload"
+        } else {
+            "official_preview_stream_info_private"
+        }
+        if (officialNv12.isEmpty()) {
             return ThermalPreviewFrame(
-                dataUrl = "data:image/jpeg;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}",
-                width = width.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_WIDTH,
-                height = height.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_HEIGHT,
+                width = officialFrame.width.takeIf { it > 0 } ?: transportWidth.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_WIDTH,
+                height = officialFrame.height.takeIf { it > 0 } ?: transportHeight.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_HEIGHT,
                 previewRotationDegrees = previewRotationDegrees,
+                rawAvg = stats?.average,
+                rawMin = stats?.min,
+                rawMax = stats?.max,
+                rawMatrixWidth = if (rawValues != null) officialFrame.width else 0,
+                rawMatrixHeight = if (rawValues != null) officialFrame.height else 0,
+                rawValues = rawValues,
+                deviceTemperatureSummary = metadata.validatedDeviceGlobalTemperatureSummary(),
+                packetClassification = "official_g3_preview_stream_info",
+                packetStatus = packetStatus,
+                packetEvidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
             )
         }
-        val safeWidth = width.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_WIDTH
-        val matrixWidth = min(HIKMICRO_THERMAL_IMAGE_WIDTH, safeWidth).coerceAtLeast(1)
-        val availableRows = if (safeWidth > 0) bytes.size / (safeWidth * HIKMICRO_RAW_BYTES_PER_PIXEL) else 0
-        val matrixHeight = min(HIKMICRO_THERMAL_IMAGE_HEIGHT, min(height.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_HEIGHT, availableRows)).coerceAtLeast(1)
+        return buildYuvPreviewFrameFromOfficial(
+            officialNv12 = officialNv12,
+            matrixWidth = officialFrame.width.takeIf { it > 0 } ?: transportWidth.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_WIDTH,
+            matrixHeight = officialFrame.height.takeIf { it > 0 } ?: transportHeight.takeIf { it > 0 } ?: HIKMICRO_THERMAL_IMAGE_HEIGHT,
+            previewRotationDegrees = previewRotationDegrees,
+            rawValues = rawValues,
+            stats = stats,
+            metadata = metadata,
+            packetStatus = packetStatus,
+            evidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
+        )
+    }
+
+    private fun buildYuvPreviewFrameFromOfficial(
+        officialNv12: ByteArray,
+        matrixWidth: Int,
+        matrixHeight: Int,
+        previewRotationDegrees: Int,
+        rawValues: IntArray?,
+        stats: RawStats?,
+        metadata: HikmicroF2TemperatureMetadata?,
+        packetStatus: String,
+        evidencePrefixHex: String,
+    ): ThermalPreviewFrame {
         val pixelCount = matrixWidth * matrixHeight
-        if (pixelCount <= 0 || pixelCount > MAX_PREVIEW_PIXELS || bytes.size < HIKMICRO_RAW_BYTES_PER_PIXEL) {
-            return ThermalPreviewFrame(width = matrixWidth, height = matrixHeight)
+        if (pixelCount <= 0 || pixelCount > MAX_PREVIEW_PIXELS || officialNv12.size < pixelCount * 3 / 2) {
+            return ThermalPreviewFrame(
+                width = matrixWidth,
+                height = matrixHeight,
+                previewRotationDegrees = previewRotationDegrees,
+                rawAvg = stats?.average,
+                rawMin = stats?.min,
+                rawMax = stats?.max,
+                rawMatrixWidth = if (rawValues != null) matrixWidth else 0,
+                rawMatrixHeight = if (rawValues != null) matrixHeight else 0,
+                rawValues = rawValues,
+                deviceTemperatureSummary = metadata.validatedDeviceGlobalTemperatureSummary(),
+                packetClassification = "official_g3_preview_stream_info",
+                packetStatus = packetStatus,
+                packetEvidencePrefixHex = evidencePrefixHex,
+            )
         }
-        val rawValues = IntArray(pixelCount)
-        var minRaw = Int.MAX_VALUE
-        var maxRaw = Int.MIN_VALUE
-        var sumRaw = 0L
-        for (row in 0 until matrixHeight) {
-            val sourceRowOffset = row * safeWidth * HIKMICRO_RAW_BYTES_PER_PIXEL
-            for (col in 0 until matrixWidth) {
-                val index = row * matrixWidth + col
-                val byteIndex = sourceRowOffset + col * HIKMICRO_RAW_BYTES_PER_PIXEL
-                if (byteIndex + 1 >= bytes.size) break
-                val value = (bytes[byteIndex].toInt() and 0xff) or ((bytes[byteIndex + 1].toInt() and 0xff) shl 8)
-                rawValues[index] = value
-                minRaw = min(minRaw, value)
-                maxRaw = max(maxRaw, value)
-                sumRaw += value.toLong()
-            }
+        val sourceBitmap = PreviewManagerII.INSTANCE.renderOfficialNv12Preview(officialNv12, matrixWidth, matrixHeight)
+        val bitmap = if (previewRotationDegrees == 0) {
+            sourceBitmap
+        } else {
+            Bitmap.createBitmap(
+                sourceBitmap,
+                0,
+                0,
+                sourceBitmap.width,
+                sourceBitmap.height,
+                Matrix().apply { postRotate(previewRotationDegrees.toFloat()) },
+                true,
+            ).also { sourceBitmap.recycle() }
         }
-        if (minRaw == Int.MAX_VALUE || maxRaw == Int.MIN_VALUE) {
-            return ThermalPreviewFrame(width = matrixWidth, height = matrixHeight)
-        }
-        val pixels = IntArray(pixelCount)
-        for (index in 0 until pixelCount) {
-            val luminance = normalizeRawToLuminance(rawValues[index], minRaw, maxRaw)
-            pixels[index] = 0xff000000.toInt() or (luminance shl 16) or (luminance shl 8) or luminance
-        }
-        val rotated = rotateThermalPixels(pixels, matrixWidth, matrixHeight, previewRotationDegrees)
-        val bitmap = Bitmap.createBitmap(rotated.pixels, rotated.width, rotated.height, Bitmap.Config.ARGB_8888)
+        val renderedWidth = bitmap.width
+        val renderedHeight = bitmap.height
         val dataUrl = ByteArrayOutputStream().use { output ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 70, output)
             bitmap.recycle()
@@ -429,17 +537,47 @@ object HikmicroJnaMini2Stream {
         }
         return ThermalPreviewFrame(
             dataUrl = dataUrl,
-            width = rotated.width,
-            height = rotated.height,
+            width = renderedWidth,
+            height = renderedHeight,
             previewRotationDegrees = previewRotationDegrees,
-            rawAvg = sumRaw.toDouble() / pixelCount,
-            rawMin = minRaw,
-            rawMax = maxRaw,
-            rawMatrixWidth = matrixWidth,
-            rawMatrixHeight = matrixHeight,
+            rawAvg = stats?.average,
+            rawMin = stats?.min,
+            rawMax = stats?.max,
+            rawMatrixWidth = if (rawValues != null) matrixWidth else 0,
+            rawMatrixHeight = if (rawValues != null) matrixHeight else 0,
             rawValues = rawValues,
+            deviceTemperatureSummary = metadata.validatedDeviceGlobalTemperatureSummary(),
+            packetClassification = "official_g3_preview_stream_info",
+            packetStatus = packetStatus,
+            packetEvidencePrefixHex = evidencePrefixHex,
         )
     }
+
+    private fun ByteArray.decodeOfficialRaw16(width: Int, height: Int): IntArray? {
+        val sampleCount = width * height
+        if (sampleCount <= 0 || size < sampleCount * HIKMICRO_RAW_BYTES_PER_PIXEL) return null
+        val values = IntArray(sampleCount)
+        for (index in values.indices) {
+            val byteIndex = index * HIKMICRO_RAW_BYTES_PER_PIXEL
+            values[index] = (this[byteIndex].toInt() and 0xff) or ((this[byteIndex + 1].toInt() and 0xff) shl 8)
+        }
+        return values
+    }
+
+    private fun summarizeAllRawValues(rawValues: IntArray): RawStats? {
+        if (rawValues.isEmpty()) return null
+        var minRaw = Int.MAX_VALUE
+        var maxRaw = Int.MIN_VALUE
+        var sumRaw = 0L
+        for (value in rawValues) {
+            minRaw = min(minRaw, value)
+            maxRaw = max(maxRaw, value)
+            sumRaw += value.toLong()
+        }
+        return RawStats(sumRaw.toDouble() / rawValues.size.toDouble(), minRaw, maxRaw)
+    }
+
+    private fun ByteArray.prefixHexForStatus(): String = take(32).joinToString("") { byte -> "%02x".format(byte) }
 
     private fun summarizeRawValues(
         rawValues: IntArray,
@@ -520,6 +658,12 @@ object HikmicroJnaMini2Stream {
         val height: Int,
     )
 
+    private data class RawStats(
+        val average: Double,
+        val min: Int,
+        val max: Int,
+    )
+
     private data class ThermalPreviewFrame(
         val dataUrl: String = "",
         val width: Int = HIKMICRO_THERMAL_IMAGE_WIDTH,
@@ -531,6 +675,10 @@ object HikmicroJnaMini2Stream {
         val rawMatrixWidth: Int = 0,
         val rawMatrixHeight: Int = 0,
         val rawValues: IntArray? = null,
+        val deviceTemperatureSummary: Mini2DeviceTemperatureSummary? = null,
+        val packetClassification: String = "unknown",
+        val packetStatus: String = "unsupported_no_matrix",
+        val packetEvidencePrefixHex: String = "",
     )
 
     private data class StreamFrameSnapshot(
@@ -552,17 +700,21 @@ object HikmicroJnaMini2Stream {
         val rawMatrixWidth: Int,
         val rawMatrixHeight: Int,
         val rawValues: IntArray?,
+        val deviceTemperatureSummary: Mini2DeviceTemperatureSummary?,
+        val packetClassification: String,
+        val packetStatus: String,
+        val packetEvidencePrefixHex: String,
         val capturedElapsedMs: Long,
     ) {
         fun toStatus(reason: String, route: String): Mini2RawStreamStatus = Mini2RawStreamStatus.streamAttemptStarted(
-            reason = "$reason; userId=$callbackUserId frameType=$frameType dataType=$dataType streamType=$streamType bytes=$bufferSize elapsedMs=$capturedElapsedMs",
+            reason = "$reason; userId=$callbackUserId frameType=$frameType dataType=$dataType streamType=$streamType bytes=$bufferSize packet_classification=$packetClassification packet_status=$packetStatus evidence_prefix=$packetEvidencePrefixHex elapsedMs=$capturedElapsedMs",
             frameCounter = frameCounter,
             frameWidth = width,
             frameHeight = height,
             transportFrameWidth = transportWidth,
             transportFrameHeight = transportHeight,
             previewRotationDegrees = previewRotationDegrees,
-            frameFormat = "hikmicro_f2_official_module_frame_raw_unverified",
+            frameFormat = "hikmicro_f2_${packetClassification}_${packetStatus}",
             thermalPreviewDataUrl = previewDataUrl,
             rawAvg = rawAvg,
             rawMin = rawMin,
@@ -574,6 +726,43 @@ object HikmicroJnaMini2Stream {
             fd = f2Helper.activeSelectedFd(),
             userId = callbackUserId,
             channel = f2Helper.activeChannel(),
+            deviceTemperatureSummary = deviceTemperatureSummary,
+            callbackEntryCount = javaCallbackEntryCount(),
+            callbackEntryDetail = javaCallbackEntryDetail(),
+            invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
         )
     }
+
+    private fun com.hik.f2module.IFR_INFO.IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO.toMetadata(): HikmicroF2TemperatureMetadata? {
+        val unit = HikmicroF2TemperatureUnit.fromDeviceCode(enumTempUnit) ?: return null
+        val global = HikmicroF2DeviceGlobalSummary(enumTempUnit, unit, byRefTempkey.toInt() and 0xff, fDistance, fRefTemp, unit.validatedRawCelsius(fRefTemp), unit.fromCelsius(fRefTemp), fEmissionRate, fEnvTemp, unit.validatedRawCelsius(fEnvTemp), unit.fromCelsius(fEnvTemp), fMinTmp, unit.validatedRawCelsius(fMinTmp), unit.fromCelsius(fMinTmp), fMaxTmp, unit.validatedRawCelsius(fMaxTmp), unit.fromCelsius(fMaxTmp), fAvrTmp, unit.validatedRawCelsius(fAvrTmp), unit.fromCelsius(fAvrTmp), ifrPointArr.map { HikmicroF2TemperaturePoint(it.x, it.y) }, u32TempMode, pointNum.toInt() and 0xff, boxNum.toInt() and 0xff, lineNum.toInt() and 0xff, total.toInt() and 0xff, uploadType, u32CrcVal)
+        return HikmicroF2TemperatureMetadata(global, emptyList(), null)
+    }
+
+    private fun com.hik.f1module.hcusbcamerasdk.jna.HCUSBCameraSDKBy.THERMAL_PRIVATE_INFO.toMetadata(): HikmicroF2TemperatureMetadata? {
+        val info = temp_Info.GlobalInfo
+        val unit = HikmicroF2TemperatureUnit.fromDeviceCode(info.tempUnit) ?: return null
+        val global = HikmicroF2DeviceGlobalSummary(info.tempUnit, unit, info.refTempkey.toInt() and 0xff, info.f32Distance, info.refTemp, unit.validatedRawCelsius(info.refTemp), unit.fromCelsius(info.refTemp), info.emissionRate, 0f, unit.validatedRawCelsius(0f), unit.fromCelsius(0f), info.minTmp, unit.validatedRawCelsius(info.minTmp), unit.fromCelsius(info.minTmp), info.maxTmp, unit.validatedRawCelsius(info.maxTmp), unit.fromCelsius(info.maxTmp), info.avrTmp, unit.validatedRawCelsius(info.avrTmp), unit.fromCelsius(info.avrTmp), info.points.map { HikmicroF2TemperaturePoint(it.x, it.y) }, 0, temp_Info.Upload.ifrOutcomeList.regionNum.pointNum.toInt() and 0xff, temp_Info.Upload.ifrOutcomeList.regionNum.boxNum.toInt() and 0xff, temp_Info.Upload.ifrOutcomeList.regionNum.lineNum.toInt() and 0xff, temp_Info.Upload.ifrOutcomeList.regionNum.total.toInt() and 0xff, 0, 0)
+        return HikmicroF2TemperatureMetadata(global, emptyList(), null)
+    }
+
+    private fun HikmicroF2TemperatureMetadata?.validatedDeviceGlobalTemperatureSummary(): Mini2DeviceTemperatureSummary? {
+        val metadata = this ?: return null
+        if (metadata.blockedInvalidMetadata != null) return null
+        val global = metadata.deviceGlobalSummary ?: return null
+        val nativeUnit = global.nativeUnit ?: return null
+        val avgC = global.avgTemperatureCelsius ?: return null
+        val minC = global.minTemperatureCelsius ?: return null
+        val maxC = global.maxTemperatureCelsius ?: return null
+        return Mini2DeviceTemperatureSummary(
+            avgC = avgC.toDouble(),
+            minC = minC.toDouble(),
+            maxC = maxC.toDouble(),
+            requestedDisplayUnit = nativeUnit.name.lowercase(),
+            requestedDisplayUnitCode = global.enumTempUnit,
+            provenance = global.provenance,
+            scope = global.provenance,
+        )
+    }
+
 }

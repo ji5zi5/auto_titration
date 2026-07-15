@@ -1,5 +1,7 @@
 package com.hik.viewer.manager
 
+import android.graphics.Bitmap
+import android.util.Size
 import com.hcusbsdk.Interface.FStreamCallBack
 import com.hcusbsdk.Interface.USB_FRAME_INFO
 import com.hcusbsdk.jna.USB_FRAME_INFO as JnaUSB_FRAME_INFO
@@ -74,6 +76,14 @@ class PreviewManagerII private constructor() {
 
     fun latestOfficialProcessedFrame(frameCounter: Long): OfficialProcessedF2Frame? = synchronized(lifecycleLock) {
         latestProcessedFrame?.takeIf { it.frameCounter == frameCounter }
+    }
+
+    /** Hands the official g3 NV12 output through the recovered GYUV/NV21 bitmap path. */
+    fun renderOfficialNv12Preview(nv12: ByteArray, width: Int, height: Int): Bitmap {
+        require(width > 0 && height > 0)
+        require(nv12.size >= width * height * 3 / 2)
+        val nv21 = k3.a.a.g(nv12, Size(width, height))
+        return k3.a.a.a(nv21, width, height)
     }
 
     fun closePreviewCallback() {
