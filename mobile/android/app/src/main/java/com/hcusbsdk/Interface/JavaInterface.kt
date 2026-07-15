@@ -58,22 +58,12 @@ class JavaInterface private constructor() {
 
     @JvmField
     val m_fnStreamCallBack_jna = com.hcusbsdk.jna.FStreamCallBack_JNA { callbackUserId, framePointer, _ ->
-        val callback = if (callbackUserId in m_fnStreamCallBack.indices) {
-            synchronized(m_fnStreamCallBack) { m_fnStreamCallBack[callbackUserId] }
-        } else {
-            null
-        }
-        callback?.fStreamCallback(callbackUserId, framePointer?.toInterfaceFrame())
+        m_fnStreamCallBack[callbackUserId]!!.fStreamCallback(callbackUserId, framePointer?.toInterfaceFrame())
     }
 
     @JvmField
     val m_fnStreamCallBack_jni = com.hcusbsdk.jni.StreamCallBack_JNI { callbackUserId, frameInfo ->
-        val callback = if (callbackUserId in m_fnStreamCallBack.indices) {
-            synchronized(m_fnStreamCallBack) { m_fnStreamCallBack[callbackUserId] }
-        } else {
-            null
-        }
-        callback?.fStreamCallback(callbackUserId, frameInfo.toInterfaceFrame())
+        m_fnStreamCallBack[callbackUserId]!!.fStreamCallback(callbackUserId, frameInfo.toInterfaceFrame())
     }
 
     @Volatile
@@ -193,19 +183,8 @@ class JavaInterface private constructor() {
     fun USB_SetThermalStreamCtrl(userId: Int, param: USB_CTRL_THERMAL_STREAM_PARAM): Boolean =
         nativeBridge.USB_SetThermalStreamCtrl(userId, param)
 
-    fun USB_StartStreamCallback(userId: Int, param: USB_STREAM_CALLBACK_PARAM): Int {
-        lastStartStreamCallbackDetail = "official_jni_wrapper_enter userId=$userId streamType=${param.dwStreamType}"
-        if (userId < 0 || userId >= m_fnStreamCallBack.size) return -1
-        val callback = param.fnStreamCallBack ?: return -1
-        synchronized(m_fnStreamCallBack) {
-            m_fnStreamCallBack[userId] = callback
-        }
-        val channel = USB_StartStreamCallback_jni(userId, param)
-        if (channel == -1) {
-            clearCallbackSlot(userId)
-        }
-        return channel
-    }
+    fun USB_StartStreamCallback(userId: Int, param: USB_STREAM_CALLBACK_PARAM?): Int =
+        if (param?.fnStreamCallBack != null) USB_StartStreamCallback_jni(userId, param) else -1
 
     fun USB_StartStreamCallbackJNA(
         userId: Int,
@@ -251,41 +230,20 @@ class JavaInterface private constructor() {
     }
 
     private fun USB_StartStreamCallback_jni(userId: Int, param: USB_STREAM_CALLBACK_PARAM): Int {
-        val callback = param.fnStreamCallBack ?: return -1
-        if (userId < 0 || userId >= m_fnStreamCallBack.size) {
-            return -1
-        }
-        synchronized(m_fnStreamCallBack) {
-            m_fnStreamCallBack[userId] = callback
-        }
+        if (userId == -1 || userId > 10_000) return -1
+        m_fnStreamCallBack[userId] = param.fnStreamCallBack
         val jniParam = com.hcusbsdk.jni.USB_STREAM_CALLBACK_PARAM().apply {
-            // Official JavaInterface.USB_StartStreamCallback_jni writes dwSize=0 before HCUSBSDKByJNI.
             dwSize = 0
             dwStreamType = param.dwStreamType
         }
-        return try {
-            val rawChannel = com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance()
-                .USB_StartStreamCallback(userId, jniParam, m_fnStreamCallBack_jni)
-            val lastError = USB_GetLastError()
-            lastStartStreamCallbackDetail =
-                "official_jni_wrapper_return channel=$rawChannel lastError=$lastError userId=$userId streamType=${param.dwStreamType} dwSize=${jniParam.dwSize}"
-            rawChannel
-        } catch (error: Throwable) {
-            lastStartStreamCallbackDetail =
-                "official_jni_wrapper_throw ${error.javaClass.name}: ${error.message ?: "no message"} userId=$userId streamType=${param.dwStreamType}"
-            -1
-        }
+        return com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance()
+            .USB_StartStreamCallback(userId, jniParam, m_fnStreamCallBack_jni)
     }
 
-    fun USB_StopChannel(userId: Int, channel: Int): Boolean {
-        clearCallbackSlot(userId)
-        return nativeBridge.USB_StopChannel(userId, channel)
-    }
+    fun USB_StopChannel(userId: Int, channel: Int): Boolean =
+        com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance().USB_StopChannel(userId, channel)
 
-    fun USB_Logout(userId: Int): Boolean {
-        clearCallbackSlot(userId)
-        return nativeBridge.USB_Logout(userId)
-    }
+    fun USB_Logout(userId: Int): Boolean = HCUSBSDK.getInstance().USB_Logout(userId)
 
     fun releaseUnselectedDeviceConnections(selected: USB_DEVICE_INFO?) {
         synchronized(contextDeviceInfos) {
