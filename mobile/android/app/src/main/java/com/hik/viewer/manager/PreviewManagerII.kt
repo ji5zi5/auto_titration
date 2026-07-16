@@ -1,16 +1,23 @@
 package com.hik.viewer.manager
 
+import android.graphics.Bitmap
 import android.util.Size
 import android.view.SurfaceView
+import android.view.View
+import android.widget.TextView
 import com.hcusbsdk.Interface.FStreamCallBack
 import com.hcusbsdk.Interface.USB_FRAME_INFO
 import com.hcusbsdk.jna.USB_FRAME_INFO as JnaUSB_FRAME_INFO
 import com.hik.f2module.F2StreamFrame
+import com.hik.viewer.bean.DiagnoseBean
 import com.hik.viewercommon.data.bean.PreviewInfoDataBean
 import com.hik.viewercommon.data.bean.PreviewStreamInfo
+import com.hik.viewercommon.data.bean.SceneModeBean
+import com.hik.viewercommon.data.bean.UsbModuleType
 import com.hik.viewercommon.data.device.api.callback.F2ModuleStreamCallback
 import com.sun.jna.Pointer
 import g3.d as G3DProcessor
+import hik.common.yyrj.uicommon.widget.FloatTextureView
 import java.util.Arrays
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -44,8 +51,27 @@ class PreviewManagerII private constructor() {
     private var activeOnFrame: ((F2StreamFrame) -> Unit)? = null
     private var latestProcessedFrame: OfficialProcessedF2Frame? = null
     private var latestOfficialOfflinePreviewInfo: PreviewInfoDataBean? = null
-    private var viewerSurfaceView: SurfaceView? = null
-    private var renderer: V2.f? = null
+    private var E: V2.f? = null
+    private var G: View? = null
+    private var H: SurfaceView? = null
+    private var I: TextView? = null
+    private var J: FloatTextureView? = null
+    private var O: SceneModeBean? = null
+    private var P: Bitmap? = null
+    private var Q: ((Boolean) -> Unit)? = null
+    private var T: ((Int) -> Unit)? = null
+    private var U: Int = 0
+    private var V: Boolean = false
+    private var X: ((Boolean) -> Unit)? = null
+    private var Z: (() -> Unit)? = null
+    private var m: Size = Size(0, 0)
+    private var n: Size = Size(0, 0)
+    private var t: Size = Size(0, 0)
+    private var w0: List<*>? = null
+    private var diagnoseFrameCount: Int = 0
+    private var diagnoseFrames: Boolean = false
+    private var h0: ((Any?, Any?, Any?, Any?, Any?) -> Unit)? = null
+    private var z: ((DiagnoseBean) -> Unit)? = null
     @Volatile
     internal var latestOfficialOsdBgCallbackBean: com.hik.viewercommon.data.bean.OsdBgCallbackBean? = null
     @Volatile
@@ -80,17 +106,56 @@ class PreviewManagerII private constructor() {
         latestProcessedFrame?.takeIf { it.frameCounter == frameCounter }
     }
 
-    /**
-     * Recovered PreviewManagerII.l0 renderer binding: X2.a/X2.c factory first,
-     * followed by the module-dependent a/b/c renderer branch.
-     */
+    /** Official eight-parameter PreviewManagerII.l0 surface from Viewer 2.6.0. */
     fun l0(viewerSurfaceView: SurfaceView) {
+        l0(null, viewerSurfaceView, null, null, null, null, null, null)
+    }
+
+    fun l0(
+        viewerRootView: View?,
+        viewerSurfaceView: SurfaceView,
+        viewerErrorText: TextView?,
+        visibleLightView: FloatTextureView?,
+        sceneModeBean: SceneModeBean?,
+        freezeCallback: ((Boolean) -> Unit)?,
+        overlayAvailabilityCallback: ((Boolean) -> Unit)?,
+        frameNumberCallback: ((Int) -> Unit)?,
+    ) {
+        this.G = viewerRootView
+        this.H = viewerSurfaceView
+        this.J = visibleLightView
+        this.I = viewerErrorText
+        this.X = freezeCallback
+        this.O = sceneModeBean
+        this.Q = overlayAvailabilityCallback
+        this.T = frameNumberCallback
+
+        val moduleType = Z2.g.a.a(true)
+        if (moduleType === UsbModuleType.F2) {
+            m = Z2.a.a.p().c()
+            n = Z2.a.a.p().c()
+            t = Size(m.width, m.height)
+            activeProcessor = g3.b.a.a(Z2.a.a.p().k(), Z2.a.a.t())
+        } else if (moduleType === UsbModuleType.F1) {
+            m = Size(120, 160)
+            n = Size(120, 160)
+            t = Size(120, 160)
+            setOfficialF1YuvSize(t)
+        }
+
+        U = Z2.g.a.w(Z2.g.a.U().getSerialNumber())
+        val showSize = Z2.g.a.E()
+        configureVisibleLightView()
         bindOfficialRenderer(
             viewerSurfaceView = viewerSurfaceView,
             useM4 = l2.k.a("useM4", true),
-            isF2Module = Z2.a.a.p().k() in 8..12,
+            isF2Module = moduleType === UsbModuleType.F2,
             useNonF1Processing = Z2.a.a.t(),
         )
+        E?.let { activeRenderer ->
+            if (shouldApplyRendererShowSize()) activeRenderer.i(showSize)
+            activeRenderer.b(OfficialPlaybackListener())
+        }
     }
 
     internal fun bindOfficialRenderer(
@@ -106,17 +171,31 @@ class PreviewManagerII private constructor() {
             else -> factory.b(viewerSurfaceView)
         }
         synchronized(lifecycleLock) {
-            renderer?.c()
-            renderer?.release()
-            this.viewerSurfaceView = viewerSurfaceView
-            renderer = selected
+            this.H = viewerSurfaceView
+            E = selected
         }
         return selected
     }
 
-    fun i1(picSize: Size): ByteArray? = synchronized(lifecycleLock) { renderer?.e(picSize) }
+    fun i1(picSize: Size): ByteArray? = synchronized(lifecycleLock) { E?.e(picSize) }
 
-    fun W(picSize: Size): com.hik.library.player.d? = synchronized(lifecycleLock) { renderer?.f(picSize) }
+    fun W(picSize: Size): com.hik.library.player.d? = synchronized(lifecycleLock) { E?.f(picSize) }
+
+    fun D0(callback: ((DiagnoseBean) -> Unit)?) {
+        z = callback
+    }
+
+    fun G0(callback: (() -> Unit)?) {
+        Z = callback
+    }
+
+    fun J0(callback: ((Any?, Any?, Any?, Any?, Any?) -> Unit)?) {
+        h0 = callback
+    }
+
+    fun x0(enabled: Boolean) {
+        diagnoseFrames = enabled
+    }
 
     /** Compatibility validator only; rendering is exclusively owned by V2.f. */
     @Deprecated("Bind a SurfaceView through l0; PreviewManagerII no longer returns bitmaps")
@@ -128,13 +207,17 @@ class PreviewManagerII private constructor() {
     fun closePreviewCallback() {
         synchronized(lifecycleLock) {
             streamClosed = true
+            cleanupRendererLocked()
             clearSlotsLocked()
             latestProcessedFrame = null
             latestOfficialOfflinePreviewInfo = null
             cleanupProcessorsLocked()
-            cleanupRendererLocked()
             stopConsumerLocked()
             stopCallbackExecutorLocked()
+            G = null
+            H = null
+            I = null
+            J = null
         }
     }
 
@@ -229,23 +312,53 @@ class PreviewManagerII private constructor() {
     private fun handOffOfficialFrame(previewStreamInfo: PreviewStreamInfo, packet: BufferedF2Packet) {
         val previewInfo = previewStreamInfo.getPreviewInfoData()
         val nv12Data = previewInfo.getByteArrDst()
-        if (nv12Data.isEmpty() || packet.packetWidth <= 0 || packet.packetHeight <= 0) return
-        val size = Size(packet.packetWidth, packet.packetHeight)
-        val frameNumStamp = packet.frameCounter.toInt()
-        val activeRenderer = synchronized(lifecycleLock) { renderer } ?: return
+        if (nv12Data.isEmpty()) return
+
+        previewStreamInfo.getIStreamInfo()?.let(Z2.g.a::B0)
+        val frameNumStamp = d3.b.a.c(previewInfo.getByteArrYuvAppendData())
+        val packetSize = officialProcessedF2PacketDimensions(packet.bytes.size)
+        val sourceSize = m.takeIf { it.width > 0 && it.height > 0 } ?: packetSize
+        val outputSize = t.takeIf { it.width > 0 && it.height > 0 } ?: sourceSize
+        if (sourceSize.width <= 0 || sourceSize.height <= 0) return
+        val transformedNv12: ByteArray
+        val transformedSize: Size
         if (Z2.a.a.t()) {
-            activeRenderer.j(null, nv12Data, size, frameNumStamp, null, null)
+            z3.c.a.w(U)
+            z3.c.a.x(V)
+            z3.c.a.p(V)
+            transformedNv12 = nv12Data
+            transformedSize = outputSize
         } else {
-            activeRenderer.h(null, nv12Data, size, frameNumStamp)
+            transformedNv12 = k3.a.a.e(nv12Data, sourceSize, outputSize, U, V)
+            if (U == 90 || U == 270) {
+                t = Size(outputSize.height, outputSize.width)
+            }
+            transformedSize = t
         }
+
+        recordOfficialPacket(
+            src = previewInfo.getByteArrSrc(),
+            dst = transformedNv12,
+            head = previewInfo.getByteArrHead(),
+            allData = packet.bytes,
+        )
+        val activeRenderer = synchronized(lifecycleLock) { E }
+        if (Z2.a.a.t()) {
+            // DEX offsets 0b98-0bbe and 0cba-0ce0 pass a literal null raw argument.
+            // F2 private data is published through Z2.g.B0(iStreamInfo) above.
+            activeRenderer?.j(null, transformedNv12, transformedSize, frameNumStamp, w0, P)
+        } else {
+            activeRenderer?.h(null, transformedNv12, transformedSize, frameNumStamp)
+        }
+        T?.invoke(frameNumStamp)
     }
 
     private fun installOfficialProcessorCallbacks(processor: g3.a) {
         processor.j(
-            OfficialFreezeCallback(this),
+            X,
             K2.f(this),
             OfficialMetadataCallback(this),
-            OfficialOverlayCallback(this),
+            h0,
             K2.g(this),
         )
         if (processor is G3DProcessor) {
@@ -259,10 +372,112 @@ class PreviewManagerII private constructor() {
     }
 
     private fun cleanupRendererLocked() {
-        renderer?.c()
-        renderer?.release()
-        renderer = null
-        viewerSurfaceView = null
+        E?.c()
+        E?.release()
+        E = null
+        X = null
+        Z = null
+        h0 = null
+    }
+
+    private inner class OfficialPlaybackListener : com.hik.library.player.b {
+        override fun a() {
+            showViewerErrorTip("onSurfaceInvalid")
+            z?.invoke(DiagnoseBean())
+        }
+
+        override fun b() {
+            showViewerErrorTip("onTimeout")
+            Z?.invoke()
+            z?.invoke(DiagnoseBean())
+        }
+
+        override fun onError(message: String) {
+            showViewerErrorTip(message)
+            z?.invoke(DiagnoseBean())
+        }
+
+        override fun onPause() = Unit
+        override fun onResume() = Unit
+        override fun onStart() {
+            if (officialBoolean("u5.B", "a", "d0", false)) Z?.invoke()
+        }
+
+        override fun onStop() = Unit
+    }
+
+    private fun showViewerErrorTip(error: String?) {
+        if (error == null) return
+        I?.post { I?.visibility = if (error.isEmpty()) View.GONE else View.VISIBLE }
+    }
+
+    private fun configureVisibleLightView() {
+        val visibleLight = J ?: return
+        val previewRoot = G ?: return
+        visibleLight.post {
+            val parentSize = Size(previewRoot.width, previewRoot.height)
+            val visibleSize = Size(visibleLight.width, visibleLight.height)
+            visibleLight.f(Z2.g.a.W(), false, parentSize, visibleSize)
+            if (shouldApplyRendererShowSize()) E?.i(parentSize)
+            Z2.g.a.M0(parentSize)
+        }
+    }
+
+    private fun shouldApplyRendererShowSize(): Boolean =
+        !officialBoolean("u5.B", "a", "h0", false) &&
+            !Z2.g.a.b0() &&
+            officialPreviewLogoEnabled()
+
+    private fun officialPreviewLogoEnabled(): Boolean = runCatching {
+        val storeClass = Class.forName("hik.common.yyrj.businesscommon.b")
+        val companion = storeClass.getField("d").get(null)
+        val store = companion.javaClass.getMethod("a").invoke(companion)
+        val defaultMethod = storeClass.getDeclaredMethod(
+            "x",
+            storeClass,
+            String::class.java,
+            Int::class.javaPrimitiveType,
+            Any::class.java,
+        )
+        defaultMethod.invoke(null, store, null, 1, null) as Boolean
+    // Official businesscommon.b.w/x defaults to visible unless the serial is in
+    // preview_logo_visible; the class is outside this task's recovered closure.
+    }.getOrDefault(true)
+
+    private fun officialBoolean(
+        className: String,
+        singletonField: String,
+        methodName: String,
+        officialDefault: Boolean,
+    ): Boolean = runCatching {
+        val owner = Class.forName(className)
+        val singleton = owner.getField(singletonField).get(null)
+        owner.getMethod(methodName).invoke(singleton) as Boolean
+    }.getOrDefault(officialDefault)
+
+    private fun setOfficialF1YuvSize(size: Size) {
+        runCatching {
+            val helper = Class.forName("com.hik.f1module.F1UsbModuleHelper")
+            val singleton = helper.getField("INSTANCE").get(null)
+            helper.getMethod("USB_SetYuvSize", Size::class.java).invoke(singleton, size)
+        }
+    }
+
+    private fun recordOfficialPacket(src: ByteArray, dst: ByteArray, head: ByteArray, allData: ByteArray) {
+        if (frameCounter % 5L != 0L || !diagnoseFrames) return
+        diagnoseFrameCount += 1
+        z?.invoke(
+            DiagnoseBean(
+                success = true,
+                count = diagnoseFrameCount,
+                src = src,
+                dst = dst,
+                head = head,
+                allData = allData,
+                srcFormat = if (Z2.a.a.p().k() == 12) "yuy2" else "nv12",
+                dstFormat = "nv12",
+            ),
+        )
     }
 
     private fun stopCallbackExecutorLocked() {
@@ -358,26 +573,14 @@ class PreviewManagerII private constructor() {
     private fun isOfficialOfflineMailboxFrame(packetSize: Int): Boolean =
         Z2.a.a.p().k() == 12 && packetSize in officialF2Coding12OfflinePacketSizes
 
-    private class OfficialFreezeCallback(private val manager: PreviewManagerII) : (Boolean) -> Unit {
-        override fun invoke(value: Boolean) { manager.lastFreezeState = value }
-    }
-
     private class OfficialMetadataCallback(private val manager: PreviewManagerII) : (Any?) -> Unit {
         override fun invoke(value: Any?) { manager.latestOfficialMetadata = value }
-    }
-
-    private class OfficialOverlayCallback(private val manager: PreviewManagerII) : (Any?, Any?, Any?, Any?, Any?) -> Unit {
-        override fun invoke(p1: Any?, p2: Any?, p3: Any?, p4: Any?, p5: Any?) {
-            manager.latestOfficialOverlay = listOf(p1, p2, p3, p4, p5)
-        }
     }
 
     @Volatile
     private var lastFreezeState: Boolean? = null
     @Volatile
     private var latestOfficialMetadata: Any? = null
-    @Volatile
-    private var latestOfficialOverlay: List<Any?>? = null
 
     companion object {
         @JvmField
@@ -448,6 +651,13 @@ private fun officialF2PacketDimensions(packetSize: Int): Pair<Int, Int> = when (
     183_496, 203_720, 101_320 -> 256 to 192
     400_584, 193_480 -> 384 to 288
     else -> 0 to 0
+}
+
+private fun officialProcessedF2PacketDimensions(packetSize: Int): Size = when (packetSize) {
+    41_160, 61_384 -> Size(96, 96)
+    183_496, 203_720, 101_320 -> Size(192, 256)
+    400_584, 193_480 -> Size(288, 384)
+    else -> Size(0, 0)
 }
 
 private fun Pointer?.toJniFrame(): USB_FRAME_INFO? {
