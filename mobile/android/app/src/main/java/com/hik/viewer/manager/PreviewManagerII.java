@@ -39,13 +39,24 @@ import kotlin.jvm.functions.Function1;
 import kotlin.jvm.functions.Function5;
 
 public final class PreviewManagerII {
-    public static final String D0 = "D0";
+    public static final PreviewManagerII$a D0;
+
+    static {
+        D0 = new PreviewManagerII$a(null);
+    }
 
     private final Object lifecycleLock = new Object();
     private Lifecycle a;
     private final boolean b;
     private final boolean c;
     private final int d = 830;
+    private int e;
+    private int f;
+    private int g;
+    private float h;
+    private float i;
+    private boolean j;
+    private boolean k;
     private boolean streamClosed;
     private long frameCounter;
     private long invalidPacketStartMs;
@@ -80,6 +91,10 @@ public final class PreviewManagerII {
     private Function5<Object, Object, Object, Object, Object, Unit> h0;
     private IStreamCallback B0;
     private FStreamCallBack C0;
+    private boolean F = true;
+    private boolean L = true;
+    private boolean M;
+    private boolean R;
     private boolean S = true;
     private boolean q0 = true;
     private boolean m0 = true;
@@ -87,17 +102,27 @@ public final class PreviewManagerII {
     private byte[] j0 = new byte[0];
     private boolean l0 = true;
     private byte[] l;
+    private byte[] o = new byte[0];
     byte[] r0 = new byte[0];
     byte[] s0 = new byte[0];
     int t0;
     int u0;
     int v0;
+    private java.util.List<Object> w0;
     private String y0 = "";
     private String z0 = "";
     private byte[] A0 = new byte[0];
     private float q = 1f;
     private int r;
     private int s;
+    private long u;
+    private java.util.ArrayList<Object> v;
+    private long w;
+    private boolean x;
+    private int y;
+    private int n0;
+    private long o0;
+    private int p0;
     private Size p = new Size(0, 0);
     private Size m = new Size(0, 0);
     private Size n = new Size(0, 0);
@@ -117,12 +142,13 @@ public final class PreviewManagerII {
         this.a = lifecycle;
         this.b = b;
         this.c = c;
+        this.v = new java.util.ArrayList<>(10);
         try { this.K = new Handler(Looper.getMainLooper()); } catch (RuntimeException ignored) { this.K = null; }
         this.B0 = new PreviewManagerII$e(this);
         this.C0 = new PreviewManagerII$d(this);
     }
 
-    public final FStreamCallBack R() { if (C0 == null) C0 = new PreviewManagerII$d(this); return C0; }
+    public final FStreamCallBack R() { return C0; }
     public final IStreamCallback U() { return B0; }
     public final byte[] S() { return A0; }
     public final Size T() { return m; }

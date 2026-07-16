@@ -1,2 +1,8 @@
 package com.hik.viewer.manager;
-final class PreviewManagerII$b { final PreviewManagerII a; PreviewManagerII$b(PreviewManagerII manager){this.a=manager;} }
+
+import com.google.gson.reflect.TypeToken;
+import java.util.Stack;
+
+public final class PreviewManagerII$b extends TypeToken<Stack<Q2.k>> {
+    PreviewManagerII$b() { }
+}

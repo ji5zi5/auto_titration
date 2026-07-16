@@ -6,7 +6,7 @@ import java.util.Arrays;
 import kotlin.Unit;
 import kotlin.jvm.functions.Function0;
 
-final class PreviewManagerII$d implements FStreamCallBack {
+public final class PreviewManagerII$d implements FStreamCallBack {
     private long a;
     final PreviewManagerII b;
     PreviewManagerII$d(PreviewManagerII manager) { this.b = manager; }
