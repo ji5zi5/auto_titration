@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
     private val frameId = AtomicLong(0)
     private val runSession = PhoneRunSession()
     private lateinit var webView: WebView
+    private lateinit var officialPreviewHost: OfficialPreviewHost
     private lateinit var mini2Probe: Mini2UsbProbe
     private lateinit var pumpController: ManualPumpController
     private var lockedVisibleRoi: Roi? = null
@@ -173,7 +174,9 @@ class MainActivity : ComponentActivity() {
         runSession.startSetup()
         runSession.updatePumpSnapshot(pumpController.snapshot())
         webView = buildWebView()
-        setContentView(webView)
+        officialPreviewHost = OfficialPreviewHost(this)
+        officialPreviewHost.attachUserInterface(webView)
+        setContentView(officialPreviewHost.rootView)
         cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         requestBluetoothPermissionIfNeeded()
     }
@@ -183,6 +186,9 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.shutdown()
         if (::mini2Probe.isInitialized) {
             mini2Probe.stopMonitoring()
+        }
+        if (::officialPreviewHost.isInitialized) {
+            officialPreviewHost.destroy()
         }
         if (::webView.isInitialized) {
             webView.removeJavascriptInterface("AutoTitrationAndroid")

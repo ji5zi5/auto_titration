@@ -6,12 +6,14 @@ import android.hardware.usb.UsbManager
 import android.os.SystemClock
 import android.util.Base64
 import android.view.SurfaceView
+import android.widget.TextView
 import com.hcusbsdk.Interface.JavaInterface
 import com.hik.f2module.F2StreamFrame
 import com.hik.f2module.F2StreamAttemptDiagnostic
 import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
 import com.hik.viewer.manager.PreviewManagerII
+import kr.auto.titration.mobile.OfficialPreviewBinding
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
@@ -59,11 +61,43 @@ object HikmicroJnaMini2Stream {
 
     private val f2Api: F2UsbModuleApi = F2UsbModuleApi.INSTANCE
     private val f2Helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
+    @Volatile
+    private var officialPreviewBound = false
     // startedElapsedMs is owned by F2UsbModuleHelper; this adapter reads activeStartedElapsedMs().
 
-    /** Binds the official SurfaceView renderer; WebView remains an extraction-only observer. */
+    /** Compatibility wrapper for legacy tests; production must use the full official boundary. */
     fun bindOfficialPreviewSurface(surfaceView: SurfaceView) {
         PreviewManagerIIAppBinding.manager().l0(surfaceView)
+    }
+
+    /** Binds the exact official PreviewManagerII.m0/l0 production boundary. */
+    @Synchronized
+    fun bindOfficialPreviewSurface(binding: OfficialPreviewBinding) {
+        val manager = PreviewManagerIIAppBinding.manager()
+        if (officialPreviewBound) {
+            manager.u0()
+        }
+        PreviewManagerII.m0(
+            manager,
+            binding.root,
+            binding.selectedSurface,
+            null as TextView?,
+            binding.visibleLightView,
+            binding.sceneMode,
+            { value: Boolean -> binding.freezeCallback(value); Unit },
+            { value: Boolean -> binding.overlayAvailabilityCallback(value); Unit },
+            null,
+            128,
+            null,
+        )
+        officialPreviewBound = true
+    }
+
+    @Synchronized
+    fun unbindOfficialPreviewSurface() {
+        if (!officialPreviewBound) return
+        PreviewManagerIIAppBinding.manager().u0()
+        officialPreviewBound = false
     }
 
     @Synchronized
