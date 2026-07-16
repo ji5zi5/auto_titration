@@ -20,5 +20,12 @@ class USB_FRAME_INFO {
     @JvmField var nFrameNum: Int = 0
     @JvmField var pBuf: ByteArray = ByteArray(MAX_FRAME_SIZE)
     @JvmField var dwBufSize: Int = 0
-    @JvmField var byRes: ByteArray = ByteArray(128)
+
+    /**
+     * Kotlin-source compatibility for local adapters. The official public DTO
+     * has no Java-visible byRes field; native-only DTOs retain byRes[128].
+     */
+    var byRes: ByteArray
+        get() = ByteArray(0)
+        set(@Suppress("UNUSED_PARAMETER") value) = Unit
 }

@@ -8,6 +8,8 @@ import kr.auto.titration.mobile.pump.PumpSnapshot
 import kr.auto.titration.mobile.thermal.ThermalRawFrameSummary
 import kr.auto.titration.mobile.vision.RoiMask
 import kotlin.math.roundToInt
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.sqrt
 
 enum class SessionState {
@@ -46,6 +48,7 @@ class PhoneRunSession(
         state = "idle",
         runRateMlPerS = 0.0,
     )
+    private var thermalStreamSnapshot: ThermalStreamSnapshot = ThermalStreamSnapshot.EMPTY
 
     fun startSetup(config: ExperimentConfig = ExperimentConfig()) {
         this.config = config
@@ -59,6 +62,7 @@ class PhoneRunSession(
             state = "idle",
             runRateMlPerS = 0.0,
         )
+        thermalStreamSnapshot = ThermalStreamSnapshot.EMPTY
         state = SessionState.SETUP
     }
 
@@ -83,6 +87,10 @@ class PhoneRunSession(
 
     fun updatePumpSnapshot(snapshot: PumpSnapshot) {
         pumpSnapshot = snapshot
+    }
+
+    fun updateThermalStreamSnapshot(rawStreamJson: JSONObject?) {
+        thermalStreamSnapshot = ThermalStreamSnapshot.fromJson(rawStreamJson)
     }
 
     fun markExported() {
@@ -111,8 +119,8 @@ class PhoneRunSession(
         val concentrationFromInjected = config.sampleConcentrationFromTitrantVolumeMl(injected)
         val thermalMatrixStats = computeRawStats(frame.thermalRawFrame, mask = null)
         val thermalMaskStats = computeRawStats(frame.thermalRawFrame, frame.thermalMask)
-        val fallbackRawRoi = frame.thermalRawFrame?.rawRoi
-        val fallbackRawMatrix = frame.thermalRawFrame?.rawMatrix
+        val storedRawRoi = frame.thermalRawFrame?.rawRoi
+        val storedRawMatrix = frame.thermalRawFrame?.rawMatrix
         return CsvFeatureRow(
             schemaVersion = CsvSchema.SCHEMA_VERSION,
             experimentId = config.experimentId,
@@ -176,17 +184,39 @@ class PhoneRunSession(
             thermalMatrixShape = frame.thermalRawFrame
                 ?.let { "${it.frameHeight}x${it.frameWidth}" }
                 .orEmpty(),
-            thermalRawRoiAvg = thermalMaskStats?.avg ?: fallbackRawRoi?.avg,
-            thermalRawRoiMin = thermalMaskStats?.min ?: fallbackRawRoi?.min,
-            thermalRawRoiMax = thermalMaskStats?.max ?: fallbackRawRoi?.max,
-            thermalRawMean = thermalMatrixStats?.avg ?: fallbackRawMatrix?.avg,
-            thermalRawMin = thermalMatrixStats?.min ?: fallbackRawMatrix?.min,
-            thermalRawMax = thermalMatrixStats?.max ?: fallbackRawMatrix?.max,
+            thermalRawRoiAvg = thermalMaskStats?.avg ?: storedRawRoi?.avg,
+            thermalRawRoiMin = thermalMaskStats?.min ?: storedRawRoi?.min,
+            thermalRawRoiMax = thermalMaskStats?.max ?: storedRawRoi?.max,
+            thermalRawMean = thermalMatrixStats?.avg ?: storedRawMatrix?.avg,
+            thermalRawMin = thermalMatrixStats?.min ?: storedRawMatrix?.min,
+            thermalRawMax = thermalMatrixStats?.max ?: storedRawMatrix?.max,
             thermalRawRoiStd = thermalMaskStats?.std,
-            thermalRawRoiDelta = thermalMaskStats?.delta ?: fallbackRawRoi?.let { it.max - it.min },
-            thermalRawRoiP50 = thermalMaskStats?.p50 ?: fallbackRawRoi?.p50,
+            thermalRawRoiDelta = thermalMaskStats?.delta ?: storedRawRoi?.let { it.max - it.min },
+            thermalRawRoiP50 = thermalMaskStats?.p50 ?: storedRawRoi?.p50,
             thermalRawRoiIqr = thermalMaskStats?.iqr,
             thermalRawStd = thermalMatrixStats?.std,
+            thermalStatusRawJson = thermalStreamSnapshot.rawJson,
+            thermalRawPacketClassification = thermalStreamSnapshot.packetClassification,
+            thermalRawPacketStatus = thermalStreamSnapshot.packetStatus,
+            thermalRawPacketSizeBytes = thermalStreamSnapshot.packetSizeBytes,
+            thermalSelectedProfileName = thermalStreamSnapshot.selectedProfileName,
+            thermalSelectedProfileSize = thermalStreamSnapshot.selectedProfileSize,
+            thermalSelectedProfileFps = thermalStreamSnapshot.selectedProfileFps,
+            thermalSelectedProfileCoding = thermalStreamSnapshot.selectedProfileCoding,
+            thermalSelectedProfileStreamingNew = thermalStreamSnapshot.selectedProfileStreamingNew,
+            thermalSelectedProfileAllowedSizes = thermalStreamSnapshot.selectedProfileAllowedSizes,
+            thermalConverterProfileStatus = thermalStreamSnapshot.converterProfileStatus,
+            thermalConverterValidationState = thermalStreamSnapshot.converterValidationState,
+            thermalCelsiusAllowed = thermalStreamSnapshot.celsiusAllowed,
+            thermalDeviceGlobalAvgC = thermalStreamSnapshot.deviceGlobalSummary?.avgC,
+            thermalDeviceGlobalMinC = thermalStreamSnapshot.deviceGlobalSummary?.minC,
+            thermalDeviceGlobalMaxC = thermalStreamSnapshot.deviceGlobalSummary?.maxC,
+            thermalDeviceGlobalCelsiusAllowed = thermalStreamSnapshot.deviceGlobalSummary != null,
+            thermalDeviceGlobalProvenance = thermalStreamSnapshot.deviceGlobalSummary?.provenance.orEmpty(),
+            thermalDeviceGlobalScope = thermalStreamSnapshot.deviceGlobalSummary?.scope.orEmpty(),
+            thermalDeviceGlobalRequestedDisplayUnit = thermalStreamSnapshot.deviceGlobalSummary?.requestedDisplayUnit.orEmpty(),
+            thermalDeviceGlobalRequestedDisplayUnitCode = thermalStreamSnapshot.deviceGlobalSummary?.requestedDisplayUnitCode,
+            thermalFullMatrixCelsiusAllowed = thermalStreamSnapshot.fullMatrixCelsiusAllowed,
             pendingAutoCandidateRequests = frame.pendingAutoCandidateRequests,
             pendingAutoCandidateTarget = frame.pendingAutoCandidateTarget,
             warnings = buildWarnings(frame),
@@ -250,6 +280,157 @@ class PhoneRunSession(
         val iqr: Double,
         val delta: Double,
     )
+
+
+    private data class ThermalDeviceGlobalSummary(
+        val avgC: Double,
+        val minC: Double,
+        val maxC: Double,
+        val provenance: String,
+        val scope: String,
+        val requestedDisplayUnit: String,
+        val requestedDisplayUnitCode: Int?,
+    ) {
+        companion object {
+            fun fromJson(json: JSONObject): ThermalDeviceGlobalSummary? {
+                if (!json.optBoolean("celsius_allowed", false)) return null
+                if (json.optBoolean("full_matrix_celsius_allowed", false)) return null
+                val summary = json.optJSONObject("temperature_summary")
+                    ?: json.optJSONObject("device_global_summary")
+                val provenance = firstNonBlank(
+                    summary?.optCleanString("provenance"),
+                    json.optCleanString("temperature_provenance"),
+                    json.optCleanString("provenance"),
+                )
+                val scope = firstNonBlank(
+                    summary?.optCleanString("scope"),
+                    json.optCleanString("temperature_scope"),
+                    json.optCleanString("scope"),
+                )
+                if (provenance != "device_global_summary" || scope != "device_global_summary") return null
+
+                val avg = firstFiniteDouble(
+                    summary?.optFiniteDouble("avg_c"),
+                    summary?.optFiniteDouble("temperature_avg_c"),
+                    json.optFiniteDouble("temperature_avg_c"),
+                    json.optFiniteDouble("avg_c"),
+                ) ?: return null
+                val min = firstFiniteDouble(
+                    summary?.optFiniteDouble("min_c"),
+                    summary?.optFiniteDouble("temperature_min_c"),
+                    json.optFiniteDouble("temperature_min_c"),
+                    json.optFiniteDouble("min_c"),
+                ) ?: return null
+                val max = firstFiniteDouble(
+                    summary?.optFiniteDouble("max_c"),
+                    summary?.optFiniteDouble("temperature_max_c"),
+                    json.optFiniteDouble("temperature_max_c"),
+                    json.optFiniteDouble("max_c"),
+                ) ?: return null
+
+                return ThermalDeviceGlobalSummary(
+                    avgC = avg,
+                    minC = min,
+                    maxC = max,
+                    provenance = provenance,
+                    scope = scope,
+                    requestedDisplayUnit = firstNonBlank(
+                        summary?.optCleanString("requested_display_unit"),
+                        json.optCleanString("temperature_requested_display_unit"),
+                        json.optCleanString("requested_display_unit"),
+                    ),
+                    requestedDisplayUnitCode = summary?.optIntOrNull("requested_display_unit_code")
+                        ?: json.optIntOrNull("temperature_requested_display_unit_code")
+                        ?: json.optIntOrNull("requested_display_unit_code"),
+                )
+            }
+
+            private fun firstNonBlank(vararg values: String?): String =
+                values.firstOrNull { !it.isNullOrBlank() }.orEmpty()
+
+            private fun firstFiniteDouble(vararg values: Double?): Double? =
+                values.firstOrNull { it != null && it.isFinite() }
+
+            private fun JSONObject.optCleanString(name: String): String =
+                if (has(name) && !isNull(name)) optString(name).trim() else ""
+
+            private fun JSONObject.optFiniteDouble(name: String): Double? =
+                if (has(name) && !isNull(name)) optDouble(name).takeIf { it.isFinite() } else null
+
+            private fun JSONObject.optIntOrNull(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
+        }
+    }
+
+    private data class ThermalStreamSnapshot(
+        val rawJson: String,
+        val packetClassification: String,
+        val packetStatus: String,
+        val packetSizeBytes: Int?,
+        val selectedProfileName: String,
+        val selectedProfileSize: String,
+        val selectedProfileFps: Int?,
+        val selectedProfileCoding: Int?,
+        val selectedProfileStreamingNew: Boolean?,
+        val selectedProfileAllowedSizes: String,
+        val converterProfileStatus: String,
+        val converterValidationState: String,
+        val celsiusAllowed: Boolean,
+        val deviceGlobalSummary: ThermalDeviceGlobalSummary?,
+        val fullMatrixCelsiusAllowed: Boolean,
+    ) {
+        companion object {
+            val EMPTY = ThermalStreamSnapshot(
+                rawJson = "",
+                packetClassification = "",
+                packetStatus = "",
+                packetSizeBytes = null,
+                selectedProfileName = "",
+                selectedProfileSize = "",
+                selectedProfileFps = null,
+                selectedProfileCoding = null,
+                selectedProfileStreamingNew = null,
+                selectedProfileAllowedSizes = "",
+                converterProfileStatus = "",
+                converterValidationState = "",
+                celsiusAllowed = false,
+                deviceGlobalSummary = null,
+                fullMatrixCelsiusAllowed = false,
+            )
+
+            fun fromJson(rawStreamJson: JSONObject?): ThermalStreamSnapshot {
+                val json = rawStreamJson ?: return EMPTY
+                val selectedProfile = json.optJSONObject("selected_profile")
+                val validationState = json.optJSONObject("converter_validation_state")
+                val deviceGlobalSummary = ThermalDeviceGlobalSummary.fromJson(json)
+                return ThermalStreamSnapshot(
+                    rawJson = json.toString(),
+                    packetClassification = json.optString("packet_classification"),
+                    packetStatus = json.optString("packet_status"),
+                    packetSizeBytes = json.optIntOrNull("packet_size_bytes"),
+                    selectedProfileName = selectedProfile?.optString("name").orEmpty().ifBlank { json.optString("selected_profile_name") },
+                    selectedProfileSize = selectedProfile?.optString("size").orEmpty().ifBlank { json.optString("selected_profile_size") },
+                    selectedProfileFps = selectedProfile?.optIntOrNull("fps") ?: json.optIntOrNull("selected_profile_fps"),
+                    selectedProfileCoding = selectedProfile?.optIntOrNull("coding") ?: json.optIntOrNull("selected_profile_coding"),
+                    selectedProfileStreamingNew = selectedProfile?.optBooleanOrNull("streamingNew") ?: json.optBooleanOrNull("selected_profile_streamingNew"),
+                    selectedProfileAllowedSizes = (selectedProfile?.optJSONArray("allowed_packet_sizes") ?: json.optJSONArray("selected_profile_allowed_sizes")).csvString(),
+                    converterProfileStatus = json.optString("converter_profile_status"),
+                    converterValidationState = validationState?.toString().orEmpty(),
+                    celsiusAllowed = deviceGlobalSummary != null,
+                    deviceGlobalSummary = deviceGlobalSummary,
+                    fullMatrixCelsiusAllowed = deviceGlobalSummary != null && json.optBoolean("full_matrix_celsius_allowed", false),
+                )
+            }
+
+            private fun JSONObject.optIntOrNull(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
+
+            private fun JSONObject.optBooleanOrNull(name: String): Boolean? = if (has(name) && !isNull(name)) optBoolean(name) else null
+
+            private fun JSONArray?.csvString(): String {
+                if (this == null) return ""
+                return (0 until length()).joinToString(";") { index -> opt(index).toString() }
+            }
+        }
+    }
 
     private fun buildWarnings(frame: StandaloneFeatureFrame): String {
         val warnings = mutableListOf("injected_volume_timeline_estimate")

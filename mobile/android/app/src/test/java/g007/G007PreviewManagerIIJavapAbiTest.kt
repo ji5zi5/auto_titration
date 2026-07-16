@@ -4,6 +4,9 @@ import com.hcusbsdk.Interface.FStreamCallBack
 import com.hik.f1module.hcusbcamerasdk.callback.IStreamCallback
 import com.hik.viewer.manager.PreviewManagerII
 import android.graphics.RectF
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import java.io.File
 import java.lang.reflect.Modifier
 import java.util.Comparator
@@ -76,9 +79,12 @@ class G007PreviewManagerIIJavapAbiTest {
     }
 
     @Test fun constructorDefaultsAndRUAreConstructorCreatedDirectFields() {
-        val manager = PreviewManagerII(null, false, false)
+        val manager = PreviewManagerII(testLifecycle(), false, false)
         assertEquals(FStreamCallBack::class.java, PreviewManagerII::class.java.getDeclaredMethod("R").returnType)
         assertEquals(IStreamCallback::class.java, PreviewManagerII::class.java.getDeclaredMethod("U").returnType)
+        assertEquals(kotlin.jvm.functions.Function1::class.java, PreviewManagerII::class.java.getDeclaredField("c0").type)
+        assertEquals(kotlin.jvm.functions.Function1::class.java, PreviewManagerII::class.java.getDeclaredMethod("K0", kotlin.jvm.functions.Function1::class.java).parameterTypes.single())
+        assertEquals(kotlin.jvm.functions.Function0::class.java, PreviewManagerII::class.java.getDeclaredMethod("c0").returnType)
         assertEquals("com.hik.viewer.manager.PreviewManagerII\$d", manager.R().javaClass.name)
         assertEquals("com.hik.viewer.manager.PreviewManagerII\$e", manager.U().javaClass.name)
         assertSame(manager.R(), manager.R())
@@ -116,6 +122,16 @@ class G007PreviewManagerIIJavapAbiTest {
     }
 
     private fun bytes(target: Any, name: String) = field(target, name) as ByteArray
+
+    private fun testLifecycle(): Lifecycle {
+        lateinit var registry: LifecycleRegistry
+        val owner = object : LifecycleOwner {
+            override val lifecycle: Lifecycle
+                get() = registry
+        }
+        registry = LifecycleRegistry(owner)
+        return registry
+    }
 
     private fun field(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name).let {
         it.isAccessible = true

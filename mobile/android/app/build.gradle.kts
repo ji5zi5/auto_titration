@@ -14,8 +14,8 @@ android {
         applicationId = "kr.auto.titration.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.1.3"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -72,6 +72,8 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation("com.google.ai.edge.litert:litert:$liteRtVersion")
     implementation("com.google.code.gson:gson:2.11.0")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 val hikmicroRedistributionApproved = providers.gradleProperty("hikmicroRedistributionApproved")

@@ -15,6 +15,18 @@ class AndroidBridge(private val activity: MainActivity) {
     fun pumpStatus(): String = safeJson { activity.pumpStatusFromBridge() }
 
     @JavascriptInterface
+    fun pumpDevices(): String = safeJson { activity.pumpDevicesFromBridge() }
+
+    @JavascriptInterface
+    fun connectPump(address: String): String = safeJson { activity.connectPumpFromBridge(address) }
+
+    @JavascriptInterface
+    fun disconnectPump(): String = safeJson { activity.disconnectPumpFromBridge() }
+
+    @JavascriptInterface
+    fun openBluetoothSettings(): String = safeJson { activity.openBluetoothSettingsFromBridge() }
+
+    @JavascriptInterface
     fun sendPumpCommand(command: String): String = safeJson { activity.sendPumpCommandFromBridge(command) }
 
     @JavascriptInterface

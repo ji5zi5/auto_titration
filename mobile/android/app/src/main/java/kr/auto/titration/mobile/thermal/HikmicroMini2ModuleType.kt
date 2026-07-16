@@ -25,11 +25,17 @@ enum class HikmicroMini2ModuleType(val routeName: String, val backendName: Strin
         const val HIKMICRO_F2_PRODUCT_ID_0101 = 0x0101 // 257
         const val HIKMICRO_F2_ALT_VENDOR_ID = 0x20af // 8367
 
+        fun isOfficialF1Route(vendorId: Int, productId: Int): Boolean =
+            vendorId == HIKMICRO_VENDOR_ID && productId == HIKMICRO_F1_PRODUCT_ID
+
+        fun isOfficialF2Route(vendorId: Int, productId: Int): Boolean =
+            vendorId == HIKMICRO_VENDOR_ID &&
+                (productId == HIKMICRO_F2_PRODUCT_ID_0102 || productId == HIKMICRO_F2_PRODUCT_ID_0101) ||
+                vendorId == HIKMICRO_F2_ALT_VENDOR_ID
+
         fun classify(vendorId: Int, productId: Int): HikmicroMini2ModuleType = when {
-            vendorId == HIKMICRO_VENDOR_ID && productId == HIKMICRO_F1_PRODUCT_ID -> F1
-            vendorId == HIKMICRO_VENDOR_ID && productId == HIKMICRO_F2_PRODUCT_ID_0102 -> F2
-            vendorId == HIKMICRO_VENDOR_ID && productId == HIKMICRO_F2_PRODUCT_ID_0101 -> F2
-            vendorId == HIKMICRO_F2_ALT_VENDOR_ID -> F2
+            isOfficialF1Route(vendorId, productId) -> F1
+            isOfficialF2Route(vendorId, productId) -> F2
             else -> UNSUPPORTED
         }
 

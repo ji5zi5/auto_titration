@@ -10,11 +10,24 @@ data class HikmicroConversionAttempt(
     val celsiusAllowed: Boolean,
     val note: String,
     val symbols: List<String>,
+    val temperatureAvgC: Double? = null,
+    val temperatureMinC: Double? = null,
+    val temperatureMaxC: Double? = null,
+    val converterProfileStatus: String = "unresolved",
+    val celsiusPublishState: String = "unavailable_unvalidated",
+    val validationEvidence: Mini2ValidationEvidence = Mini2ValidationEvidence(),
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("raw_frame_status", rawFrameStatus)
         .put("temperature_status", temperatureStatus)
         .put("celsius_allowed", celsiusAllowed)
+        .put("converter_profile_status", converterProfileStatus)
+        .put("temperature_profile_status", converterProfileStatus)
+        .put("celsius_publish_state", celsiusPublishState)
+        .put("temperature_avg_c", temperatureAvgC ?: JSONObject.NULL)
+        .put("temperature_min_c", temperatureMinC ?: JSONObject.NULL)
+        .put("temperature_max_c", temperatureMaxC ?: JSONObject.NULL)
+        .put("validation_evidence", validationEvidence.toJson())
         .put("note", note)
         .put("symbols", JSONArray(symbols))
 }
@@ -63,12 +76,20 @@ object HikmicroTemperatureConversionAttempt {
         } else {
             "blocked_no_fake_celsius"
         }
+        val converterProfileStatus = if (celsiusAllowed) {
+            "validated"
+        } else {
+            "unresolved_fixture_or_live_stream_validation_missing"
+        }
         return HikmicroConversionAttempt(
             rawFrameStatus = rawStatus,
             temperatureStatus = tempStatus,
             celsiusAllowed = celsiusAllowed,
             note = "NoFakeCelsiusGuard blocks Celsius until fixtureCompared and liveStreamObserved are true; raw/preview remains raw_unverified.",
             symbols = candidateSymbols,
+            converterProfileStatus = converterProfileStatus,
+            celsiusPublishState = if (celsiusAllowed) "allowed_by_validation_evidence" else "unavailable_null_until_validation",
+            validationEvidence = evidence,
         )
     }
 

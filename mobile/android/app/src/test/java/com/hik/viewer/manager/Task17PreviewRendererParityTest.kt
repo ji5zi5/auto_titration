@@ -6,20 +6,41 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.TextView
 import android.animation.TypeEvaluator
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import com.hik.library.player.b
 import com.hik.library.player.d
 import com.hik.viewer.bean.DiagnoseBean
 import com.hik.viewercommon.data.bean.SceneModeBean
 import hik.common.yyrj.uicommon.widget.FloatTextureView
+import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
 import kotlin.jvm.functions.Function1
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class Task17PreviewRendererParityTest {
+    private lateinit var manager: PreviewManagerII
+
+    @Before
+    fun installLegitimateTestLifecycle() {
+        val install = PreviewManagerIIAppBinding::class.java
+            .getDeclaredMethod("installLifecycle", Lifecycle::class.java)
+            .apply { isAccessible = true }
+        manager = install.invoke(null, testLifecycle()) as PreviewManagerII
+    }
+
+    @After
+    fun closeManager() {
+        PreviewManagerIIAppBinding.unbind(manager)
+    }
+
     @Test
     fun l0KeepsTheOfficialDescriptorAndTypedFunctionChannels() {
         val method = PreviewManagerII::class.java.getDeclaredMethod(
@@ -73,7 +94,6 @@ class Task17PreviewRendererParityTest {
 
     @Test
     fun playerListenerDoesNotRouteL0CallbacksToGuessedLifecycleEvents() {
-        val manager = kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding.manager()
         var freezeCalls = 0
         var overlayCalls = 0
         var frameCalls = 0
@@ -108,7 +128,6 @@ class Task17PreviewRendererParityTest {
 
     @Test
     fun teardownStopsThenReleasesRendererAndRetainsOfficialL0State() {
-        val manager = kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding.manager()
         val calls = mutableListOf<String>()
         val renderer = RecordingRenderer(calls)
         val scene = SceneModeBean()
@@ -136,6 +155,16 @@ class Task17PreviewRendererParityTest {
         setField(manager, "O", null)
         manager.D0(null)
         manager.openPreviewCallback()
+    }
+
+    private fun testLifecycle(): Lifecycle {
+        lateinit var registry: LifecycleRegistry
+        val owner = object : LifecycleOwner {
+            override val lifecycle: Lifecycle
+                get() = registry
+        }
+        registry = LifecycleRegistry(owner)
+        return registry
     }
 
     private fun field(name: String) = PreviewManagerII::class.java.getDeclaredField(name).apply {

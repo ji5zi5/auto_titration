@@ -1,7 +1,9 @@
 package com.hik.viewer.manager
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import com.hcusbsdk.Interface.USB_FRAME_INFO
-import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
 import com.hik.viewercommon.data.device.api.callback.F2ModuleStreamCallback
 import java.util.Arrays
 import java.util.concurrent.CountDownLatch
@@ -15,12 +17,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PreviewManagerIIF2BufferingTest {
-    private fun newManager() = PreviewManagerII(null, false, false)
+    private fun newManager() = PreviewManagerII(testLifecycle(), false, false)
 
     @Test fun officialRReturnsPersistentCallbackAndCopiesExactBytesIntoMailbox() {
         val manager = newManager()
         Z2.a.a.u(f3.j().apply { d(12) })
-        manager.openPreviewCallback()
         val callback = manager.R()
         assertNotNull(callback)
         val source = ByteArray(NORMAL_SIZE - 7) { (it % 127).toByte() }
@@ -37,7 +38,6 @@ class PreviewManagerIIF2BufferingTest {
         val previous = Z2.a.a.p()
         try {
             Z2.a.a.u(f3.j().apply { d(12) })
-            manager.openPreviewCallback()
             manager.R().fStreamCallback(1, frameInfo(OFFLINE_SIZE, ByteArray(OFFLINE_SIZE) { 3 }, 3))
             val r0 = PreviewManagerII::class.java.getDeclaredField("r0").apply { isAccessible = true }.get(manager) as ByteArray
             assertEquals(OFFLINE_SIZE, r0.size)
@@ -52,7 +52,6 @@ class PreviewManagerIIF2BufferingTest {
         val previous = Z2.a.a.p()
         try {
             Z2.a.a.u(f3.j().apply { d(12) })
-            manager.openPreviewCallback()
             manager.R().fStreamCallback(1, frameInfo(NORMAL_SIZE, ByteArray(NORMAL_SIZE) { 1 }, 1))
             manager.R().fStreamCallback(1, frameInfo(OFFLINE_SIZE, ByteArray(OFFLINE_SIZE) { 2 }, 3))
             val s0 = PreviewManagerII::class.java.getDeclaredField("s0").apply { isAccessible = true }.get(manager) as ByteArray
@@ -87,6 +86,16 @@ class PreviewManagerIIF2BufferingTest {
         dwFrameType = 5
         dwDataType = 6
         dwStreamType = 7
+    }
+
+    private fun testLifecycle(): Lifecycle {
+        lateinit var registry: LifecycleRegistry
+        val owner = object : LifecycleOwner {
+            override val lifecycle: Lifecycle
+                get() = registry
+        }
+        registry = LifecycleRegistry(owner)
+        return registry
     }
 
     private companion object {

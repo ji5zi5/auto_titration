@@ -81,8 +81,10 @@ class Mini2UsbProbe(private val context: Context) {
                         }
                     }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                        if ((device != null && HikmicroMini2ModuleType.isHikmicroCandidate(device)) || device?.deviceName == pendingPermissionDeviceName) {
-                            permissionRequests.remove(device?.deviceName ?: pendingPermissionDeviceName)
+                        val detachedDeviceName = device?.deviceName ?: pendingPermissionDeviceName
+                        val pendingDeviceDetached = device?.deviceName == pendingPermissionDeviceName
+                        if ((device != null && HikmicroMini2ModuleType.isHikmicroCandidate(device)) || pendingDeviceDetached) {
+                            permissionRequests.remove(detachedDeviceName)
                             pendingPermissionDeviceName = ""
                             lastPermissionGranted = false
                         }
@@ -130,20 +132,29 @@ class Mini2UsbProbe(private val context: Context) {
         val hasPermission = mini2?.let { usbManager.hasPermission(it) } == true
         val moduleType = mini2?.let { HikmicroMini2ModuleType.classify(it) } ?: HikmicroMini2ModuleType.UNSUPPORTED
         val routeJson = HikmicroMini2ModuleType.routeJson(mini2)
+        val explicitNativeStreamAttempt = attemptRawStream
         val status = safeProbeStatus(
             requestPermissionIfMissing = requestPermissionIfMissing,
             forcePermissionRequest = forcePermissionRequest,
             forceNativeLoad = forceNativeLoad,
+            allowNativeLoad = explicitNativeStreamAttempt,
         )
-        val shouldAttemptNativeLoad = hasPermission || requestPermissionIfMissing
+        val shouldAttemptNativeLoad = explicitNativeStreamAttempt && mini2 != null && hasPermission && moduleType.isSupported
         val nativeReport = try {
             if (shouldAttemptNativeLoad) {
                 HikmicroNativeBackend.ensureLibrariesLoaded(
                     nativeLibraryDir = nativeLibraryDir,
                     forceRetry = forceNativeLoad,
+                    moduleType = moduleType,
                 )
             } else {
-                HikmicroNativeBackend.notAttemptedReport()
+                HikmicroNativeBackend.notAttemptedReport(
+                    note = nativeNotAttemptedReason(
+                        mini2 = mini2,
+                        hasPermission = hasPermission,
+                        moduleType = moduleType,
+                    ),
+                )
             }
         } catch (error: Throwable) {
             HikmicroNativeBackend.notAttemptedReport(
@@ -167,7 +178,7 @@ class Mini2UsbProbe(private val context: Context) {
             permissionSnapshot = permissionSnapshot,
             routeJson = routeJson,
         )
-        val rawStreamJson = rawStreamStatus.toJson()
+        val rawStreamJson = enrichRawStreamJson(rawStreamStatus.toJson(), conversion)
         val result = JSONObject()
             .put("thermal_calibrated", status.calibrated)
             .put("mini2_vendor_id", String.format("0x%04x", MINI2_VENDOR_ID))
@@ -184,7 +195,28 @@ class Mini2UsbProbe(private val context: Context) {
             .put("raw_stream_status", rawStreamStatus.rawStreamStatus)
             .put("temperature_conversion_status", conversion.temperatureStatus)
             .put("hikmicro_native", nativeReport.toJson())
+            .put(
+                "mini2_native_permission_gate",
+                nativePermissionGateJson(
+                    mini2 = mini2,
+                    hasPermission = hasPermission,
+                    moduleType = moduleType,
+                    nativeLoadAttempted = shouldAttemptNativeLoad,
+                ),
+            )
             .put("temperature_attempt", conversion.toJson())
+            .put("converter_validation_state", conversion.validationEvidence.toJson())
+            .put("celsius_allowed", hasValidDeviceGlobalSummary(rawStreamJson))
+            .put("temperature_avg_c", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonFiniteDoubleOrNull(rawStreamJson, "temperature_avg_c") ?: JSONObject.NULL else JSONObject.NULL)
+            .put("temperature_min_c", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonFiniteDoubleOrNull(rawStreamJson, "temperature_min_c") ?: JSONObject.NULL else JSONObject.NULL)
+            .put("temperature_max_c", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonFiniteDoubleOrNull(rawStreamJson, "temperature_max_c") ?: JSONObject.NULL else JSONObject.NULL)
+            .put("temperature_provenance", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonStringOrNull(rawStreamJson, "temperature_provenance") else JSONObject.NULL)
+            .put("temperature_scope", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonStringOrNull(rawStreamJson, "temperature_scope") else JSONObject.NULL)
+            .put("temperature_requested_display_unit", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonStringOrNull(rawStreamJson, "temperature_requested_display_unit") else JSONObject.NULL)
+            .put("temperature_requested_display_unit_code", if (hasValidDeviceGlobalSummary(rawStreamJson)) jsonIntOrNull(rawStreamJson, "temperature_requested_display_unit_code") else JSONObject.NULL)
+            .put("temperature_summary", if (hasValidDeviceGlobalSummary(rawStreamJson)) rawStreamJson.optJSONObject("temperature_summary") ?: JSONObject.NULL else JSONObject.NULL)
+            .put("full_matrix_celsius_allowed", false)
+            .put("full_matrix_temperature_status", rawStreamJson.optString("full_matrix_temperature_status", "unproved_not_emitted"))
             .put("raw_stream", rawStreamJson)
             .put("passive_raw_stream", rawStreamJson)
             .put("current_usb_presence", currentUsbPresence)
@@ -222,12 +254,14 @@ class Mini2UsbProbe(private val context: Context) {
         requestPermissionIfMissing: Boolean = true,
         forcePermissionRequest: Boolean = false,
         forceNativeLoad: Boolean = false,
+        allowNativeLoad: Boolean = false,
     ): ThermalStatus {
         return try {
             probeStatus(
                 requestPermissionIfMissing = requestPermissionIfMissing,
                 forcePermissionRequest = forcePermissionRequest,
                 forceNativeLoad = forceNativeLoad,
+                allowNativeLoad = allowNativeLoad,
             )
         } catch (error: Throwable) {
             ThermalStatus.blocked("Mini2 status probe failed safely: ${error.javaClass.simpleName}: ${error.message ?: "no message"}")
@@ -240,10 +274,22 @@ class Mini2UsbProbe(private val context: Context) {
             if (!usbManager.hasPermission(mini2)) return null
             val moduleType = HikmicroMini2ModuleType.classify(mini2)
             if (moduleType != HikmicroMini2ModuleType.F2) return null
+            if (!HikmicroNativeBackend.coreAlreadyLoadedFor(moduleType)) return null
             HikmicroJnaMini2Stream.latestRawFrameSummary(mini2)
         } catch (_: Throwable) {
             null
         }
+    }
+
+    fun latestRawStreamJson(
+        runtimeMode: Mini2OfficialRuntimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
+    ): JSONObject? {
+        val status = latestRawStreamStatus(runtimeMode) ?: return null
+        val conversion = HikmicroTemperatureConversionAttempt.describe(
+            loadReport = HikmicroNativeBackend.notAttemptedReport(note = "latest_raw_stream_json_converter_status_only"),
+            usbPermissionGranted = true,
+        )
+        return enrichRawStreamJson(status.toJson(), conversion)
     }
 
     fun latestRawStreamStatus(
@@ -254,6 +300,7 @@ class Mini2UsbProbe(private val context: Context) {
             if (!usbManager.hasPermission(mini2)) return null
             val moduleType = HikmicroMini2ModuleType.classify(mini2)
             if (moduleType != HikmicroMini2ModuleType.F2) return null
+            if (!HikmicroNativeBackend.coreAlreadyLoadedFor(moduleType)) return null
             HikmicroJnaMini2Stream.peekActiveStatus(mini2, runtimeMode)
         } catch (_: Throwable) {
             null
@@ -264,6 +311,7 @@ class Mini2UsbProbe(private val context: Context) {
         requestPermissionIfMissing: Boolean = true,
         forcePermissionRequest: Boolean = false,
         forceNativeLoad: Boolean = false,
+        allowNativeLoad: Boolean = false,
     ): ThermalStatus {
         val mini2 = findMini2Candidate()
             ?: return ThermalStatus.blocked("Mini2 USB device not found on Android USB host")
@@ -286,6 +334,13 @@ class Mini2UsbProbe(private val context: Context) {
             } else {
                 ThermalStatus.blocked("USB permission pending; waiting for Android grant")
             }
+        }
+
+        if (!allowNativeLoad) {
+            return HikmicroNativeBackend.passiveStatusForUsbPermission(
+                usbPermissionGranted = true,
+                preferredModuleType = moduleType,
+            )
         }
 
         return try {
@@ -431,14 +486,21 @@ class Mini2UsbProbe(private val context: Context) {
         hasPermission: Boolean,
         nativeReport: NativeLibraryLoadReport,
     ): Mini2RawStreamStatus {
-        if (mini2 != null && hasPermission) {
-            val moduleType = HikmicroMini2ModuleType.classify(mini2)
-            if (moduleType == HikmicroMini2ModuleType.F2 && nativeReport.coreLoadedFor(moduleType)) {
-                HikmicroJnaMini2Stream.peekActiveStatus(
-                    device = mini2,
-                    runtimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
-                )?.let { return it }
-            }
+        if (mini2 == null) {
+            return Mini2RawStreamStatus.blockedNativeStream(
+                "Mini2 USB device not found; passive status cannot report an active raw stream",
+                discovery = "hikmicro_official_passive_poll_device_not_found",
+            )
+        }
+        if (!hasPermission) {
+            return Mini2RawStreamStatus.blockedUsbPermission("USB permission is required before passive Mini2 raw stream status can open or inspect native stream state")
+        }
+        val moduleType = HikmicroMini2ModuleType.classify(mini2)
+        if (moduleType == HikmicroMini2ModuleType.F2 && HikmicroNativeBackend.coreAlreadyLoadedFor(moduleType)) {
+            HikmicroJnaMini2Stream.peekActiveStatus(
+                device = mini2,
+                runtimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
+            )?.let { return it }
         }
         return Mini2RawStreamStatus.blockedNativeStream(
             "Mini2 official HCUSBSDK/JNI stream is not started by passive status polling; WebView auto-probe or Mini2 USB 확인 starts one explicit stream probe",
@@ -461,6 +523,147 @@ class Mini2UsbProbe(private val context: Context) {
         }
     }
 
+
+    private fun enrichRawStreamJson(rawStreamJson: JSONObject, conversion: kr.auto.titration.mobile.thermal.HikmicroConversionAttempt): JSONObject {
+        val text = listOf(
+            rawStreamJson.optString("stage_report"),
+            rawStreamJson.optString("reason"),
+        ).joinToString("; ")
+        val profileName = firstNonBlank(
+            parseToken(text, "selectedProfile"),
+            parseToken(text, "profile_class"),
+            lastAttemptString(rawStreamJson, "profile_class"),
+        )
+        val profileSize = parseToken(text, "profileSize")
+        val profileFps = parseToken(text, "profileFps").toIntOrNullStrict()
+        val profileCoding = parseToken(text, "profileCoding").toIntOrNullStrict()
+        val profileStreamingNew = parseToken(text, "profileStreamingNew").toBooleanOrNullStrict()
+        val allowedSizes = parseAllowedSizes(text).ifEmpty { lastAttemptIntArray(rawStreamJson, "profile_allowed_sizes") }
+        val moduleId = firstNonBlank(parseToken(text, "moduleId"), lastAttemptString(rawStreamJson, "profile_module_id"))
+        val firmwareDate = firstNonBlank(parseToken(text, "firmwareDate"), lastAttemptInt(rawStreamJson, "profile_firmware_date")?.takeIf { it >= 0 }?.toString())
+        val packetClassification = parseToken(text, "packet_classification")
+        val packetStatus = parseToken(text, "packet_status")
+        val packetSizeBytes = parseToken(text, "bytes").toIntOrNullStrict()
+        val evidencePrefix = parseToken(text, "evidence_prefix")
+        val selectedProfile = JSONObject()
+            .put("inputs", JSONObject()
+                .put("module_id", moduleId.ifBlank { JSONObject.NULL })
+                .put("firmware_date", firmwareDate.ifBlank { JSONObject.NULL }))
+            .put("name", profileName.ifBlank { JSONObject.NULL })
+            .put("size", profileSize.ifBlank { JSONObject.NULL })
+            .put("fps", profileFps ?: JSONObject.NULL)
+            .put("coding", profileCoding ?: JSONObject.NULL)
+            .put("streamingNew", profileStreamingNew ?: JSONObject.NULL)
+            .put("allowed_packet_sizes", JSONArray(allowedSizes))
+
+        val hasDeviceGlobalSummary = hasValidDeviceGlobalSummary(rawStreamJson)
+        val converterAttemptDiagnostic = conversion.toJson()
+        rawStreamJson
+            .put("temperature_conversion_attempt", converterAttemptDiagnostic)
+            .put("matrix_conversion_attempt", converterAttemptDiagnostic)
+            .put("full_matrix_celsius_allowed", false)
+            .put("full_matrix_temperature_status", rawStreamJson.optString("full_matrix_temperature_status", "unproved_not_emitted"))
+        if (!hasDeviceGlobalSummary) {
+            rawStreamJson
+                .put("celsius_allowed", false)
+                .put("temperature_avg_c", JSONObject.NULL)
+                .put("temperature_min_c", JSONObject.NULL)
+                .put("temperature_max_c", JSONObject.NULL)
+                .put("temperature_provenance", JSONObject.NULL)
+                .put("temperature_scope", JSONObject.NULL)
+                .put("temperature_requested_display_unit", JSONObject.NULL)
+                .put("temperature_requested_display_unit_code", JSONObject.NULL)
+                .put("temperature_summary", JSONObject.NULL)
+        }
+
+        return rawStreamJson
+            .put("selected_profile", selectedProfile)
+            .put("selected_profile_inputs", selectedProfile.optJSONObject("inputs"))
+            .put("selected_profile_name", profileName.ifBlank { JSONObject.NULL })
+            .put("selected_profile_size", profileSize.ifBlank { JSONObject.NULL })
+            .put("selected_profile_fps", profileFps ?: JSONObject.NULL)
+            .put("selected_profile_coding", profileCoding ?: JSONObject.NULL)
+            .put("selected_profile_streamingNew", profileStreamingNew ?: JSONObject.NULL)
+            .put("selected_profile_allowed_sizes", JSONArray(allowedSizes))
+            .put("packet_classification", packetClassification.ifBlank { JSONObject.NULL })
+            .put("packet_status", packetStatus.ifBlank { JSONObject.NULL })
+            .put("packet_size_bytes", packetSizeBytes ?: JSONObject.NULL)
+            .put("packet_evidence_prefix", evidencePrefix.ifBlank { JSONObject.NULL })
+            .put("converter_profile_status", if (hasDeviceGlobalSummary) rawStreamJson.optString("converter_profile_status", conversion.converterProfileStatus) else conversion.converterProfileStatus)
+            .put("converter_validation_state", conversion.validationEvidence.toJson())
+    }
+
+    private fun hasValidDeviceGlobalSummary(rawStreamJson: JSONObject): Boolean {
+        val summary = rawStreamJson.optJSONObject("temperature_summary")
+        val provenance = rawStreamJson.optString("temperature_provenance", summary?.optString("provenance").orEmpty())
+        val scope = rawStreamJson.optString("temperature_scope", summary?.optString("scope").orEmpty())
+        return rawStreamJson.optBoolean("celsius_allowed", false) &&
+            !rawStreamJson.optBoolean("full_matrix_celsius_allowed", false) &&
+            provenance == "device_global_summary" &&
+            scope == "device_global_summary" &&
+            jsonFiniteDoubleOrNull(rawStreamJson, "temperature_avg_c") != null &&
+            jsonFiniteDoubleOrNull(rawStreamJson, "temperature_min_c") != null &&
+            jsonFiniteDoubleOrNull(rawStreamJson, "temperature_max_c") != null
+    }
+
+    private fun jsonFiniteDoubleOrNull(json: JSONObject, key: String): Double? {
+        if (!json.has(key) || json.isNull(key)) return null
+        val value = json.optDouble(key, Double.NaN)
+        return value.takeIf { it.isFinite() }
+    }
+
+    private fun jsonStringOrNull(json: JSONObject, key: String): Any {
+        if (!json.has(key) || json.isNull(key)) return JSONObject.NULL
+        return json.optString(key).takeIf { it.isNotBlank() } ?: JSONObject.NULL
+    }
+
+    private fun jsonIntOrNull(json: JSONObject, key: String): Any {
+        if (!json.has(key) || json.isNull(key)) return JSONObject.NULL
+        return json.optInt(key)
+    }
+
+    private fun parseToken(text: String, key: String): String {
+        val match = Regex("(?:^|[;\\s])" + Regex.escape(key) + "=([^;\\s]+)").find(text) ?: return ""
+        return match.groupValues[1].trim().trim(',')
+    }
+
+    private fun parseAllowedSizes(text: String): List<Int> {
+        val bracket = Regex("profileAllowedSizes=\\[([^\\]]*)\\]").find(text)?.groupValues?.get(1) ?: return emptyList()
+        return bracket.split(',').mapNotNull { it.trim().toIntOrNull() }
+    }
+
+    private fun firstNonBlank(vararg values: String?): String = values.firstOrNull { !it.isNullOrBlank() }.orEmpty()
+
+    private fun String.toIntOrNullStrict(): Int? = trim().takeIf { it.isNotBlank() }?.toIntOrNull()
+
+    private fun String.toBooleanOrNullStrict(): Boolean? = when (trim().lowercase()) {
+        "true" -> true
+        "false" -> false
+        else -> null
+    }
+
+    private fun lastAttempt(rawStreamJson: JSONObject): JSONObject? {
+        val attempts = rawStreamJson.optJSONArray("attempt_diagnostics") ?: return null
+        for (index in attempts.length() - 1 downTo 0) {
+            val item = attempts.optJSONObject(index) ?: continue
+            return item
+        }
+        return null
+    }
+
+    private fun lastAttemptString(rawStreamJson: JSONObject, key: String): String =
+        lastAttempt(rawStreamJson)?.optString(key).orEmpty()
+
+    private fun lastAttemptInt(rawStreamJson: JSONObject, key: String): Int? {
+        val attempt = lastAttempt(rawStreamJson) ?: return null
+        return if (attempt.has(key) && !attempt.isNull(key)) attempt.optInt(key) else null
+    }
+
+    private fun lastAttemptIntArray(rawStreamJson: JSONObject, key: String): List<Int> {
+        val array = lastAttempt(rawStreamJson)?.optJSONArray(key) ?: return emptyList()
+        return (0 until array.length()).mapNotNull { index -> array.optInt(index) }
+    }
+
     private fun currentUsbPresenceJson(
         mini2: UsbDevice?,
         hasPermission: Boolean,
@@ -481,6 +684,30 @@ class Mini2UsbProbe(private val context: Context) {
         .put("route_reason", routeJson.optString("reason"))
         .put("official_module_type", routeJson.optString("module_type"))
         .put("selected_backend", routeJson.optString("backend"))
+
+    private fun nativePermissionGateJson(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        moduleType: HikmicroMini2ModuleType,
+        nativeLoadAttempted: Boolean,
+    ): JSONObject = JSONObject()
+        .put("device_present", mini2 != null)
+        .put("has_permission", hasPermission)
+        .put("native_load_attempted", nativeLoadAttempted)
+        .put("native_open_start_allowed", nativeLoadAttempted && mini2 != null && hasPermission && moduleType.isSupported)
+        .put("explicit_native_stream_requested", nativeLoadAttempted)
+        .put("reason", nativeNotAttemptedReason(mini2, hasPermission, moduleType))
+
+    private fun nativeNotAttemptedReason(
+        mini2: UsbDevice?,
+        hasPermission: Boolean,
+        moduleType: HikmicroMini2ModuleType,
+    ): String = when {
+        mini2 == null -> "Mini2 USB device not found; native load/open/start skipped"
+        !hasPermission -> "USB permission missing; native load/open/start skipped until Android grants Mini2 access"
+        !moduleType.isSupported -> "Unsupported HIKMICRO USB module; native load/open/start skipped"
+        else -> "USB permission granted and supported Mini2 route selected; native load/open/start deferred until explicit Mini2 stream attempt"
+    }
 
     private fun devicesJson(): JSONArray = JSONArray(
         usbManager.deviceList.values

@@ -1,7 +1,7 @@
 package com.hcusbsdk.Interface
 
 class USB_USER_LOGIN_INFO {
-    @JvmField var dwSize: Int = 0
+    var dwSize: Int = 0
     @JvmField var dwTimeout: Int = 0
     @JvmField var dwDevIndex: Int = 0
     @JvmField var dwVID: Int = 0
@@ -10,7 +10,7 @@ class USB_USER_LOGIN_INFO {
     @JvmField var szPassword: String = ""
     @JvmField var szSerialNumber: String = ""
     @JvmField var byLoginMode: Byte = 0
-    @JvmField var byRes2: ByteArray = ByteArray(3)
+    var byRes2: ByteArray = ByteArray(3)
     @JvmField var dwFd: Int = 0
-    @JvmField var byRes: ByteArray = ByteArray(248)
+    var byRes: ByteArray = ByteArray(248)
 }

@@ -3,6 +3,7 @@ package kr.auto.titration.mobile
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -11,6 +12,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Base64
 import android.webkit.PermissionRequest
 import android.webkit.WebResourceRequest
@@ -59,6 +61,7 @@ import kr.auto.titration.mobile.vision.VisibleFeatures
 import kr.auto.titration.mobile.vision.YoloInputFrame
 import kr.auto.titration.mobile.vision.YoloSegmentationDetector
 import kr.auto.titration.mobile.vision.roiMaskFromBool
+import org.json.JSONArray
 import org.json.JSONObject
 
 private const val MINI2_AUTO_RETRY_INTERVAL_MS = 2_000L
@@ -68,6 +71,67 @@ private const val VISIBLE_PREVIEW_MAX_WIDTH = 320
 private const val HIKMICRO_THERMAL_PREVIEW_WIDTH = 256
 private const val HIKMICRO_THERMAL_PREVIEW_HEIGHT = 192
 private const val TRUSTED_WEBVIEW_ASSET_PREFIX = "file:///android_asset/"
+
+internal fun copyMini2TemperatureSummaryFieldsForBridge(live: JSONObject, stream: JSONObject) {
+    val summaryIsValid = hasValidMini2DeviceGlobalSummaryForBridge(stream)
+    live.put("celsius_allowed", summaryIsValid)
+    if (summaryIsValid) {
+        putFiniteOrNullForBridge(live, "temperature_avg_c", stream, "temperature_avg_c")
+        putFiniteOrNullForBridge(live, "temperature_min_c", stream, "temperature_min_c")
+        putFiniteOrNullForBridge(live, "temperature_max_c", stream, "temperature_max_c")
+        putStringOrNullForBridge(live, "temperature_provenance", stream, "temperature_provenance")
+        putStringOrNullForBridge(live, "temperature_scope", stream, "temperature_scope")
+        putStringOrNullForBridge(live, "temperature_requested_display_unit", stream, "temperature_requested_display_unit")
+        if (stream.has("temperature_requested_display_unit_code") && !stream.isNull("temperature_requested_display_unit_code")) {
+            live.put("temperature_requested_display_unit_code", stream.optInt("temperature_requested_display_unit_code"))
+        } else {
+            live.put("temperature_requested_display_unit_code", JSONObject.NULL)
+        }
+        live.put("temperature_summary", stream.optJSONObject("temperature_summary") ?: JSONObject.NULL)
+    } else {
+        live.put("temperature_avg_c", JSONObject.NULL)
+        live.put("temperature_min_c", JSONObject.NULL)
+        live.put("temperature_max_c", JSONObject.NULL)
+        live.put("temperature_provenance", JSONObject.NULL)
+        live.put("temperature_scope", JSONObject.NULL)
+        live.put("temperature_requested_display_unit", JSONObject.NULL)
+        live.put("temperature_requested_display_unit_code", JSONObject.NULL)
+        live.put("temperature_summary", JSONObject.NULL)
+    }
+    live.put("full_matrix_celsius_allowed", false)
+    live.put("full_matrix_temperature_status", stream.optString("full_matrix_temperature_status", "unproved_not_emitted"))
+}
+
+private fun hasValidMini2DeviceGlobalSummaryForBridge(stream: JSONObject): Boolean {
+    val summary = stream.optJSONObject("temperature_summary")
+    val provenance = stream.optString("temperature_provenance", summary?.optString("provenance").orEmpty())
+    val scope = stream.optString("temperature_scope", summary?.optString("scope").orEmpty())
+    return stream.optBoolean("celsius_allowed", false) &&
+        !stream.optBoolean("full_matrix_celsius_allowed", false) &&
+        provenance == "device_global_summary" &&
+        scope == "device_global_summary" &&
+        finiteDoubleOrNullForBridge(stream, "temperature_avg_c") != null &&
+        finiteDoubleOrNullForBridge(stream, "temperature_min_c") != null &&
+        finiteDoubleOrNullForBridge(stream, "temperature_max_c") != null
+}
+
+private fun putFiniteOrNullForBridge(target: JSONObject, targetKey: String, source: JSONObject, sourceKey: String) {
+    target.put(targetKey, finiteDoubleOrNullForBridge(source, sourceKey) ?: JSONObject.NULL)
+}
+
+private fun finiteDoubleOrNullForBridge(json: JSONObject, key: String): Double? {
+    if (!json.has(key) || json.isNull(key)) return null
+    val value = json.optDouble(key, Double.NaN)
+    return value.takeIf { it.isFinite() }
+}
+
+private fun putStringOrNullForBridge(target: JSONObject, targetKey: String, source: JSONObject, sourceKey: String) {
+    if (source.has(sourceKey) && !source.isNull(sourceKey)) {
+        target.put(targetKey, source.optString(sourceKey).takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+    } else {
+        target.put(targetKey, JSONObject.NULL)
+    }
+}
 
 private data class VisiblePreviewPayload(
     val dataUrl: String,
@@ -90,6 +154,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var officialPreviewHost: OfficialPreviewHost
     private lateinit var mini2Probe: Mini2UsbProbe
+    private lateinit var pumpTransport: BluetoothPumpTransport
     private lateinit var pumpController: ManualPumpController
     private var lockedVisibleRoi: Roi? = null
     private var previousVisibleFeatures: VisibleFeatures? = null
@@ -152,22 +217,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private val bluetoothPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        bluetoothPermissionGranted = granted
-        statusMessage = if (granted) {
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        bluetoothPermissionGranted = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            true
+        } else {
+            grants[Manifest.permission.BLUETOOTH_CONNECT] == true &&
+                grants[Manifest.permission.BLUETOOTH_SCAN] == true
+        }
+        statusMessage = if (bluetoothPermissionGranted) {
             "Bluetooth 펌프 권한 허용됨 · paired SPP 장치 사용 가능"
         } else {
-            "Bluetooth 펌프 권한이 필요합니다. Android 권한에서 Nearby devices/Bluetooth를 허용하세요."
+            "Bluetooth 펌프 권한이 필요합니다. 주변 기기(Bluetooth 연결·검색)를 모두 허용하세요."
         }
         notifyWebStatus()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        d2.a.b(applicationContext)
         AndroidCrashLogStore.install(applicationContext)
         mini2Probe = Mini2UsbProbe(this)
-        pumpController = ManualPumpController(BluetoothPumpTransport(this))
+        pumpTransport = BluetoothPumpTransport(this)
+        pumpController = ManualPumpController(pumpTransport)
         yoloDetector = YoloSegmentationDetector(this)
         autoRoiWorker = AndroidAutoRoiWorker(yoloDetector, androidRoiState)
         mini2Probe.startMonitoring()
@@ -181,8 +253,16 @@ class MainActivity : ComponentActivity() {
         requestBluetoothPermissionIfNeeded()
     }
 
+    override fun onStop() {
+        stopRunningPumpForLifecycle("activity_onStop")
+        super.onStop()
+    }
+
     override fun onDestroy() {
-        super.onDestroy()
+        stopRunningPumpForLifecycle("activity_onDestroy")
+        if (::pumpTransport.isInitialized) {
+            pumpTransport.close()
+        }
         cameraExecutor.shutdown()
         if (::mini2Probe.isInitialized) {
             mini2Probe.stopMonitoring()
@@ -194,6 +274,7 @@ class MainActivity : ComponentActivity() {
             webView.removeJavascriptInterface("AutoTitrationAndroid")
             webView.destroy()
         }
+        super.onDestroy()
     }
 
     private fun requestBluetoothPermissionIfNeeded() {
@@ -201,13 +282,22 @@ class MainActivity : ComponentActivity() {
             bluetoothPermissionGranted = true
             return
         }
-        val granted = ContextCompat.checkSelfPermission(
+        val connectGranted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.BLUETOOTH_CONNECT,
         ) == PackageManager.PERMISSION_GRANTED
-        bluetoothPermissionGranted = granted
-        if (!granted) {
-            bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        val scanGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.BLUETOOTH_SCAN,
+        ) == PackageManager.PERMISSION_GRANTED
+        bluetoothPermissionGranted = connectGranted && scanGranted
+        if (!bluetoothPermissionGranted) {
+            bluetoothPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_SCAN,
+                ),
+            )
         }
     }
 
@@ -344,6 +434,7 @@ class MainActivity : ComponentActivity() {
                 if (::pumpController.isInitialized) {
                     runSession.updatePumpSnapshot(pumpController.snapshot())
                 }
+                runSession.updateThermalStreamSnapshot(currentThermalRawStreamJson())
                 runSession.recordFrame(frame)
             }
             if (shouldPublishVisibleStatus(id, nowMs)) {
@@ -375,6 +466,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun currentThermalRawStreamJson(): JSONObject? {
+        return if (::mini2Probe.isInitialized) {
+            mini2Probe.latestRawStreamJson(Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY)
+        } else {
+            null
+        }
+    }
+
     private fun refreshPumpStatusFromUserAction(): String {
         if (!::pumpController.isInitialized) return ""
         val response = pumpController.sendUserCommand(PumpCommand.Status)
@@ -383,7 +482,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun currentPumpSnapshot(): PumpSnapshot {
-        val snapshot = if (::pumpController.isInitialized) {
+        val controllerSnapshot = if (::pumpController.isInitialized) {
             pumpController.snapshot()
         } else {
             PumpSnapshot(
@@ -393,6 +492,18 @@ class MainActivity : ComponentActivity() {
                 warning = "pump controller not initialized",
             )
         }
+        val transportStatus = if (::pumpTransport.isInitialized) pumpTransport.statusSnapshot() else null
+        val transportWarning = transportStatus?.message.orEmpty().takeIf {
+            it.startsWith("ERROR", ignoreCase = true) || it.startsWith("BLOCKED", ignoreCase = true)
+        }.orEmpty()
+        val transportDeviceName = transportStatus?.let { status ->
+            status.deviceName.ifBlank { status.selectedName }
+        }.orEmpty()
+        val snapshot = controllerSnapshot.copy(
+            connected = transportStatus?.connected ?: controllerSnapshot.connected,
+            bluetoothDeviceName = transportDeviceName.ifBlank { controllerSnapshot.bluetoothDeviceName },
+            warning = transportWarning.ifBlank { controllerSnapshot.warning },
+        )
         runSession.updatePumpSnapshot(snapshot)
         return snapshot
     }
@@ -542,10 +653,24 @@ class MainActivity : ComponentActivity() {
             runtimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
         ).withLastExplicitMini2Probe()
         val rawStream = mini2.optJSONObject("raw_stream")
+        runSession.updateThermalStreamSnapshot(rawStream)
         val thermalPreviewWidth = rawStream?.optInt("frame_width")?.takeIf { it > 0 } ?: HIKMICRO_THERMAL_PREVIEW_WIDTH
         val thermalPreviewHeight = rawStream?.optInt("frame_height")?.takeIf { it > 0 } ?: HIKMICRO_THERMAL_PREVIEW_HEIGHT
         val thermalRoi = defaultThermalPreviewRoi(thermalPreviewWidth, thermalPreviewHeight)
         val pumpSnapshot = currentPumpSnapshot()
+        val pumpTransportStatus = if (::pumpTransport.isInitialized) pumpTransport.statusSnapshot() else null
+        val pairedPumpDevices = if (::pumpTransport.isInitialized) pumpTransport.bondedDevices() else emptyList()
+        val pairedPumpDevicesJson = JSONArray().apply {
+            pairedPumpDevices.forEach { device ->
+                put(
+                    JSONObject()
+                        .put("name", device.name)
+                        .put("address", device.address)
+                        .put("likely_pump", device.likelyPump)
+                        .put("selected", device.address.equals(pumpTransportStatus?.selectedAddress, ignoreCase = true)),
+                )
+            }
+        }
         val latestRow = runSession.rows.lastOrNull()
         val pumpJson = JSONObject()
             .put("pump_mode", pumpSnapshot.mode)
@@ -560,6 +685,14 @@ class MainActivity : ComponentActivity() {
             .put("pump_bluetooth_device_name", pumpSnapshot.bluetoothDeviceName)
             .put("pump_warning", pumpSnapshot.warning)
             .put("bluetooth_permission_granted", bluetoothPermissionGranted)
+            .put("transport_connected", pumpTransportStatus?.connected ?: false)
+            .put("transport_state", if (pumpTransportStatus?.connected == true) "connected" else "disconnected")
+            .put("transport_message", pumpTransportStatus?.message.orEmpty())
+            .put("selected_device_address", pumpTransportStatus?.selectedAddress.orEmpty())
+            .put("selected_device_name", pumpTransportStatus?.selectedName.orEmpty())
+            .put("pump_bluetooth_device_address", pumpTransportStatus?.deviceAddress.orEmpty())
+            .put("paired_device_count", pumpTransportStatus?.bondedDeviceCount ?: 0)
+            .put("paired_devices", pairedPumpDevicesJson)
         val roiJson = JSONObject()
             .put("roi_state", runSession.state.name.lowercase(Locale.US))
             .put("roi_locked", runSession.state != SessionState.SETUP && runSession.state != SessionState.IDLE)
@@ -702,6 +835,20 @@ class MainActivity : ComponentActivity() {
             live.put("mini2_selected_backend", stream.optString("selected_backend"))
             live.put("mini2_stage_report", stream.optString("stage_report"))
             live.put("mini2_device_route", stream.optString("device_route"))
+            live.put("selected_profile", stream.optJSONObject("selected_profile") ?: JSONObject.NULL)
+            live.put("selected_profile_inputs", stream.optJSONObject("selected_profile_inputs") ?: JSONObject.NULL)
+            live.put("selected_profile_name", if (stream.isNull("selected_profile_name")) JSONObject.NULL else stream.optString("selected_profile_name"))
+            live.put("selected_profile_size", if (stream.isNull("selected_profile_size")) JSONObject.NULL else stream.optString("selected_profile_size"))
+            live.put("selected_profile_fps", if (stream.isNull("selected_profile_fps")) JSONObject.NULL else stream.optInt("selected_profile_fps"))
+            live.put("selected_profile_coding", if (stream.isNull("selected_profile_coding")) JSONObject.NULL else stream.optInt("selected_profile_coding"))
+            live.put("selected_profile_streamingNew", if (stream.isNull("selected_profile_streamingNew")) JSONObject.NULL else stream.optBoolean("selected_profile_streamingNew"))
+            live.put("selected_profile_allowed_sizes", stream.optJSONArray("selected_profile_allowed_sizes") ?: JSONArray())
+            live.put("packet_classification", if (stream.isNull("packet_classification")) JSONObject.NULL else stream.optString("packet_classification"))
+            live.put("packet_status", if (stream.isNull("packet_status")) JSONObject.NULL else stream.optString("packet_status"))
+            live.put("packet_size_bytes", if (stream.isNull("packet_size_bytes")) JSONObject.NULL else stream.optInt("packet_size_bytes"))
+            live.put("converter_profile_status", stream.optString("converter_profile_status"))
+            live.put("converter_validation_state", stream.optJSONObject("converter_validation_state") ?: JSONObject.NULL)
+            copyMini2TemperatureSummaryFields(live, stream)
         }
 
         if (latestVisiblePreviewDataUrl.isNotBlank()) {
@@ -743,6 +890,7 @@ class MainActivity : ComponentActivity() {
             .put("roi", roiJson)
             .put("csv", csvJson)
             .put("pump", pumpJson)
+            .put("pump_devices", pairedPumpDevicesJson)
             .put("live", live)
             .put("last_crash_report", crashReport)
             .put("crash", crashReport)
@@ -1198,6 +1346,70 @@ class MainActivity : ComponentActivity() {
     }
 
     @Synchronized
+    fun pumpDevicesFromBridge(): JSONObject {
+        if (!bluetoothPermissionGranted) {
+            runOnUiThread { requestBluetoothPermissionIfNeeded() }
+            statusMessage = "Bluetooth 권한 확인 중 · 허용 후 기기 새로고침을 누르세요."
+        } else {
+            val count = pumpTransport.bondedDevices().size
+            statusMessage = "페어링된 Bluetooth 기기 ${count}개 확인"
+        }
+        notifyWebStatus()
+        return buildStatusJson()
+    }
+
+    @Synchronized
+    fun connectPumpFromBridge(address: String): JSONObject {
+        if (!bluetoothPermissionGranted) {
+            runOnUiThread { requestBluetoothPermissionIfNeeded() }
+            statusMessage = "Bluetooth 연결·검색 권한을 허용한 뒤 다시 연결하세요."
+            notifyWebStatus()
+            return buildStatusJson()
+        }
+        val normalizedAddress = address.trim().uppercase(Locale.US)
+        val selected = pumpTransport.selectDevice(normalizedAddress)
+        if (!selected.selectedAddress.equals(normalizedAddress, ignoreCase = true)) {
+            statusMessage = selected.message
+            notifyWebStatus()
+            return buildStatusJson()
+        }
+        val connected = pumpTransport.connect()
+        currentPumpSnapshot()
+        statusMessage = connected.message
+        notifyWebStatus()
+        return buildStatusJson()
+    }
+
+    @Synchronized
+    fun disconnectPumpFromBridge(): JSONObject {
+        val before = pumpTransport.statusSnapshot()
+        val stopResponse = if (before.connected) {
+            pumpController.sendUserCommand(PumpCommand.Stop)
+        } else {
+            ""
+        }
+        val disconnected = pumpTransport.disconnect()
+        currentPumpSnapshot()
+        statusMessage = if (stopResponse.isBlank()) {
+            disconnected.message
+        } else {
+            "펌프 정지 후 Bluetooth 연결 해제 · ${briefPumpResponse(stopResponse)}"
+        }
+        notifyWebStatus()
+        return buildStatusJson()
+    }
+
+    @Synchronized
+    fun openBluetoothSettingsFromBridge(): JSONObject {
+        runOnUiThread {
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        }
+        statusMessage = "Android Bluetooth 설정 열기"
+        notifyWebStatus()
+        return buildStatusJson()
+    }
+
+    @Synchronized
     fun sendPumpCommandFromBridge(command: String): JSONObject {
         val pumpCommand = PumpCommand.fromBridge(command)
         val response = pumpController.sendUserCommand(pumpCommand)
@@ -1205,6 +1417,17 @@ class MainActivity : ComponentActivity() {
         statusMessage = "펌프 ${pumpCommand.letter} 전송 · ${briefPumpResponse(response)}"
         notifyWebStatus()
         return buildStatusJson()
+    }
+
+    @Synchronized
+    private fun stopRunningPumpForLifecycle(source: String) {
+        if (!::pumpController.isInitialized || !::pumpTransport.isInitialized) return
+        val state = pumpController.snapshot().state
+        val transport = pumpTransport.statusSnapshot()
+        if (!state.startsWith("running_") || !transport.connected) return
+        val response = pumpController.sendUserCommand(PumpCommand.Stop)
+        runSession.updatePumpSnapshot(currentPumpSnapshot())
+        statusMessage = "앱 백그라운드 안전 정지($source) · ${briefPumpResponse(response)}"
     }
 
     private fun briefPumpResponse(response: String): String {
@@ -1323,7 +1546,12 @@ class MainActivity : ComponentActivity() {
         if (stream.rawMin != null && stream.rawMax != null) {
             live.put("raw_delta", stream.rawMax - stream.rawMin)
         }
+        copyMini2TemperatureSummaryFields(live, stream.toJson())
         return live
+    }
+
+    private fun copyMini2TemperatureSummaryFields(live: JSONObject, stream: JSONObject) {
+        copyMini2TemperatureSummaryFieldsForBridge(live, stream)
     }
 
     private fun notifyWebPreview() {

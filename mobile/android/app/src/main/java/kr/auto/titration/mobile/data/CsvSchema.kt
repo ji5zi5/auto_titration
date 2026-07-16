@@ -2,7 +2,7 @@ package kr.auto.titration.mobile.data
 
 /** Core CSV fields mirrored from the Python data schema for phone-local export. */
 object CsvSchema {
-    const val SCHEMA_VERSION = "1.8"
+    const val SCHEMA_VERSION = "1.9"
 
     val coreColumns = listOf(
         "schema_version",
@@ -60,6 +60,28 @@ object CsvSchema {
         "thermal_raw_roi_p50",
         "thermal_raw_roi_iqr",
         "thermal_raw_std",
+        "thermal_status_raw_json",
+        "thermal_raw_packet_classification",
+        "thermal_raw_packet_status",
+        "thermal_raw_packet_size_bytes",
+        "thermal_selected_profile_name",
+        "thermal_selected_profile_size",
+        "thermal_selected_profile_fps",
+        "thermal_selected_profile_coding",
+        "thermal_selected_profile_streaming_new",
+        "thermal_selected_profile_allowed_sizes",
+        "thermal_converter_profile_status",
+        "thermal_converter_validation_state",
+        "thermal_celsius_allowed",
+        "thermal_device_global_avg_c",
+        "thermal_device_global_min_c",
+        "thermal_device_global_max_c",
+        "thermal_device_global_celsius_allowed",
+        "thermal_device_global_provenance",
+        "thermal_device_global_scope",
+        "thermal_device_global_requested_display_unit",
+        "thermal_device_global_requested_display_unit_code",
+        "thermal_full_matrix_celsius_allowed",
         "csv_session_id",
         "csv_row_index",
         "csv_recording_started_epoch_s",

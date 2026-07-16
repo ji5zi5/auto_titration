@@ -26,14 +26,12 @@ class G007V2RendererClosureTest {
             mapOf("holder" to SurfaceHolder::class.java, "drawer" to W2.a::class.java),
             V2.c::class.java.declaredFields.associate { it.name to it.type },
         )
-        assertEquals(
-            mapOf("surfaceView" to SurfaceView::class.java, "player" to ThermalPlayer::class.java),
-            V2.b::class.java.declaredFields.associate { it.name to it.type },
-        )
-        assertEquals(
-            mapOf("surfaceView" to SurfaceView::class.java, "player" to ThermalPlayer::class.java),
-            V2.d::class.java.declaredFields.associate { it.name to it.type },
-        )
+        assertEquals(SurfaceView::class.java, V2.b::class.java.getDeclaredField("a").type)
+        assertEquals(ThermalPlayer::class.java, V2.b::class.java.getDeclaredField("b").type)
+        assertEquals("V2.b\$a", V2.b::class.java.getDeclaredField("c").type.name)
+        assertEquals(SurfaceView::class.java, V2.d::class.java.getDeclaredField("a").type)
+        assertEquals(ThermalPlayer::class.java, V2.d::class.java.getDeclaredField("b").type)
+        assertEquals("V2.d\$a", V2.d::class.java.getDeclaredField("c").type.name)
         assertEquals(
             mapOf("surfaceView" to SurfaceView::class.java),
             V2.e::class.java.declaredFields.associate { it.name to it.type },

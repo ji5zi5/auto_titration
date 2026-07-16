@@ -1,8 +1,8 @@
 package com.hcusbsdk.jni
 
-private const val MAX_FRAME_SIZE = 10 * 1024 * 1024
+private const val MAX_FRAME_SIZE = 8_294_400
 
-class USB_FRAME_INFO {
+class USB_FRAME_INFO : USB_CONFIG() {
     @JvmField var nStamp: Int = 0
     @JvmField var dwStreamType: Int = 0
     @JvmField var dwWidth: Int = 0

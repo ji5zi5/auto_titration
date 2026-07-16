@@ -14,11 +14,17 @@ data class NativeLibraryLoadEntry(
     val loadName: String,
     val loaded: Boolean,
     val error: String? = null,
+    val loadState: String = if (loaded) "loaded" else error ?: "failed",
+    val attempted: Boolean = loaded || (error != null && error != "not_attempted" && !loadState.contains("deferred")),
+    val role: String = "packaged_inventory",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("file", fileName)
         .put("load_name", loadName)
         .put("loaded", loaded)
+        .put("attempted", attempted)
+        .put("load_state", loadState)
+        .put("role", role)
         .put("error", error ?: "")
 }
 
@@ -35,7 +41,10 @@ data class NativeLibraryLoadReport(
     val coreMissingReason: String = "",
 ) {
     val allLoaded: Boolean
-        get() = entries.all { it.loaded }
+        get() = entries.isNotEmpty() && entries.all { it.loaded }
+
+    val attemptedLibrariesLoaded: Boolean
+        get() = entries.any { it.attempted } && entries.filter { it.attempted }.all { it.loaded }
 
     val coreUsbLoaded: Boolean
         get() = coreF2Loaded
@@ -56,6 +65,7 @@ data class NativeLibraryLoadReport(
 
     fun toJson(): JSONObject = JSONObject()
         .put("all_loaded", allLoaded)
+        .put("attempted_libraries_loaded", attemptedLibrariesLoaded)
         .put("core_usb_loaded", coreUsbLoaded)
         .put("core_f1_loaded", coreF1Loaded)
         .put("core_f2_loaded", coreF2Loaded)
@@ -69,7 +79,8 @@ data class NativeLibraryLoadReport(
         .put("retry_after_ms", retryAfterMs)
         .put("retry_eligible", retryEligible)
         .put("core_missing_reason", coreMissingReason)
-        .put("failed_count", entries.count { !it.loaded })
+        .put("failed_count", entries.count { it.attempted && !it.loaded })
+        .put("deferred_count", entries.count { !it.attempted && !it.loaded })
         .put("native_symbol_discovery", "see .omx/drafts/mini2-native-symbol-discovery.md")
         .put("note", note)
         .put("libraries", JSONArray(entries.map { it.toJson() }))
@@ -167,6 +178,8 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
     private var cachedNativeLibraryDir: String? = null
     @Volatile
     private var cachedReportLoadedAtMs: Long = 0L
+    @Volatile
+    private var cachedModuleType: HikmicroMini2ModuleType = HikmicroMini2ModuleType.UNSUPPORTED
     private val loadedLibraries = mutableSetOf<String>()
     private var nativeLoadAttemptCount: Int = 0
 
@@ -178,10 +191,13 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
                     loadName = loadNameFor(fileName),
                     loaded = false,
                     error = "not_attempted",
+                    loadState = "not_attempted",
+                    attempted = false,
+                    role = libraryRoleFor(fileName, HikmicroMini2ModuleType.UNSUPPORTED),
                 )
             },
             note = note,
-            supportedAbis = Build.SUPPORTED_ABIS.toList(),
+            supportedAbis = supportedAbis(),
             loadStrategy = "not_attempted",
             coreMissingReason = "not_attempted",
         )
@@ -192,61 +208,93 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
 
     override val validationEvidence: Mini2ValidationEvidence
         get() = Mini2ValidationEvidence(
-            abiLoaded = ensureLibrariesLoaded().allLoaded,
+            abiLoaded = cachedReport?.allLoaded == true,
             fixtureCompared = false,
             liveStreamObserved = false,
             meanErrorC = null,
             maxPixelErrorC = null,
             licenseAllowsRedistribution = false,
-            note = "Android HIKMICRO libs packaged; live USB stream and fixture Celsius comparison not yet proven on this phone.",
+            note = "Android HIKMICRO libs packaged; validation evidence is passive and does not load/open/start native USB without permission-gated probe flow.",
         )
 
     fun ensureLibrariesLoaded(
         nativeLibraryDir: String? = null,
         forceRetry: Boolean = false,
+        moduleType: HikmicroMini2ModuleType = HikmicroMini2ModuleType.F2,
     ): NativeLibraryLoadReport {
         val normalizedNativeLibraryDir = nativeLibraryDir?.takeIf { it.isNotBlank() }
         val now = SystemClock.elapsedRealtime()
         cachedReport?.takeIf { cached ->
             cachedNativeLibraryDir == normalizedNativeLibraryDir &&
+                cachedModuleType == moduleType &&
                 !forceRetry &&
-                (cached.allLoaded || !cached.allLoaded && now - cachedReportLoadedAtMs < NATIVE_LOAD_RETRY_INTERVAL_MS)
+                (cached.coreLoadedFor(moduleType) || !cached.coreLoadedFor(moduleType) && now - cachedReportLoadedAtMs < NATIVE_LOAD_RETRY_INTERVAL_MS)
         }?.let { return it }
         synchronized(this) {
             val lockedNow = SystemClock.elapsedRealtime()
             cachedReport?.takeIf { cached ->
                 cachedNativeLibraryDir == normalizedNativeLibraryDir &&
+                    cachedModuleType == moduleType &&
                     !forceRetry &&
-                    (cached.allLoaded || !cached.allLoaded && lockedNow - cachedReportLoadedAtMs < NATIVE_LOAD_RETRY_INTERVAL_MS)
+                    (cached.coreLoadedFor(moduleType) || !cached.coreLoadedFor(moduleType) && lockedNow - cachedReportLoadedAtMs < NATIVE_LOAD_RETRY_INTERVAL_MS)
             }?.let { return it }
             nativeLoadAttemptCount += 1
             val attemptStartedAtMs = SystemClock.elapsedRealtime()
+            val coreLoadSet = provenCoreLibrariesFor(moduleType)
             val entries = packagedLibraries.map { fileName ->
                 val loadName = loadNameFor(fileName)
-                try {
-                    if (fileName !in loadedLibraries) {
+                val role = libraryRoleFor(fileName, moduleType)
+                when {
+                    fileName in loadedLibraries -> NativeLibraryLoadEntry(
+                        fileName = fileName,
+                        loadName = loadName,
+                        loaded = true,
+                        loadState = "loaded_previously",
+                        attempted = true,
+                        role = role,
+                    )
+                    fileName in coreLoadSet -> try {
                         loadPackagedLibrary(
                             fileName = fileName,
                             loadName = loadName,
                             nativeLibraryDir = normalizedNativeLibraryDir,
                         )
                         loadedLibraries.add(fileName)
+                        NativeLibraryLoadEntry(
+                            fileName = fileName,
+                            loadName = loadName,
+                            loaded = true,
+                            loadState = "loaded",
+                            attempted = true,
+                            role = role,
+                        )
+                    } catch (error: Throwable) {
+                        NativeLibraryLoadEntry(
+                            fileName = fileName,
+                            loadName = loadName,
+                            loaded = false,
+                            error = error.message ?: error.javaClass.simpleName,
+                            loadState = "failed",
+                            attempted = true,
+                            role = role,
+                        )
                     }
-                    NativeLibraryLoadEntry(fileName, loadName, loaded = true)
-                } catch (error: Throwable) {
-                    NativeLibraryLoadEntry(
+                    else -> NativeLibraryLoadEntry(
                         fileName = fileName,
                         loadName = loadName,
                         loaded = false,
-                        error = error.message ?: error.javaClass.simpleName,
+                        error = deferredReasonFor(fileName, moduleType),
+                        loadState = deferredReasonFor(fileName, moduleType),
+                        attempted = false,
+                        role = role,
                     )
                 }
             }
             return NativeLibraryLoadReport(
                 entries = entries,
-                note = "private local research packaging from HIKMICRO Viewer APK; redistribution must be reviewed before public release",
+                note = "official ${moduleType.routeName.uppercase()} load plan: only proved route core is explicitly loaded; packaged DT_NEEDED/deferred libraries remain diagnostic inventory",
                 nativeLibraryDir = normalizedNativeLibraryDir.orEmpty(),
-                supportedAbis = Build.SUPPORTED_ABIS.toList(),
+                supportedAbis = supportedAbis(),
                 loadStrategy = if (normalizedNativeLibraryDir == null) {
                     "system_load_library"
                 } else {
@@ -254,16 +302,37 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
                 },
                 attemptCount = nativeLoadAttemptCount,
                 attemptedAtElapsedMs = attemptStartedAtMs,
-                retryAfterMs = if (entries.all { it.loaded }) 0L else NATIVE_LOAD_RETRY_INTERVAL_MS,
-                retryEligible = entries.any { !it.loaded },
-                coreMissingReason = coreMissingReason(entries),
+                retryAfterMs = if (entries.filter { it.attempted }.all { it.loaded }) 0L else NATIVE_LOAD_RETRY_INTERVAL_MS,
+                retryEligible = entries.any { it.attempted && !it.loaded },
+                coreMissingReason = coreMissingReason(entries, moduleType),
             ).also {
                 cachedNativeLibraryDir = normalizedNativeLibraryDir
+                cachedModuleType = moduleType
                 cachedReport = it
                 cachedReportLoadedAtMs = SystemClock.elapsedRealtime()
             }
         }
     }
+
+
+    fun passiveStatusForUsbPermission(
+        usbPermissionGranted: Boolean,
+        preferredModuleType: HikmicroMini2ModuleType = HikmicroMini2ModuleType.F2,
+    ): ThermalStatus {
+        if (!usbPermissionGranted) {
+            return ThermalStatus.blocked("Mini2 USB permission is required before opening HIKMICRO native stream")
+        }
+        if (!preferredModuleType.isSupported) {
+            return ThermalStatus.blocked("Unsupported HIKMICRO USB VID/PID; official APK route cannot select F1/F2 backend")
+        }
+        return ThermalStatus.rawUnverified(
+            "USB permission granted; HIKMICRO ${preferredModuleType.routeName.uppercase()} native load/open/start is deferred until an explicit Mini2 stream attempt",
+            backendName = preferredModuleType.backendName,
+        )
+    }
+
+    fun coreAlreadyLoadedFor(moduleType: HikmicroMini2ModuleType): Boolean =
+        cachedReport?.coreLoadedFor(moduleType) == true
 
     fun statusForUsbPermission(
         usbPermissionGranted: Boolean,
@@ -277,7 +346,7 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
         if (!preferredModuleType.isSupported) {
             return ThermalStatus.blocked("Unsupported HIKMICRO USB VID/PID; official APK route cannot select F1/F2 backend")
         }
-        val report = ensureLibrariesLoaded(nativeLibraryDir, forceRetry = forceRetry)
+        val report = ensureLibrariesLoaded(nativeLibraryDir, forceRetry = forceRetry, moduleType = preferredModuleType)
         if (!report.coreLoadedFor(preferredModuleType)) {
             return ThermalStatus.blocked(
                 "HIKMICRO ${preferredModuleType.routeName.uppercase()} native core did not load; ${report.coreMissingReasonFor(preferredModuleType)}",
@@ -295,6 +364,8 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
         )
     }
 
+    private fun supportedAbis(): List<String> = runCatching { Build.SUPPORTED_ABIS?.toList().orEmpty() }.getOrDefault(emptyList())
+
     private fun loadPackagedLibrary(fileName: String, loadName: String, nativeLibraryDir: String?) {
         if (nativeLibraryDir != null) {
             val packagedFile = File(nativeLibraryDir, fileName)
@@ -306,16 +377,27 @@ object HikmicroNativeBackend : Mini2ThermalBackend {
         System.loadLibrary(loadName)
     }
 
-    private fun coreMissingReason(entries: List<NativeLibraryLoadEntry>): String {
-        val failedCore = entries.firstOrNull {
-            it.fileName in setOf(
-                "libHCUSBSDK.so",
-                "libMTlib.so",
-                "libMicroJITA_Release_v8a.so",
-                "libMicroTA_Release_v8a.so",
-            ) && !it.loaded
-        }
-        return failedCore?.let { "${it.fileName}: ${it.error}" }.orEmpty()
+    fun provenCoreLibrariesFor(moduleType: HikmicroMini2ModuleType): Set<String> = when (moduleType) {
+        HikmicroMini2ModuleType.F2 -> setOf("libHCUSBSDK.so")
+        HikmicroMini2ModuleType.F1 -> setOf("lib_thermal_module.so")
+        HikmicroMini2ModuleType.UNSUPPORTED -> emptySet()
+    }
+
+    private fun coreMissingReason(entries: List<NativeLibraryLoadEntry>, moduleType: HikmicroMini2ModuleType): String {
+        val failedCore = entries.firstOrNull { it.fileName in provenCoreLibrariesFor(moduleType) && !it.loaded }
+        return failedCore?.let { "${it.fileName}: ${it.error ?: it.loadState}" }.orEmpty()
+    }
+
+    private fun libraryRoleFor(fileName: String, moduleType: HikmicroMini2ModuleType): String = when {
+        fileName in provenCoreLibrariesFor(moduleType) -> "${moduleType.routeName}_proved_core"
+        moduleType == HikmicroMini2ModuleType.F2 && fileName in setOf("libuvc.so", "libusb1.0.so") -> "f2_dt_needed_dependency"
+        moduleType == HikmicroMini2ModuleType.F1 && fileName in setOf("libusbCam_host.so", "libusb-1.0.so", "libhikdsp.so", "libdadsp.so") -> "f1_dt_needed_dependency"
+        else -> "packaged_deferred_inventory"
+    }
+
+    private fun deferredReasonFor(fileName: String, moduleType: HikmicroMini2ModuleType): String = when (libraryRoleFor(fileName, moduleType)) {
+        "f2_dt_needed_dependency", "f1_dt_needed_dependency" -> "packaged_dt_needed_dependency_deferred"
+        else -> "packaged_deferred_not_attempted"
     }
 
     private fun loadNameFor(fileName: String): String = fileName.removePrefix("lib").removeSuffix(".so")

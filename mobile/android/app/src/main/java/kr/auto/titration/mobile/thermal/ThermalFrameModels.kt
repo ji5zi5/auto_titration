@@ -15,6 +15,15 @@ data class ThermalRawFrameSummary(
     val rawMatrix: MatrixSummary? = null,
     val rawValues: IntArray? = null,
 ) {
+    init {
+        require(frameWidth > 0 && frameHeight > 0) { "thermal raw frame size must be positive" }
+        rawValues?.let {
+            require(F1FrameSafety.validateRawMatrix(it, frameWidth, frameHeight)) {
+                "thermal rawValues must be an exact proven matrix of width*height"
+            }
+        }
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ThermalRawFrameSummary) return false

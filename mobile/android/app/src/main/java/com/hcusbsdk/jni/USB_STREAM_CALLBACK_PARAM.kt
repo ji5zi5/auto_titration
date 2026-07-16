@@ -1,6 +1,6 @@
 package com.hcusbsdk.jni
 
-class USB_STREAM_CALLBACK_PARAM {
+class USB_STREAM_CALLBACK_PARAM : USB_CONFIG() {
     @JvmField var dwSize: Int = 0
     @JvmField var dwStreamType: Int = 0
     @JvmField var byRes: ByteArray = ByteArray(128)

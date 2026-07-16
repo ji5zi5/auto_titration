@@ -1,0 +1,186 @@
+{
+  "trace_id": "official-mini2-f2-evidence-trace-20260715",
+  "evidence_scope": "fixture",
+  "metadata": {
+    "description": "Evidence-backed ordered official Mini2/F2 route steps only; not live hardware proof.",
+    "sources": [
+      "_workspace/hikmicro-parity-20260715/official-java-flow.md",
+      "_workspace/hikmicro-parity-20260715/canonical-evidence-matrix.md"
+    ],
+    "hardware_route": "VID:PID 11231:258 F2",
+    "celsius_status": "blocked_unknown_android_live_full_matrix_chain",
+    "trace_kind": "official"
+  },
+  "provenance": {
+    "live_device_observation": false,
+    "fixture_only": true
+  },
+  "steps": [
+    {
+      "official_order": 1,
+      "name": "usb_broadcast_dispatch",
+      "stage": "permission",
+      "permission": "usb_attach_detach_permission"
+    },
+    {
+      "official_order": 2,
+      "name": "main_attach_reaction",
+      "stage": "permission",
+      "vendor_id": 11231,
+      "product_id": 258
+    },
+    {
+      "official_order": 3,
+      "name": "permission_request",
+      "stage": "permission"
+    },
+    {
+      "official_order": 4,
+      "name": "android_camera_gate",
+      "stage": "permission",
+      "android_permission": "android.permission.CAMERA"
+    },
+    {
+      "official_order": 5,
+      "name": "vid_pid_route_selection",
+      "stage": "route",
+      "vendor_id": 11231,
+      "product_id": 258,
+      "module_type": "F2"
+    },
+    {
+      "official_order": 6,
+      "name": "permission_approved_branch",
+      "stage": "route",
+      "module_type": "F2"
+    },
+    {
+      "official_order": 7,
+      "name": "f2_module_add_preview_transition",
+      "stage": "route",
+      "module_type": "F2"
+    },
+    {
+      "official_order": 8,
+      "name": "open_retry_wrapper",
+      "stage": "open",
+      "retry_limit": 5
+    },
+    {
+      "official_order": 9,
+      "name": "sdk_version_init_enumerate_login",
+      "stage": "open"
+    },
+    {
+      "official_order": 10,
+      "name": "sdk_init_bridge",
+      "stage": "open"
+    },
+    {
+      "official_order": 11,
+      "name": "android_fd_acquisition",
+      "stage": "open"
+    },
+    {
+      "official_order": 12,
+      "name": "device_info_copy",
+      "stage": "open",
+      "vendor_id": 11231,
+      "product_id": 258
+    },
+    {
+      "official_order": 13,
+      "name": "login",
+      "stage": "open",
+      "timeout_ms": 5000,
+      "vendor_id": 11231,
+      "product_id": 258
+    },
+    {
+      "official_order": 14,
+      "name": "system_info_profile_input",
+      "stage": "profile",
+      "command_id": 2011
+    },
+    {
+      "official_order": 15,
+      "name": "profile_values",
+      "stage": "profile",
+      "streaming_new": true
+    },
+    {
+      "official_order": 16,
+      "name": "stream_type",
+      "stage": "start",
+      "stream_type": 103
+    },
+    {
+      "official_order": 17,
+      "name": "video_parameters",
+      "stage": "start",
+      "command_id": 3004,
+      "stream_type": 103
+    },
+    {
+      "official_order": 18,
+      "name": "callback_registration",
+      "stage": "start",
+      "stream_type": 103
+    },
+    {
+      "official_order": 19,
+      "name": "thermal_stream_parameter",
+      "stage": "start",
+      "command_id": 2039
+    },
+    {
+      "official_order": 20,
+      "name": "thermal_stream_enable",
+      "stage": "start",
+      "command_id": 2111,
+      "sleep_ms": 100,
+      "enable": 1
+    },
+    {
+      "official_order": 21,
+      "name": "callback_size_gate",
+      "stage": "callback",
+      "accepted_packet_gate": "profile_allowed_sizes"
+    },
+    {
+      "official_order": 22,
+      "name": "scheduled_packet_consumer",
+      "stage": "callback",
+      "interval_ms": 20
+    },
+    {
+      "official_order": 23,
+      "name": "decoder_temperature_boundary",
+      "stage": "blocked_boundary",
+      "decoder_status": "unknown_internals_no_celsius_claim"
+    },
+    {
+      "official_order": 24,
+      "name": "stop_thermal_stream",
+      "stage": "stop",
+      "set_command_id": 2111,
+      "get_command_id": 2110,
+      "enable": 0
+    },
+    {
+      "official_order": 25,
+      "name": "stop_channel_callback_cleanup",
+      "stage": "stop"
+    },
+    {
+      "official_order": 26,
+      "name": "logout_close",
+      "stage": "close"
+    },
+    {
+      "official_order": 27,
+      "name": "cleanup_after_login_failure",
+      "stage": "close"
+    }
+  ]
+}

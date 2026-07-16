@@ -1,6 +1,5 @@
 package kr.auto.titration.mobile.thermal
 
-import android.graphics.Bitmap
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
@@ -11,15 +10,12 @@ import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
-import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.min
 
 private const val F1_STREAM_RETRY_INTERVAL_MS = 2_000L
 private const val F1_FRAME_WAIT_TIMEOUT_MS = 5_000L
 private const val F1_MAX_CAPTURE_BYTES = 512 * 1024
-private const val F1_PREVIEW_DEFAULT_WIDTH = 120
-private const val F1_PREVIEW_DEFAULT_HEIGHT = 160
 
 /**
  * Best-effort port of the official-app F1 Mini2 path.
@@ -170,8 +166,8 @@ object HikmicroF1Mini2Stream {
             }
 
             if (!previewEnable.ok) {
-                connection.close()
-                lastFailureReason = "F1 preview enable failed; $lastStreamStageReport"
+                val cleanup = cleanupOpenedDevice(sdk, connection)
+                lastFailureReason = "F1 preview enable failed; $lastStreamStageReport; cleanup=$cleanup"
                 return Mini2RawStreamStatus.blockedNativeStream(
                     lastFailureReason,
                     discovery = "hikmicro_f1_preview_enable_failed",
@@ -180,6 +176,7 @@ object HikmicroF1Mini2Stream {
 
             session = F1StreamSession(
                 deviceName = device.deviceName,
+                sdk = sdk,
                 connection = connection,
                 alarmCallback = alarmCallback,
                 streamCallback = streamCallback,
@@ -314,15 +311,26 @@ object HikmicroF1Mini2Stream {
                 return
             }
             val bytes = buffer.getByteArray(0, size)
-            val width = yuv.nWidth.takeIf { it > 0 } ?: F1_PREVIEW_DEFAULT_WIDTH
-            val height = yuv.nHeight.takeIf { it > 0 } ?: F1_PREVIEW_DEFAULT_HEIGHT
-            latestFrameSnapshot = F1StreamFrameSnapshot(
-                frameCounter = max(1L, latestFrameSnapshot?.frameCounter?.plus(1) ?: 1L),
+            val width = yuv.nWidth
+            val height = yuv.nHeight
+            val evidence = F1FrameSafety.validateCallbackPayload(
+                bytes = bytes,
                 width = width,
                 height = height,
                 yuvType = yuv.nYUVType,
+            )
+            if (evidence.previewPlane == null) {
+                lastFailureReason = "f1_callback_payload_unvalidated: ${evidence.rejectionReason} callbackLen=$callbackLen yuvLen=${yuv.nYUVLen}"
+            }
+            latestFrameSnapshot = F1StreamFrameSnapshot(
+                frameCounter = max(1L, latestFrameSnapshot?.frameCounter?.plus(1) ?: 1L),
+                width = evidence.previewPlane?.width ?: 0,
+                height = evidence.previewPlane?.height ?: 0,
+                yuvType = yuv.nYUVType,
                 bufferSize = size,
-                previewDataUrl = buildPreviewDataUrl(bytes, width, height),
+                frameFormat = evidence.previewPlane?.let { "hikmicro_f1_validated_${it.format}_preview" } ?: "unknown_unvalidated_f1_callback_payload",
+                previewDataUrl = evidence.previewPlane?.let { buildPreviewDataUrl(it) } ?: "",
+                payloadValidation = evidence.rejectionReason,
                 capturedElapsedMs = SystemClock.elapsedRealtime(),
                 callbackLen = callbackLen,
                 fd = session?.connection?.fileDescriptor ?: -1,
@@ -335,34 +343,35 @@ object HikmicroF1Mini2Stream {
     private fun stopCurrentSession() {
         val current = session ?: return
         session = null
-        runCatching { current.connection.close() }
+        val cleanup = cleanupOpenedDevice(current.sdk, current.connection)
+        lastStreamStageReport = "$lastStreamStageReport; cleanup=$cleanup"
     }
 
-    private fun buildPreviewDataUrl(bytes: ByteArray, width: Int, height: Int): String {
-        if (bytes.size >= 4 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte()) {
-            return "data:image/jpeg;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}"
-        }
-        val safeWidth = width.takeIf { it > 0 } ?: F1_PREVIEW_DEFAULT_WIDTH
-        val safeHeight = height.takeIf { it > 0 } ?: F1_PREVIEW_DEFAULT_HEIGHT
-        val pixelCount = safeWidth * safeHeight
-        if (pixelCount <= 0 || bytes.isEmpty()) return ""
-        val pixels = IntArray(pixelCount)
-        val stride = max(1, bytes.size / pixelCount)
-        for (index in 0 until pixelCount) {
-            val byteIndex = min(bytes.lastIndex, index * stride)
-            val luminance = bytes[byteIndex].toInt() and 0xff
-            pixels[index] = 0xff000000.toInt() or (luminance shl 16) or (luminance shl 8) or luminance
-        }
-        val bitmap = Bitmap.createBitmap(pixels, safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
-        return ByteArrayOutputStream().use { output ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 70, output)
-            bitmap.recycle()
-            "data:image/jpeg;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
-        }
+    private fun cleanupOpenedDevice(sdk: F1ThermalModuleByJNA, connection: UsbDeviceConnection): String {
+        val previewDisable = setRealtimeEnable(sdk, msgType = 5, stageName = "USB_SetPreviewEnable(false)", enable = false)
+        val detach = sendDevDetach(sdk)
+        val close = runCatching { connection.close() }
+            .fold(onSuccess = { "connection.close=ok" }, onFailure = { "connection.close exception ${it.javaClass.simpleName}:${it.message ?: "no message"}" })
+        return "${previewDisable.summary}; ${detach.summary}; $close"
     }
+
+    private fun sendDevDetach(sdk: F1ThermalModuleByJNA): F1StageResult {
+        val payload = THERMAL_MSG_TYPE_SET_DEV_DETTACH().apply { write() }
+        return sendConfig(
+            sdk = sdk,
+            msgType = 14,
+            len = 4,
+            payload = payload,
+            stageName = "USB_SetDevDetach",
+        )
+    }
+
+    private fun buildPreviewDataUrl(previewPlane: F1FrameSafety.PreviewPlane): String =
+        "data:image/jpeg;base64,${Base64.encodeToString(previewPlane.bytes, Base64.NO_WRAP)}"
 
     private data class F1StreamSession(
         val deviceName: String,
+        val sdk: F1ThermalModuleByJNA,
         val connection: UsbDeviceConnection,
         @Suppress("unused") val alarmCallback: F1AlarmCallback,
         @Suppress("unused") val streamCallback: F1StreamCallback,
@@ -380,17 +389,19 @@ object HikmicroF1Mini2Stream {
         val height: Int,
         val yuvType: Int,
         val bufferSize: Int,
+        val frameFormat: String,
         val previewDataUrl: String,
+        val payloadValidation: String,
         val capturedElapsedMs: Long,
         val callbackLen: Int,
         val fd: Int,
     ) {
         fun toStatus(reason: String, route: String): Mini2RawStreamStatus = Mini2RawStreamStatus.streamAttemptStarted(
-            reason = "$reason; yuvType=$yuvType bytes=$bufferSize callbackLen=$callbackLen elapsedMs=$capturedElapsedMs",
+            reason = "$reason; yuvType=$yuvType bytes=$bufferSize callbackLen=$callbackLen payloadValidation=$payloadValidation elapsedMs=$capturedElapsedMs",
             frameCounter = frameCounter,
             frameWidth = width,
             frameHeight = height,
-            frameFormat = "hikmicro_f1_thermal_data_info_yuv_raw_unverified",
+            frameFormat = frameFormat,
             thermalPreviewDataUrl = previewDataUrl,
             discovery = "hikmicro_f1_thermal_module_yuv_observed",
             selectedBackend = HikmicroMini2ModuleType.F1.backendName,
@@ -469,6 +480,11 @@ object HikmicroF1Mini2Stream {
     @Structure.FieldOrder("enable")
     class THERMAL_MSG_FOR_FUNC_STREAM_REALTIME_ENABLE : Structure() {
         @JvmField var enable: Int = 0
+    }
+
+    @Structure.FieldOrder("reserved")
+    class THERMAL_MSG_TYPE_SET_DEV_DETTACH : Structure() {
+        @JvmField var reserved: Int = 0
     }
 
     @Structure.FieldOrder("dwYear", "dwMon", "dwDay", "dwHour", "dwMin", "dwSec", "dwMs", "res")

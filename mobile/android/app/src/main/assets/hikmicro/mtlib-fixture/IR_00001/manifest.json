@@ -1,0 +1,183 @@
+{
+  "abi": "Android arm64 MTlib *_INT: GetMemSize(params,desc), Create(params,desc,outHandle), SetConfig(handle,type,data,len), Process(handle,0,point,count=1)",
+  "expected": {
+    "first32_binary": "expected_first32_x64.bin",
+    "first32_record": "uint16 gray + int32 temperature_x64 little-endian records",
+    "raw_unique_count": 285,
+    "temp_c_mean": 25.73727035522461,
+    "temp_c_minmax": [
+      22.265625,
+      33.984375
+    ],
+    "temp_x64_minmax": [
+      1425,
+      2175
+    ],
+    "validation_vs_analyzer_csv": {
+      "bias": 0.044700368245442657,
+      "count": 49152,
+      "count_abs_gt_0p05": 21173,
+      "count_abs_gt_0p10": 0,
+      "mae": 0.044700368245442657,
+      "max_abs": 0.09687500000000071,
+      "rounded_0p1_mae": 0.04237467447916659,
+      "rounded_0p1_match_rate": 0.5762532552083334,
+      "rounded_0p1_max_abs": 0.10000000000000142,
+      "temp_max": 33.984375,
+      "temp_mean": 25.73727035522461,
+      "temp_min": 22.265625,
+      "worst_pairs": [
+        [
+          45819,
+          178,
+          251,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          1049,
+          4,
+          25,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          289,
+          1,
+          33,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          287,
+          1,
+          31,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          285,
+          1,
+          29,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          284,
+          1,
+          28,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          23994,
+          93,
+          186,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          1047,
+          4,
+          23,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          1044,
+          4,
+          20,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          1042,
+          4,
+          18,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          45818,
+          178,
+          250,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ],
+        [
+          11660,
+          45,
+          140,
+          26.296875,
+          26.2,
+          0.09687500000000071
+        ]
+      ]
+    },
+    "validation_vs_analyzer_csv_truncate_0p1": {
+      "bias": 0.0,
+      "count": 49152,
+      "mae": 0.0,
+      "match_rate": 1.0,
+      "max_abs": 0.0,
+      "mismatch_pixels": 0
+    }
+  },
+  "files": {
+    "expected_first32_x64.bin": {
+      "bytes": 192,
+      "sha256": "55615a095728ecdaad5f51133d3ece4ccbdfbf2b2b8384e66624ed7d137eb9d1"
+    },
+    "raw_u16_256x192_le.bin": {
+      "bytes": 98304,
+      "sha256": "43e43546810d5679d2818b52799997743b5013dd6f7214e4f702387f4e402594"
+    },
+    "tag1_addline.bin": {
+      "bytes": 1024,
+      "sha256": "64420fb4350721b031c3ced30c5b81fdcae39cbe4200d488a585be88e6096204"
+    },
+    "tag519.bin": {
+      "bytes": 14336,
+      "sha256": "ec1607453881766534ce8acaa407e16362a396264d3c01a66da232f1b3eeb36c"
+    }
+  },
+  "fixture_id": "IR_00001",
+  "height": 192,
+  "mtlib_sha256": "9d49df15bdb19341c2b6b3f44557ce4791b60abd63ac019dbea4b0842c839798",
+  "q13": {
+    "atmospheric_q13": 257884,
+    "distance_q13": 8192,
+    "emissivity_q13": 7946,
+    "humidity_q13": 491520,
+    "reflected_q13": 204800,
+    "window_temp_milli_c": 20000,
+    "window_trans_q13": 8192
+  },
+  "raw_format": "uint16_le_256x192",
+  "schema_version": 1,
+  "self_test_thresholds": {
+    "first32_x64_max_abs": 0,
+    "temp_c_mean_abs_tolerance": 1e-06,
+    "temp_x64_minmax_max_abs": 0
+  },
+  "sources": {
+    "addline": "data/mini2_sdmp_dump/IR_00001/seg11_APP3_payload_tag1_data.bin",
+    "calibration": "data/mini2_app2_tag519/IR_00001_tag519.bin",
+    "expected": "official Windows MT_Process_INT batch1 validation JSON",
+    "q13": "data/fixtures/mini2/IR_00001.jpeg APP3 tag6 Radiometric JSON / int64 observed validation",
+    "raw": "data/mini2_multi_image_formula/raw/IR_00001_lpld_raw_u16_256x192.bin"
+  },
+  "tag1_u16_284": 5109,
+  "width": 256
+}

@@ -40,48 +40,70 @@ object AndroidCrashLogStore {
         }
     }
 
-    fun readLastCrash(context: Context): JSONObject {
-        val file = crashFile(context)
+    fun readLastCrash(context: Context): JSONObject = readLastCrashFile(crashFile(context))
+
+    fun clearLastCrash(context: Context): JSONObject = clearLastCrashFile(crashFile(context))
+
+    internal fun readLastCrashFile(file: File): JSONObject = readLastCrashFields(file).toJsonObject()
+
+    internal fun readLastCrashFields(file: File): Map<String, Any> {
         if (!file.isFile) {
-            return JSONObject()
-                .put("present", false)
-                .put("file_name", ANDROID_CRASH_LOG_FILE)
-                .put("capture_scope", "java_kotlin_uncaught_exception_only")
-                .put("native_crash_limit", NATIVE_CRASH_LIMIT_NOTE)
+            return mapOf(
+                "present" to false,
+                "file_name" to ANDROID_CRASH_LOG_FILE,
+                "capture_scope" to "java_kotlin_uncaught_exception_only",
+                "native_crash_limit" to NATIVE_CRASH_LIMIT_NOTE,
+            )
         }
         val text = runCatching { file.readText() }.getOrElse { readError ->
             "crash_log_read_failed ${readError.javaClass.simpleName}: ${readError.message ?: "no message"}"
         }
-        return JSONObject()
-            .put("present", true)
-            .put("file_name", ANDROID_CRASH_LOG_FILE)
-            .put("path", file.absolutePath)
-            .put("size_bytes", file.length())
-            .put("last_modified_epoch_ms", file.lastModified())
-            .put("capture_scope", "java_kotlin_uncaught_exception_only")
-            .put("native_crash_limit", NATIVE_CRASH_LIMIT_NOTE)
-            .put("text", text.take(12_000))
+        return mapOf(
+            "present" to true,
+            "file_name" to ANDROID_CRASH_LOG_FILE,
+            "path" to file.absolutePath,
+            "size_bytes" to file.length(),
+            "last_modified_epoch_ms" to file.lastModified(),
+            "capture_scope" to "java_kotlin_uncaught_exception_only",
+            "native_crash_limit" to NATIVE_CRASH_LIMIT_NOTE,
+            "text" to text.take(12_000),
+        )
     }
 
-    fun clearLastCrash(context: Context): JSONObject {
-        val file = crashFile(context)
+    internal fun clearLastCrashFile(file: File): JSONObject = clearLastCrashFields(file).toJsonObject()
+
+    internal fun clearLastCrashFields(file: File): Map<String, Any> {
         if (file.exists()) file.delete()
-        return readLastCrash(context)
+        return readLastCrashFields(file)
     }
 
     private fun writeCrash(context: Context, thread: Thread, error: Throwable) {
         runCatching {
-            val stack = StringWriter().also { writer ->
-                PrintWriter(writer).use { printer ->
-                    printer.println("thread=${thread.name}")
-                    printer.println("type=${error.javaClass.name}")
-                    printer.println("message=${error.message ?: "no message"}")
-                    printer.println("time_epoch_ms=${System.currentTimeMillis()}")
-                    error.printStackTrace(printer)
-                }
-            }.toString()
-            crashFile(context).writeText(stack)
+            writeCrashFile(crashFile(context), thread.name, error)
         }
+    }
+
+    internal fun writeCrashFile(
+        file: File,
+        threadName: String,
+        error: Throwable,
+        timeEpochMs: Long = System.currentTimeMillis(),
+    ) {
+        val stack = StringWriter().also { writer ->
+            PrintWriter(writer).use { printer ->
+                printer.println("thread=$threadName")
+                printer.println("type=${error.javaClass.name}")
+                printer.println("message=${error.message ?: "no message"}")
+                printer.println("time_epoch_ms=$timeEpochMs")
+                error.printStackTrace(printer)
+            }
+        }.toString()
+        file.parentFile?.mkdirs()
+        file.writeText(stack)
+    }
+
+    private fun Map<String, Any>.toJsonObject(): JSONObject = JSONObject().also { json ->
+        forEach { (key, value) -> json.put(key, value) }
     }
 
     private fun crashFile(context: Context): File =

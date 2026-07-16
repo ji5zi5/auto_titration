@@ -13,11 +13,14 @@ object ThermalRoiDetector {
     private const val FLAT_RAW_MATRIX_REASON = "thermal_raw_contrast_flat"
 
     fun detect(rawValues: IntArray?, width: Int, height: Int): RoiDetectionResult {
-        if (rawValues == null || rawValues.isEmpty() || width <= 0 || height <= 0 || rawValues.size < width * height) {
+        if (rawValues == null || rawValues.isEmpty() || width <= 0 || height <= 0) {
             return RoiDetectionResult(false, "thermal", false, "thermal_raw_matrix_unavailable", status = "failed")
         }
         val count = width * height
-        val values = rawValues.copyOfRange(0, count)
+        if (rawValues.size != count) {
+            return RoiDetectionResult(false, "thermal", false, "thermal_raw_matrix_exact_size_required", status = "failed")
+        }
+        val values = rawValues.copyOf()
         val mean = values.average()
         var variance = 0.0
         var minValue = Int.MAX_VALUE

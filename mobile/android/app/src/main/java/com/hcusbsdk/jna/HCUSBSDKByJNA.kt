@@ -111,10 +111,12 @@ class USB_STREAM_CALLBACK_PARAM : Structure() {
     @JvmField var byRes: ByteArray = ByteArray(128)
 }
 
-@Structure.FieldOrder("byChannelID", "byRes")
+@Structure.FieldOrder("dwSize", "byChannelID", "bySID", "byRes")
 class USB_COMMON_COND : Structure() {
+    @JvmField var dwSize: Int = 0
     @JvmField var byChannelID: Byte = 0
-    @JvmField var byRes: ByteArray = ByteArray(63)
+    @JvmField var bySID: Byte = 0
+    @JvmField var byRes: ByteArray = ByteArray(6)
 }
 
 @Structure.FieldOrder("lpCondBuffer", "dwCondBufferSize", "lpInBuffer", "dwInBufferSize", "byRes")
@@ -123,14 +125,50 @@ class USB_CONFIG_INPUT_INFO : Structure() {
     @JvmField var dwCondBufferSize: Int = 0
     @JvmField var lpInBuffer: Pointer? = null
     @JvmField var dwInBufferSize: Int = 0
-    @JvmField var byRes: ByteArray = ByteArray(128)
+    @JvmField var byRes: ByteArray = ByteArray(48)
 }
 
 @Structure.FieldOrder("lpOutBuffer", "dwOutBufferSize", "byRes")
 class USB_CONFIG_OUTPUT_INFO : Structure() {
     @JvmField var lpOutBuffer: Pointer? = null
     @JvmField var dwOutBufferSize: Int = 0
-    @JvmField var byRes: ByteArray = ByteArray(128)
+    @JvmField var byRes: ByteArray = ByteArray(56)
+}
+
+
+@Structure.FieldOrder(
+    "dwSize",
+    "byFirmwareVersion",
+    "byEncoderVersion",
+    "byHardwareVersion",
+    "byDeviceType",
+    "byProtocolVersion",
+    "bySerialNumber",
+    "bySecondHardwareVersion",
+    "byModuleID",
+    "byDeviceID",
+    "byDeviceAssembleType",
+    "byManufacturer",
+    "byLanguageType",
+    "byDeviceClass",
+    "byRes",
+)
+class USB_SYSTEM_DEVICE_INFO : Structure() {
+    @JvmField var dwSize: Int = 0
+    @JvmField var byFirmwareVersion: ByteArray = ByteArray(64)
+    @JvmField var byEncoderVersion: ByteArray = ByteArray(64)
+    @JvmField var byHardwareVersion: ByteArray = ByteArray(64)
+    @JvmField var byDeviceType: ByteArray = ByteArray(64)
+    @JvmField var byProtocolVersion: ByteArray = ByteArray(4)
+    @JvmField var bySerialNumber: ByteArray = ByteArray(64)
+    @JvmField var bySecondHardwareVersion: ByteArray = ByteArray(64)
+    @JvmField var byModuleID: ByteArray = ByteArray(32)
+    @JvmField var byDeviceID: ByteArray = ByteArray(64)
+    @JvmField var byDeviceAssembleType: Byte = 0
+    @JvmField var byManufacturer: Byte = 0
+    @JvmField var byLanguageType: Byte = 0
+    @JvmField var byDeviceClass: Byte = 0
+    @JvmField var byRes: ByteArray = ByteArray(24)
 }
 
 @Structure.FieldOrder("dwVideoFormat", "dwWidth", "dwHeight", "dwFramerate", "dwBitrate", "dwParamType", "dwValue", "byRes")

@@ -1,0 +1,3 @@
+{"event":"metadata","trace_id":"ours-jsonl-fixture","evidence_scope":"fixture","provenance":{"fixture_only":true,"live_device_observation":false}}
+{"official_order":1,"event":"usb_broadcast_dispatch","stage":"permission","permission":"usb_attach_detach_permission"}
+{"official_order":2,"event":"main_attach_reaction","stage":"permission","vendor_id":11231,"product_id":258}
