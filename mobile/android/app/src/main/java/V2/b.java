@@ -8,7 +8,6 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.content.Context;
 import com.hik.thermalplayer.ThermalPlayer;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import kotlin.jvm.internal.DefaultConstructorMarker;
@@ -43,12 +42,7 @@ public final class b implements f {
 
     @Override public void g(boolean first, boolean second, boolean third, boolean fourth, int mode, float firstScale, float secondScale) {
         boolean devSupportsRows = Z2.g.a.U().getDevType() == 1;
-        InputStream stream;
-        try {
-            stream = d2.a.a().getResources().getAssets().open("osd_bg.png");
-        } catch (IOException exception) {
-            throw new RuntimeException(exception);
-        }
+        InputStream stream = AssetOpenBridge.open(d2.a.a().getResources().getAssets(), "osd_bg.png");
         Intrinsics.checkNotNullExpressionValue(stream, "open(...)");
         Bitmap osdBitmap = BitmapFactory.decodeStream(stream);
 
@@ -106,12 +100,7 @@ public final class b implements f {
 
     @Override public void i(Size showSize) {
         Intrinsics.checkNotNullParameter(showSize, "showSize");
-        InputStream stream;
-        try {
-            stream = d2.a.a().getResources().getAssets().open("logo_hik_w.png");
-        } catch (IOException exception) {
-            throw new RuntimeException(exception);
-        }
+        InputStream stream = AssetOpenBridge.open(d2.a.a().getResources().getAssets(), "logo_hik_w.png");
         Intrinsics.checkNotNullExpressionValue(stream, "open(...)");
         Bitmap bitmap = BitmapFactory.decodeStream(stream);
         float scale = 0.06f / (((float) bitmap.getHeight()) / showSize.getHeight());

@@ -93,22 +93,39 @@ class G007V2RendererDexParityTest {
             "app/src/main/java/V2/d.java" to V2.d::class.java,
         ).forEach { (path, type) ->
             val text = source(path)
+            assertFalse("$path must not add private asset helper methods", text.contains("openAsset("))
+            assertFalse("$path must not add private sneaky throw methods", text.contains("sneakyThrow"))
             assertFalse("$path must not wrap asset open failures", text.contains("new RuntimeException"))
             assertFalse("$path must not use try-with-resources asset streams", text.contains("try ("))
-            assertTrue("$path must directly invoke AssetManager.open in the helper", text.contains("return assets.open(path)"))
-            assertTrue("$path must catch only IOException from asset open", text.contains("} catch (IOException exception) {"))
-            assertTrue("$path must rethrow the original caught object through sneakyThrow", text.contains("return sneakyThrow(exception)"))
-            assertTrue("$path must open official OSD asset path", text.contains("openAsset(\"osd_bg.png\")"))
-            assertTrue("$path must open official logo asset path", text.contains("openAsset(\"logo_hik_w.png\")"))
-
-            val marker = java.io.IOException("asset-open-marker")
-            val sneakyThrow = type.getDeclaredMethod("sneakyThrow", Throwable::class.java)
-            sneakyThrow.isAccessible = true
-            val thrown = assertThrows(InvocationTargetException::class.java) {
-                sneakyThrow.invoke(null, marker)
-            }
-            assertSame("$path sneakyThrow must throw the same IOException instance", marker, thrown.cause)
+            assertTrue("$path must open official OSD asset path through external bridge", text.contains("AssetOpenBridge.open(d2.a.a().getResources().getAssets(), \"osd_bg.png\")"))
+            assertTrue("$path must open official logo asset path through external bridge", text.contains("AssetOpenBridge.open(d2.a.a().getResources().getAssets(), \"logo_hik_w.png\")"))
+            assertEquals("$path declared method descriptors must stay exact", parseDexMethods(officialSupport(type.simpleNameDexFile())), reflectMethods(type))
         }
+
+        val bridge = Class.forName("V2.AssetOpenBridge")
+        val bridgeSource = source("app/src/main/java/V2/AssetOpenBridge.java")
+        assertTrue(bridgeSource.contains("return assets.open(assetPath)"))
+        assertTrue(bridgeSource.contains("} catch (IOException exception) {"))
+        assertTrue(bridgeSource.contains("return throwUnchecked(exception)"))
+        assertFalse(bridgeSource.contains("new RuntimeException"))
+        assertFalse(bridgeSource.contains("try ("))
+        assertFalse(bridgeSource.contains(".close()"))
+
+        val marker = java.io.IOException("asset-open-marker")
+        val openerType = Class.forName("V2.AssetOpenBridge\$AssetOpener")
+        val throwingOpener = java.lang.reflect.Proxy.newProxyInstance(
+            bridge.classLoader,
+            arrayOf(openerType),
+        ) { _, method, _ ->
+            if (method.name == "open") throw marker
+            null
+        }
+        val open = bridge.getDeclaredMethod("open", openerType, String::class.java)
+        open.isAccessible = true
+        val thrown = assertThrows(InvocationTargetException::class.java) {
+            open.invoke(null, throwingOpener, "osd_bg.png")
+        }
+        assertSame("AssetOpenBridge.open must rethrow the same IOException instance", marker, thrown.cause)
     }
 
     @Test fun ownedSliceHasNoTodoThrowOrNoOpSurrogatesExceptOfficialNoOps() {
@@ -176,8 +193,8 @@ class G007V2RendererDexParityTest {
     @Test fun v2BinaryAbiMatchesOfficialDexMethodsFieldsAndCompanionConstructors() {
         assertEquals(parseDexFields(officialSupport("V2_b.dex.txt")), reflectFields(V2.b::class.java))
         assertEquals(parseDexFields(officialSupport("V2_d.dex.txt")), reflectFields(V2.d::class.java))
-        assertEquals(parseDexPublicMethods(officialSupport("V2_b.dex.txt")), reflectPublicMethods(V2.b::class.java))
-        assertEquals(parseDexPublicMethods(officialSupport("V2_d.dex.txt")), reflectPublicMethods(V2.d::class.java))
+        assertEquals(parseDexMethods(officialSupport("V2_b.dex.txt")), reflectMethods(V2.b::class.java))
+        assertEquals(parseDexMethods(officialSupport("V2_d.dex.txt")), reflectMethods(V2.d::class.java))
         assertEquals(parseDexConstructors(officialSupport("V2_b.dex.txt")), reflectConstructors(V2.b::class.java))
         assertEquals(parseDexConstructors(officialSupport("V2_d.dex.txt")), reflectConstructors(V2.d::class.java))
 
@@ -306,29 +323,6 @@ class G007V2RendererDexParityTest {
             .map { methodDescriptor(it) }
             .sorted()
 
-    private fun parseDexPublicMethods(file: File): List<String> =
-        parseDexMethods(file).filter { method ->
-            file.readLines().any { raw ->
-                val line = raw.trim().removePrefix("METHOD ").removePrefix("### ")
-                line.startsWith("public ") && method in methodSignatureFromDexLine(line)
-            }
-        }.sorted()
-
-    private fun methodSignatureFromDexLine(line: String): String {
-        val match = Regex("""(?:public|private|protected|static|final|synthetic|native|abstract|\s)+\s+([^\s(]+)\(([^)]*)\)(\S+)""")
-            .find(line) ?: return ""
-        val name = match.groupValues[1]
-        val args = match.groupValues[2].replace(" ", "")
-        val ret = match.groupValues[3].substringBefore(' ')
-        return "$name($args)$ret"
-    }
-
-    private fun reflectPublicMethods(type: Class<*>): List<String> =
-        type.declaredMethods
-            .filter { Modifier.isPublic(it.modifiers) && !it.isSynthetic && !it.isBridge }
-            .map { methodDescriptor(it) }
-            .sorted()
-
     private fun parseDexConstructors(file: File): List<String> =
         file.readLines().mapNotNull { raw ->
             val line = raw.trim()
@@ -414,6 +408,8 @@ class G007V2RendererDexParityTest {
     }
 
     private data class FieldAbi(val name: String, val descriptor: String, val modifiers: Set<String>)
+
+    private fun Class<*>.simpleNameDexFile(): String = "V2_${simpleName}.dex.txt"
 
     private fun source(relativePath: String): String = File(mobileRoot(), relativePath).readText()
 

@@ -14,7 +14,6 @@ import com.hik.modulelib.bean.ThermometryBasicBean;
 import com.hik.thermalplayer.ThermalPlayer;
 import hik.common.yyrj.uicommon.data.ModuleType;
 import hik.common.yyrj.uicommon.data.ModuleType.F2ModuleType;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import kotlin.jvm.internal.DefaultConstructorMarker;
@@ -55,12 +54,7 @@ public final class d implements f {
         new StringBuilder().append("setupOsdBgPicAddInfo: showFirSize=").append(showFirSize);
         boolean landscape = showFirSize.getWidth() > showFirSize.getHeight();
 
-        InputStream stream;
-        try {
-            stream = d2.a.a().getResources().getAssets().open("osd_bg.png");
-        } catch (IOException exception) {
-            throw new RuntimeException(exception);
-        }
+        InputStream stream = AssetOpenBridge.open(d2.a.a().getResources().getAssets(), "osd_bg.png");
         Intrinsics.checkNotNullExpressionValue(stream, "open(...)");
         Bitmap osdBitmap = BitmapFactory.decodeStream(stream);
 
@@ -246,12 +240,7 @@ public final class d implements f {
     @Override public void i(Size showSize) {
         Intrinsics.checkNotNullParameter(showSize, "showSize");
         boolean topAtZero = Z2.g.a.s();
-        InputStream stream;
-        try {
-            stream = d2.a.a().getResources().getAssets().open("logo_hik_w.png");
-        } catch (IOException exception) {
-            throw new RuntimeException(exception);
-        }
+        InputStream stream = AssetOpenBridge.open(d2.a.a().getResources().getAssets(), "logo_hik_w.png");
         Intrinsics.checkNotNullExpressionValue(stream, "open(...)");
         Bitmap bitmap = BitmapFactory.decodeStream(stream);
         float scale = 0.06f / (((float) bitmap.getHeight()) / showSize.getHeight());
