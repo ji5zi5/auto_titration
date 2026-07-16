@@ -19,13 +19,13 @@ class k : f {
     fun z(model: ThermalModel) {
         thermalModel = model
         frameNumStamp = model.getFrameNumStamp()
-        frame = Frame(model.getNv12ByteArray(), model.getWidth(), model.getHeight(), model.getFrameNumStamp())
+        frame = Frame(frameNumStamp, model.getBitmap())
     }
     fun r(): Int = frameNumStamp
-    fun q(): Frame = frame ?: Frame(frameNumStamp = frameNumStamp)
+    fun q(): Frame = frame ?: Frame(frameNumStamp, thermalModel?.getBitmap())
     fun y(value: Frame?) {
         frame = value
-        frameNumStamp = value?.getFrameNumStamp() ?: -1
+        frameNumStamp = value?.getTime() ?: -1
         if (value == null) thermalModel = null
     }
 }
