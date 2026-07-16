@@ -31,11 +31,12 @@ class G007StateModelHotPathTests(unittest.TestCase):
             self.assertNotIn("ForHostTest", text)
             self.assertNotIn("setDefaults", text)
         self.assertNotIn("rawAppendWidth", self.read("f3/g.kt"))
-        self.assertIn("private boolean q = false", z2a)
-        self.assertIn("private f3.k p = new f3.a()", z2a)
-        self.assertIn("public final f3.k p(){return p;}", z2a)
-        self.assertIn("public final void u(f3.k profile)", z2a)
-        self.assertIn("public final boolean q(){return q;}", z2a)
+        self.assertIn("private static boolean q;", z2a)
+        self.assertIn("private static f3.k p;", z2a)
+        self.assertIn("p = new f3.a();", z2a)
+        self.assertIn("public final f3.k p() { return p; }", z2a)
+        self.assertIn("public final void u(f3.k value)", z2a)
+        self.assertIn("public final boolean q() { return r; }", z2a)
         for token in [
             "private var b: Boolean = false",
             "private var c: Boolean = false",

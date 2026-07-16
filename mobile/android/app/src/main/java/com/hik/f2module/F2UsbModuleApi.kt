@@ -6,18 +6,23 @@ import android.hardware.usb.UsbManager
 import android.util.Size
 import com.hik.viewer.manager.PreviewManagerII
 import com.hik.viewercommon.data.device.api.callback.F2ModuleStreamCallback
+import kr.auto.titration.mobile.thermal.HikmicroF2ProfileResolution
+import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
+import kr.auto.titration.mobile.thermal.HikmicroF2Size
 
 /** Official-shaped public API boundary for the F2 USB preview lifecycle. */
 class F2UsbModuleApi private constructor() {
     private val helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
+    private val lifecycleLock = Any()
 
+    @Synchronized
     fun openUsbModule(
         context: Context,
         usbManager: UsbManager,
         device: UsbDevice,
         nativeLibraryDir: String,
         maxRetries: Int = 5,
-    ): F2OpenResult {
+    ): F2OpenResult = synchronized(lifecycleLock) {
         var retryIndex = 0
         val attemptReports = mutableListOf("F2UsbModuleApi.openUsbModule:start retryIndex=0")
         var last = helper.openUsbDevice(
@@ -45,33 +50,63 @@ class F2UsbModuleApi private constructor() {
             attemptReports += "F2UsbModuleApi.openUsbModule:do retryIndex=$retryIndex success=${last.ok}"
         }
         attemptReports += "F2UsbModuleApi.openUsbModule:end retryIndex=$retryIndex success=${last.ok}"
-        return last.copy(stageReport = "${attemptReports.joinToString("; ")}; ${last.stageReport}")
+        last.copy(stageReport = "${attemptReports.joinToString("; ")}; ${last.stageReport}")
     }
 
+    @Synchronized
     fun startStreamPreview(
         context: Context,
         callback: F2StreamCallback,
-        streamingNew: Boolean = true,
-    ): F2StartResult {
-        val previewCallback = PreviewManagerII.INSTANCE.createF2ModuleStreamCallback { frame ->
-            callback.onFrame(frame)
-        }
-        return startStreamPreview(
+        streamingNew: Boolean? = null,
+        onInvalidPacketSizeTimeout: ((packetSize: Int, elapsedMs: Long) -> Unit)? = null,
+    ): F2StartResult = synchronized(lifecycleLock) {
+        val startConfig = resolveStartConfig(
+            helper.activeProfileResolution(),
+            streamingNewOverride = streamingNew,
+        )
+        if (!startConfig.ok) return@synchronized startConfig.toStartResult(helper.lastStageReport)
+        val config = startConfig.config ?: return@synchronized startConfig.toStartResult(helper.lastStageReport)
+        val previewManager = PreviewManagerIIAppBinding.manager()
+        PreviewManagerIIAppBinding.bind(previewManager, callback)
+        val previewCallback = F2ModuleStreamCallback(null, previewManager.R())
+        startStreamPreviewLocked(
             context = context,
             streamCallback = previewCallback,
-            streamingNew = streamingNew,
+            config = config,
         )
     }
 
+    @Synchronized
     fun startStreamPreview(
         context: Context,
         streamCallback: F2ModuleStreamCallback,
-        streamingNew: Boolean = true,
-        frameRate: Int = HIKMICRO_FRAME_RATE,
-        videoCodingType: Int = HIKMICRO_THERMAL_VIDEO_CODING_TYPE,
-        previewSize: Size = Size(HIKMICRO_PREVIEW_WIDTH, HIKMICRO_PREVIEW_HEIGHT),
+        streamingNew: Boolean? = null,
+        frameRate: Int? = null,
+        videoCodingType: Int? = null,
+        previewSize: Size? = null,
+    ): F2StartResult = synchronized(lifecycleLock) {
+        val startConfig = resolveStartConfig(
+            helper.activeProfileResolution(),
+            streamingNewOverride = streamingNew,
+            frameRateOverride = frameRate,
+            videoCodingTypeOverride = videoCodingType,
+            previewSizeOverride = previewSize,
+        )
+        if (!startConfig.ok) return@synchronized startConfig.toStartResult(helper.lastStageReport)
+        val config = startConfig.config ?: return@synchronized startConfig.toStartResult(helper.lastStageReport)
+        startStreamPreviewLocked(
+            context = context,
+            streamCallback = streamCallback,
+            config = config,
+        )
+    }
+
+    private fun startStreamPreviewLocked(
+        context: Context,
+        streamCallback: F2ModuleStreamCallback,
+        config: F2ProfileStartConfig,
     ): F2StartResult {
-        helper.stopStreamPreview(context, streamingNew)
+        helper.stopStreamPreview(context, config.streamingNew)
         val fStreamCallBack = streamCallback.getFStreamCallBack()
             ?: return F2StartResult(
                 ok = false,
@@ -82,46 +117,116 @@ class F2UsbModuleApi private constructor() {
             )
         return helper.startStreamPreview(
             fStreamCallBack = fStreamCallBack,
-            size = previewSize,
-            frameRate = frameRate,
-            videoCodingType = videoCodingType,
+            size = config.previewSize,
+            frameRate = config.frameRate,
+            videoCodingType = config.videoCodingType,
             streamType = HIKMICRO_OFFICIAL_PRIMARY_STREAM_TYPE,
-            streamingNew = streamingNew,
+            streamingNew = config.streamingNew,
         )
     }
 
+    @Synchronized
     fun startStreamPreviewJNA(
         context: Context,
         streamCallback: F2ModuleStreamCallback,
-        streamingNew: Boolean = true,
-        frameRate: Int = HIKMICRO_FRAME_RATE,
-        videoCodingType: Int = HIKMICRO_THERMAL_VIDEO_CODING_TYPE,
-        previewSize: Size = Size(HIKMICRO_PREVIEW_WIDTH, HIKMICRO_PREVIEW_HEIGHT),
-    ): F2StartResult {
-        helper.stopStreamPreview(context, streamingNew)
+        streamingNew: Boolean? = null,
+        frameRate: Int? = null,
+        videoCodingType: Int? = null,
+        previewSize: Size? = null,
+    ): F2StartResult = synchronized(lifecycleLock) {
+        val startConfig = resolveStartConfig(
+            helper.activeProfileResolution(),
+            streamingNewOverride = streamingNew,
+            frameRateOverride = frameRate,
+            videoCodingTypeOverride = videoCodingType,
+            previewSizeOverride = previewSize,
+        )
+        if (!startConfig.ok) return@synchronized startConfig.toStartResult(helper.lastStageReport)
+        val config = startConfig.config ?: return@synchronized startConfig.toStartResult(helper.lastStageReport)
+        helper.stopStreamPreview(context, config.streamingNew)
         val fStreamCallBackJNA = streamCallback.getFStreamCallBackJNA()
-            ?: return F2StartResult(
+            ?: return@synchronized F2StartResult(
                 ok = false,
                 waitingForFrame = false,
                 channel = -1,
                 reason = "F2ModuleStreamCallback.getFStreamCallBackJNA returned null",
                 stageReport = "F2UsbModuleApi.startStreamPreviewJNA callback=null",
             )
-        return helper.startStreamPreviewJNA(
+        helper.startStreamPreviewJNA(
             fStreamCallBack = fStreamCallBackJNA,
-            size = previewSize,
-            frameRate = frameRate,
-            videoCodingType = videoCodingType,
+            size = config.previewSize,
+            frameRate = config.frameRate,
+            videoCodingType = config.videoCodingType,
             streamType = HIKMICRO_OFFICIAL_PRIMARY_STREAM_TYPE,
-            streamingNew = streamingNew,
+            streamingNew = config.streamingNew,
         )
     }
 
+    @Synchronized
     fun stopStreamPreview(context: Context, streamingNew: Boolean = true): F2StageResult =
-        helper.stopStreamPreview(context, streamingNew)
+        synchronized(lifecycleLock) { helper.stopStreamPreview(context, streamingNew) }
 
     companion object {
         @JvmField
         val INSTANCE: F2UsbModuleApi = F2UsbModuleApi()
+
+        fun resolveStartConfig(
+            resolution: HikmicroF2ProfileResolution?,
+            streamingNewOverride: Boolean? = null,
+            frameRateOverride: Int? = null,
+            videoCodingTypeOverride: Int? = null,
+            previewSizeOverride: Size? = null,
+            previewSizeValueOverride: HikmicroF2Size? = null,
+        ): F2ProfileStartConfigResult {
+            val profile = resolution?.profile
+                ?: return F2ProfileStartConfigResult(
+                    ok = false,
+                    reason = "profile_unresolved ${resolution?.reason ?: "system_device_info_not_read"}",
+                    profileResolution = resolution,
+                )
+            val purePreviewSize = previewSizeValueOverride
+                ?: previewSizeOverride?.let { HikmicroF2Size(it.width, it.height) }
+                ?: profile.previewSize
+            return F2ProfileStartConfigResult(
+                ok = true,
+                reason = "profile_resolved ${resolution.reason}",
+                profileResolution = resolution,
+                config = F2ProfileStartConfig(
+                    previewSize = previewSizeOverride ?: Size(purePreviewSize.width, purePreviewSize.height),
+                    previewSizeValue = purePreviewSize,
+                    frameRate = frameRateOverride ?: profile.fps,
+                    videoCodingType = videoCodingTypeOverride ?: profile.thermalCoding,
+                    streamingNew = streamingNewOverride ?: profile.streamingNew,
+                    allowedPacketSizes = profile.allowedPacketSizes,
+                    profileClass = profile.officialClassName,
+                ),
+            )
+        }
     }
+}
+
+data class F2ProfileStartConfig(
+    val previewSize: Size,
+    val previewSizeValue: HikmicroF2Size,
+    val frameRate: Int,
+    val videoCodingType: Int,
+    val streamingNew: Boolean,
+    val allowedPacketSizes: Set<Int>,
+    val profileClass: String,
+)
+
+data class F2ProfileStartConfigResult(
+    val ok: Boolean,
+    val reason: String,
+    val profileResolution: HikmicroF2ProfileResolution?,
+    val config: F2ProfileStartConfig? = null,
+) {
+    fun toStartResult(stageReport: String): F2StartResult = F2StartResult(
+        ok = false,
+        waitingForFrame = false,
+        channel = -1,
+        reason = reason,
+        stageReport = "$stageReport; profile_unresolved ${profileResolution?.reason ?: "system_device_info_not_read"}; USB_SET_VIDEO_PARAM=not_run; USB_StartStreamCallback=not_run",
+        profileResolution = profileResolution,
+    )
 }

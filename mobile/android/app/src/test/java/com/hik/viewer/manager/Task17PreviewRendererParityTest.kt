@@ -73,7 +73,7 @@ class Task17PreviewRendererParityTest {
 
     @Test
     fun playerListenerDoesNotRouteL0CallbacksToGuessedLifecycleEvents() {
-        val manager = PreviewManagerII.INSTANCE
+        val manager = kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding.manager()
         var freezeCalls = 0
         var overlayCalls = 0
         var frameCalls = 0
@@ -109,7 +109,7 @@ class Task17PreviewRendererParityTest {
 
     @Test
     fun teardownStopsThenReleasesRendererAndRetainsOfficialL0State() {
-        val manager = PreviewManagerII.INSTANCE
+        val manager = kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding.manager()
         val calls = mutableListOf<String>()
         val renderer = RecordingRenderer(calls)
         val scene = SceneModeBean()

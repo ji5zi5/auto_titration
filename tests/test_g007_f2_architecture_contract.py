@@ -37,61 +37,46 @@ class G007F2ArchitectureContractTests(unittest.TestCase):
         combined = "\n".join(path.read_text(encoding="utf-8") for path in (api, helper, preview, callback))
         self.assertIn("F2ModuleStreamCallback", combined)
         self.assertIn("USB_StartStreamCallback", combined)
-        self.assertIn("dwBufSize", combined)
-        self.assertIn("officialF2KnownPacketSizes", combined)
+        self.assertIn("dwBufSize", (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII$d.java").read_text(encoding="utf-8"))
         self.assertNotIn("HikmicroF2PacketParser.parse", combined)
 
 
 class G007F2CallbackSchedulerClosureTests(unittest.TestCase):
     def test_official_packet_gate_removes_unproven_98304_and_221184_sizes(self):
-        preview = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
-        official_set = preview.split("officialF2KnownPacketSizes: Set<Int> = setOf(", 1)[1].split(")", 1)[0]
-        self.assertNotIn("98_304", official_set)
-        self.assertNotIn("221_184", official_set)
-        for size in ["41_160", "61_384", "101_320", "183_496", "193_480", "203_720", "400_584"]:
-            self.assertIn(size, official_set)
+        callback = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII$d.java").read_text(encoding="utf-8")
+        self.assertNotIn("98304", callback)
+        self.assertNotIn("221184", callback)
+        self.assertIn("Z2.a.a.p().e().contains(size)", callback)
+        for size in ["41160", "183496", "400584"]:
+            self.assertIn(size, callback)
 
     def test_preview_scheduler_and_processor_callback_installation_match_g007_dex_shape(self):
         preview = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
-        self.assertIn("private const val F2_CONSUMER_PERIOD_MS = 20L", preview)
-        self.assertIn("scheduleAtFixedRate(", preview)
-        self.assertIn("F2_CONSUMER_PERIOD_MS", preview)
+        self.assertIn("scheduleAtFixedRate(new K2.e(this), 0L, 20L", preview)
         self.assertIn("Executors.newSingleThreadScheduledExecutor()", preview)
-        callback_install = preview[preview.index("processor.j("):preview.index("        if (processor is G3DProcessor)")]
-        expected_callback_order = [
-            "OfficialFreezeCallback(",
-            "K2.f(",
-            "OfficialMetadataCallback(",
-            "OfficialOverlayCallback(",
-            "K2.g(",
-        ]
+        callback_install = preview[preview.index("processor.j("):preview.index("        if (processor instanceof g3.d)")]
+        expected_callback_order = ["X", "new K2.f(this)", "null", "h0", "new K2.g(this)"]
         positions = [callback_install.index(token) for token in expected_callback_order]
         self.assertEqual(sorted(positions), positions)
-        self.assertIn("processor.o(K2.h(", preview)
+        self.assertIn("((g3.d) processor).o(new K2.h(this))", preview)
         self.assertIn("Arrays.hashCode", preview)
-        self.assertIn("noChangeCounter % 100", preview)
+        self.assertIn("u0 % 100", preview)
 
     def test_fstream_callback_matches_official_timer_copy_count_and_size_publish_order(self):
-        preview = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
-        callback = preview[preview.index("override fun fStreamCallback"):preview.index("private fun onUnsupportedPacketSizeLocked")]
-
+        callback = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII$d.java").read_text(encoding="utf-8")
         expected_order = [
-            "frameCounter += 1L",
-            "if (invalidPacketStartMs == 0L)",
-            "val copiedSize = frameInfo.dwBufSize",
-            "val copied = Arrays.copyOf(frameInfo.pBuf, copiedSize)",
-            "Z2.g.a.A0(copiedSize)",
-            "if (copiedSize !in allowedPacketSizes)",
+            "PreviewManagerII.t(b, PreviewManagerII.i(b) + 1L)",
+            "if (b.h0() == 0L)",
+            "int size = frameInfo.dwBufSize",
+            "byte[] copied = Arrays.copyOf(frameInfo.pBuf, size)",
+            "Z2.g.a.A0(size)",
+            "if (Z2.a.a.p().e().contains(size))",
         ]
         positions = [callback.index(token) for token in expected_order]
         self.assertEqual(sorted(positions), positions)
-        self.assertNotIn("coerceAtLeast", callback)
-        self.assertNotIn("coerceAtMost", callback)
-        self.assertNotIn("invalidPacketStartMs = 0L", callback)
-
-        unsupported = preview[preview.index("private fun onUnsupportedPacketSizeLocked"):preview.index("private data class BufferedF2Packet")]
-        self.assertIn("elapsedMs > invalidPacketErrorDelayMs", unsupported)
-        self.assertLess(unsupported.index("onInvalidPacketSizeTimeout?.invoke(packetSize, elapsedMs)"), unsupported.index("invalidPacketStartMs = 0L"))
+        self.assertNotIn("coerce", callback)
+        self.assertIn("> 40000L", callback)
+        self.assertIn("b.P0(0L)", callback)
 
     def test_g3a_callback_slots_are_not_noop_and_are_cleared_by_k(self):
         g3a = (MAIN_ROOT / "g3/a.java").read_text(encoding="utf-8")

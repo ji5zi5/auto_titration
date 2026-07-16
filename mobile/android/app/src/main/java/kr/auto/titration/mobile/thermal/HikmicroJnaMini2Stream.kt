@@ -11,7 +11,6 @@ import com.hik.f2module.F2StreamFrame
 import com.hik.f2module.F2StreamAttemptDiagnostic
 import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
-import com.hik.viewer.manager.OfficialProcessedF2Frame
 import com.hik.viewer.manager.PreviewManagerII
 import java.io.File
 import kotlin.math.max
@@ -64,7 +63,7 @@ object HikmicroJnaMini2Stream {
 
     /** Binds the official SurfaceView renderer; WebView remains an extraction-only observer. */
     fun bindOfficialPreviewSurface(surfaceView: SurfaceView) {
-        PreviewManagerII.INSTANCE.l0(surfaceView)
+        PreviewManagerIIAppBinding.manager().l0(surfaceView)
     }
 
     @Synchronized
@@ -381,7 +380,7 @@ object HikmicroJnaMini2Stream {
     private fun captureOfficialF2Frame(frame: F2StreamFrame) {
         val bytes = frame.bytes.copyOf(frame.bytes.size.coerceIn(0, MAX_CAPTURE_BYTES))
         val previewRotation = thermalPreviewRotationDegrees
-        val officialFrame = PreviewManagerII.INSTANCE.latestOfficialProcessedFrame(frame.frameCounter)
+        val officialFrame = PreviewManagerIIAppBinding.latestOfficialProcessedFrame(PreviewManagerIIAppBinding.manager(), frame.frameCounter)
         val preview = if (officialFrame != null) {
             buildPreviewFrameFromOfficial(officialFrame, frame.width, frame.height, previewRotation)
         } else {
@@ -499,7 +498,7 @@ object HikmicroJnaMini2Stream {
                 packetEvidencePrefixHex = previewData.getByteArrSrc().prefixHexForStatus(),
             )
         }
-        val extractedPicture = PreviewManagerII.INSTANCE.i1(android.util.Size(matrixWidth, matrixHeight))
+        val extractedPicture = PreviewManagerIIAppBinding.manager().i1(android.util.Size(matrixWidth, matrixHeight))
         val dataUrl = extractedPicture?.takeIf { it.isNotEmpty() }?.let {
             "data:image/jpeg;base64,${Base64.encodeToString(it, Base64.NO_WRAP)}"
         }.orEmpty()
