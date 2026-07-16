@@ -2,20 +2,21 @@ package com.hik.viewer.manager
 
 import android.graphics.Bitmap
 import android.util.Size
-import android.view.Gravity
 import android.view.SurfaceView
 import android.view.View
 import android.widget.TextView
+import android.animation.TypeEvaluator
 import com.hik.library.player.b
 import com.hik.library.player.d
 import com.hik.viewer.bean.DiagnoseBean
 import com.hik.viewercommon.data.bean.SceneModeBean
 import hik.common.yyrj.uicommon.widget.FloatTextureView
-import hik.common.yyrj.uicommon.widget.officialFloatTexturePosition
 import kotlin.jvm.functions.Function1
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Task17PreviewRendererParityTest {
@@ -43,12 +44,31 @@ class Task17PreviewRendererParityTest {
     }
 
     @Test
-    fun floatTextureGravityUsesTheFourOfficialDexPositions() {
-        assertEquals(0f to 0f, position(Gravity.START or Gravity.TOP))
-        assertEquals(240f to 0f, position(Gravity.END or Gravity.TOP))
-        assertEquals(0f to 160f, position(Gravity.START or Gravity.BOTTOM))
-        assertEquals(240f to 160f, position(Gravity.END or Gravity.BOTTOM))
-        assertEquals(0f to 0f, position(Gravity.CENTER))
+    fun floatTextureViewRestoresTheOfficialFieldsMethodsAndEvaluator() {
+        val type = FloatTextureView::class.java
+        assertEquals(
+            listOf("a:float", "b:float", "c:int", "d:int", "e:kotlin.jvm.functions.Function1"),
+            listOf("a", "b", "c", "d", "e").map { name ->
+                val field = type.getDeclaredField(name)
+                "$name:${field.type.name}"
+            },
+        )
+        assertEquals("hik.common.yyrj.uicommon.widget.FloatTextureView\$a", type.getField("f").type.name)
+        assertTrue(type.declaredConstructors.any { it.parameterTypes.contentEquals(arrayOf(android.content.Context::class.java, android.util.AttributeSet::class.java)) })
+        assertTrue(type.declaredConstructors.any { it.parameterTypes.contentEquals(arrayOf(android.content.Context::class.java, android.util.AttributeSet::class.java, Int::class.javaPrimitiveType)) })
+        assertEquals(Int::class.javaPrimitiveType, type.getDeclaredMethod("b").returnType)
+        assertEquals(Void.TYPE, type.getDeclaredMethod("c", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType).returnType)
+        assertEquals(Void.TYPE, type.getDeclaredMethod("g").returnType)
+        assertEquals(Void.TYPE, type.getDeclaredMethod("h", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType).returnType)
+        assertEquals(Void.TYPE, type.getDeclaredMethod("d", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType).returnType)
+        assertEquals(
+            Void.TYPE,
+            type.getDeclaredMethod("f", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Size::class.java, Size::class.java).returnType,
+        )
+        val evaluator = Class.forName("hik.common.yyrj.uicommon.widget.FloatTextureView\$b")
+        assertTrue(TypeEvaluator::class.java.isAssignableFrom(evaluator))
+        assertEquals(FloatTextureView::class.java, evaluator.getDeclaredField("a").type)
+        assertFalse(type.declaredMethods.any { it.name.contains("officialFloatTexturePosition") })
     }
 
     @Test
@@ -118,14 +138,6 @@ class Task17PreviewRendererParityTest {
         manager.D0(null)
         manager.openPreviewCallback()
     }
-
-    private fun position(gravity: Int): Pair<Float, Float> = officialFloatTexturePosition(
-        gravity = gravity,
-        availableWidth = 320,
-        availableHeight = 240,
-        childWidth = 80,
-        childHeight = 80,
-    )
 
     private fun field(name: String) = PreviewManagerII::class.java.getDeclaredField(name).apply {
         isAccessible = true
