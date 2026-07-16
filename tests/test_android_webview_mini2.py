@@ -540,7 +540,12 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("class F2UsbModuleHelper", helper)
         self.assertIn("val INSTANCE: F2UsbModuleHelper", helper)
         self.assertIn("fun openUsbModule", api)
-        self.assertIn("F2UsbModuleApi.openUsbModule:start retryIndex=0", api)
+        open_body = function_slice(api, "fun openUsbModule(", "    @Synchronized\n    fun startStreamPreview")
+        self.assertIn("F2UsbModuleApi.openUsbModule:singleAttempt", open_body)
+        self.assertEqual(1, open_body.count("helper.openUsbDevice("))
+        for forbidden in ["maxRetries", "retryIndex", "Thread.sleep", "while ("]:
+            with self.subTest(forbidden_open_retry_ladder=forbidden):
+                self.assertNotIn(forbidden, open_body)
         for token in ["sdkInited", "deviceInfoList", "userId", "channel"]:
             self.assertIn(token, helper)
 
