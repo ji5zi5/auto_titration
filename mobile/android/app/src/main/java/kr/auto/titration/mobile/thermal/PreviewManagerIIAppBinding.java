@@ -2,7 +2,6 @@ package kr.auto.titration.mobile.thermal;
 
 import androidx.activity.ComponentActivity;
 import androidx.lifecycle.Lifecycle;
-import androidx.lifecycle.LifecycleObserver;
 import com.hik.f2module.F2StreamCallback;
 import com.hik.f2module.F2StreamFrame;
 
@@ -41,7 +40,7 @@ public final class PreviewManagerIIAppBinding {
         if (manager != null) {
             callbacks.remove(manager);
             latestFrames.remove(manager);
-            manager.u0();
+            manager.closePreviewCallback();
         }
         installedLifecycle = lifecycle;
         manager = new PreviewManagerII(lifecycle, false, false);
@@ -49,9 +48,6 @@ public final class PreviewManagerIIAppBinding {
     }
 
     public static synchronized PreviewManagerII manager() {
-        if (manager == null && isLegacyLocalPreviewManagerParityTest()) {
-            installLifecycle(new ClosedLocalUnitTestLifecycle());
-        }
         if (manager == null) {
             throw new IllegalStateException(
                     "PreviewManagerII lifecycle is not installed; construct OfficialPreviewHost with a ComponentActivity before using the official preview manager");
@@ -69,9 +65,10 @@ public final class PreviewManagerIIAppBinding {
     }
 
     public static synchronized void unbind(PreviewManagerII manager) {
-        if (manager == PreviewManagerIIAppBinding.manager) {
-            callbacks.remove(manager);
-        }
+        if (manager == null) return;
+        callbacks.remove(manager);
+        latestFrames.remove(manager);
+        manager.closePreviewCallback();
     }
 
     public static synchronized OfficialProcessedF2Frame latestOfficialProcessedFrame(PreviewManagerII manager, long frameCounter) {
@@ -87,37 +84,16 @@ public final class PreviewManagerIIAppBinding {
         latestOfflineCallback = new Pair<>(info, stamp);
     }
 
-    private static boolean isLegacyLocalPreviewManagerParityTest() {
-        for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
-            if (element.getClassName().startsWith("com.hik.viewer.manager.Task17PreviewRendererParityTest")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static final class ClosedLocalUnitTestLifecycle extends Lifecycle {
-        @Override
-        public void addObserver(LifecycleObserver observer) {}
-
-        @Override
-        public void removeObserver(LifecycleObserver observer) {}
-
-        @Override
-        public State getCurrentState() { return State.CREATED; }
-    }
-
     public static void afterOfficialG(PreviewManagerII manager, int userId, long frameCounter,
                                       int width, int height, int frameType, int dataType, int streamType,
                                       byte[] packet, int officialWidth, int officialHeight,
                                       PreviewStreamInfo streamInfo, boolean offline, String processorBucket) {
-        F2StreamCallback callback;
         synchronized (PreviewManagerIIAppBinding.class) {
+            if (manager != PreviewManagerIIAppBinding.manager) return;
+            F2StreamCallback callback = callbacks.get(manager);
+            if (callback == null) return;
             latestFrames.put(manager, new OfficialProcessedF2Frame(
                     frameCounter, packet.length, officialWidth, officialHeight, streamInfo, offline, processorBucket));
-            callback = callbacks.get(manager);
-        }
-        if (callback != null) {
             callback.onFrame(new F2StreamFrame(userId, frameCounter, width, height, frameType, dataType, streamType, packet));
         }
     }

@@ -61,15 +61,16 @@ object HikmicroJnaMini2Stream {
 
     private val f2Api: F2UsbModuleApi = F2UsbModuleApi.INSTANCE
     private val f2Helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
-    @Volatile
-    private var officialPreviewBound = false
+    private var officialPreviewManager: PreviewManagerII? = null
     // startedElapsedMs is owned by F2UsbModuleHelper; this adapter reads activeStartedElapsedMs().
 
     /** Compatibility wrapper for legacy tests; production must use the full official boundary. */
     fun bindOfficialPreviewSurface(surfaceView: SurfaceView) {
         synchronized(PreviewManagerIIAppBinding::class.java) {
-            PreviewManagerIIAppBinding.manager().l0(surfaceView)
-            officialPreviewBound = true
+            val manager = PreviewManagerIIAppBinding.manager()
+            closeBoundOfficialPreviewLocked()
+            manager.l0(surfaceView)
+            officialPreviewManager = manager
         }
     }
 
@@ -77,9 +78,7 @@ object HikmicroJnaMini2Stream {
     fun bindOfficialPreviewSurface(binding: OfficialPreviewBinding) {
         synchronized(PreviewManagerIIAppBinding::class.java) {
             val manager = PreviewManagerIIAppBinding.manager()
-            if (officialPreviewBound) {
-                manager.u0()
-            }
+            closeBoundOfficialPreviewLocked()
             PreviewManagerII.m0(
                 manager,
                 binding.root,
@@ -93,16 +92,20 @@ object HikmicroJnaMini2Stream {
                 128,
                 null,
             )
-            officialPreviewBound = true
+            officialPreviewManager = manager
         }
     }
 
     fun unbindOfficialPreviewSurface() {
         synchronized(PreviewManagerIIAppBinding::class.java) {
-            if (!officialPreviewBound) return
-            PreviewManagerIIAppBinding.manager().u0()
-            officialPreviewBound = false
+            closeBoundOfficialPreviewLocked()
         }
+    }
+
+    private fun closeBoundOfficialPreviewLocked() {
+        val manager = officialPreviewManager ?: return
+        officialPreviewManager = null
+        PreviewManagerIIAppBinding.unbind(manager)
     }
 
     @Synchronized

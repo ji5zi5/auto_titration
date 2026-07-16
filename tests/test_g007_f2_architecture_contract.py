@@ -55,7 +55,7 @@ class G007F2CallbackSchedulerClosureTests(unittest.TestCase):
         self.assertIn("scheduleAtFixedRate(new K2.e(this), 0L, 20L", preview)
         self.assertIn("Executors.newSingleThreadScheduledExecutor()", preview)
         callback_install = preview[preview.index("processor.j("):preview.index("        if (processor instanceof g3.d)")]
-        expected_callback_order = ["X", "new K2.f(this)", "null", "h0", "new K2.g(this)"]
+        expected_callback_order = ["X", "new K2.f(this)", "c0", "h0", "new K2.g(this)"]
         positions = [callback_install.index(token) for token in expected_callback_order]
         self.assertEqual(sorted(positions), positions)
         self.assertIn("((g3.d) processor).o(new K2.h(this))", preview)

@@ -57,7 +57,7 @@ public final class PreviewManagerII {
     private float i;
     private boolean j;
     private boolean k;
-    private boolean streamClosed;
+    private volatile boolean streamClosed;
     private long frameCounter;
     private long invalidPacketStartMs;
     private long lastCallbackAtMs;
@@ -83,7 +83,7 @@ public final class PreviewManagerII {
     private Function0<Unit> Z;
     private Function0<Unit> a0;
     private Function0<Unit> b0;
-    private Function0<Unit> c0;
+    private Function1<Object, Unit> c0;
     private Function0<Unit> d0;
     private Function0<Unit> e0;
     private Function1<Object, Unit> f0;
@@ -266,6 +266,7 @@ public final class PreviewManagerII {
     public final void D0(Function1<DiagnoseBean, Unit> callback) { z = callback; }
     public final void G0(Function0<Unit> callback) { Z = callback; }
     public final void J0(Function5<Object, Object, Object, Object, Object, Unit> callback) { h0 = callback; }
+    public final void K0(Function1<Object, Unit> callback) { c0 = callback; }
     public final void closePreviewCallback() { synchronized (lifecycleLock) { streamClosed = true; u0(); r0 = new byte[0]; s0 = new byte[0];  } }
     public final void openPreviewCallback() { synchronized (lifecycleLock) { streamClosed = false; if (C == null || C.isShutdown()) C = Executors.newSingleThreadExecutor(); if (C0 == null) C0 = new PreviewManagerII$d(this); b1(); } }
     public final void u0() {
@@ -284,8 +285,8 @@ public final class PreviewManagerII {
     void G(byte[] packet) {
         PreviewStreamInfo streamInfo = new PreviewStreamInfo(new PreviewInfoDataBean(), null);
         g3.a processor = D;
-        if (processor == null) { processor = g3.b.a.a(Z2.a.a.p().k(), t0()); D = processor; }
-        processor.j(X, new K2.f(this), null, h0, new K2.g(this));
+        if (processor == null) return;
+        processor.j(X, new K2.f(this), c0, h0, new K2.g(this));
         if (processor instanceof g3.d) ((g3.d) processor).o(new K2.h(this));
         streamInfo = processor.d(packet);
         handOffOfficialFrame(streamInfo, packet);
@@ -359,7 +360,7 @@ public final class PreviewManagerII {
     long h0() { return firstCallbackAtMs; }
     int M() { return 0; }
     void P0(long value) { firstCallbackAtMs = value; }
-    Function0<Unit> c0() { return c0; }
+    Function0<Unit> c0() { return a0; }
     static boolean n(PreviewManagerII manager) { return manager.streamClosed; }
     static long i(PreviewManagerII manager) { return manager.frameCounter; }
     static void t(PreviewManagerII manager, long value) { manager.frameCounter = value; }
