@@ -1,5 +1,8 @@
 package kr.auto.titration.mobile.thermal
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import com.hcusbsdk.Interface.USB_FRAME_INFO
 import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
@@ -17,9 +20,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class F2OfficialLifecycleTest {
+    @Before
+    fun installOfficialPreviewLifecycle() {
+        PreviewManagerIIAppBinding.installLifecycle(testLifecycle())
+    }
+
     @Test
     fun productionPreviewCallbackIsJniOnlyAndExactGatesSelectedProfilePacketSizes() {
         val accepted = 203_720
@@ -172,6 +181,16 @@ class F2OfficialLifecycleTest {
         assertTrue(config.streamingNew)
         assertEquals(setOf(203_720, 183_496), config.allowedPacketSizes)
         assertFalse("profile resolution should not fall back to a universal packet-size ladder", 102_944 in config.allowedPacketSizes)
+    }
+
+    private fun testLifecycle(): Lifecycle {
+        lateinit var registry: LifecycleRegistry
+        val owner = object : LifecycleOwner {
+            override val lifecycle: Lifecycle
+                get() = registry
+        }
+        registry = LifecycleRegistry(owner)
+        return registry
     }
 
     private fun earlyReturnCleanupEvents(): List<String> {

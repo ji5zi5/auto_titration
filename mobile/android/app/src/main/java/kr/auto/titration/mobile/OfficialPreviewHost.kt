@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import com.hik.viewercommon.data.bean.SceneModeBean
 import hik.common.yyrj.uicommon.widget.FloatTextureView
 import kr.auto.titration.mobile.thermal.HikmicroJnaMini2Stream
+import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
 
 /**
  * Native host for the official HIKMICRO PreviewManagerII graph.
@@ -35,6 +36,7 @@ internal class OfficialPreviewHost(
     private var destroyed = false
 
     init {
+        PreviewManagerIIAppBinding.installLifecycle(activity)
         rootView.layoutParams = matchParentLayoutParams()
         previewRoot.layoutParams = matchParentLayoutParams()
         previewRoot.visibility = View.VISIBLE

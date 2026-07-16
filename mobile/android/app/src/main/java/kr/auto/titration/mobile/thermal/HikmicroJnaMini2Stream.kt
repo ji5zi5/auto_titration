@@ -67,37 +67,42 @@ object HikmicroJnaMini2Stream {
 
     /** Compatibility wrapper for legacy tests; production must use the full official boundary. */
     fun bindOfficialPreviewSurface(surfaceView: SurfaceView) {
-        PreviewManagerIIAppBinding.manager().l0(surfaceView)
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            PreviewManagerIIAppBinding.manager().l0(surfaceView)
+            officialPreviewBound = true
+        }
     }
 
     /** Binds the exact official PreviewManagerII.m0/l0 production boundary. */
-    @Synchronized
     fun bindOfficialPreviewSurface(binding: OfficialPreviewBinding) {
-        val manager = PreviewManagerIIAppBinding.manager()
-        if (officialPreviewBound) {
-            manager.u0()
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            val manager = PreviewManagerIIAppBinding.manager()
+            if (officialPreviewBound) {
+                manager.u0()
+            }
+            PreviewManagerII.m0(
+                manager,
+                binding.root,
+                binding.selectedSurface,
+                null as TextView?,
+                binding.visibleLightView,
+                binding.sceneMode,
+                { value: Boolean -> binding.freezeCallback(value); Unit },
+                { value: Boolean -> binding.overlayAvailabilityCallback(value); Unit },
+                null,
+                128,
+                null,
+            )
+            officialPreviewBound = true
         }
-        PreviewManagerII.m0(
-            manager,
-            binding.root,
-            binding.selectedSurface,
-            null as TextView?,
-            binding.visibleLightView,
-            binding.sceneMode,
-            { value: Boolean -> binding.freezeCallback(value); Unit },
-            { value: Boolean -> binding.overlayAvailabilityCallback(value); Unit },
-            null,
-            128,
-            null,
-        )
-        officialPreviewBound = true
     }
 
-    @Synchronized
     fun unbindOfficialPreviewSurface() {
-        if (!officialPreviewBound) return
-        PreviewManagerIIAppBinding.manager().u0()
-        officialPreviewBound = false
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            if (!officialPreviewBound) return
+            PreviewManagerIIAppBinding.manager().u0()
+            officialPreviewBound = false
+        }
     }
 
     @Synchronized
