@@ -1,27 +1,27 @@
-# Recovery task17 final evidence
+# Task17 G007 audit recovery evidence
 
-## DEX-vs-source audit table
-
-| Gate | Official DEX evidence | Source result |
-| --- | --- | --- |
-| Constructor descriptor | `PreviewManagerII.<init>(Landroidx/lifecycle/m;ZZ)V` and fields `d/m/n/p/q/t/v/A/B/C/F/K/L/S/i0/j0/l0/r0/s0/y0/z0/A0/B0/C0` in `com_hik_viewer_manager_PreviewManagerII.dex.txt` | Public constructor compiles as `(Landroidx/lifecycle/Lifecycle;ZZ)V` (Lifecycle is the AndroidX source name for DEX `m`); field identities restored for the required binary names except F1 callback bodies remain app-owned nullable until stream binding. |
-| Nested classes | DEX constructs `PreviewManagerII$g` and `PreviewManagerII$defaultLifecycleObserver$1` | Explicit nested classes compile to `com.hik.viewer.manager.PreviewManagerII$g` and `$defaultLifecycleObserver$1`; `javap` verified callback/lifecycle descriptors. |
-| Default bridge | DEX `m0(PreviewManagerII, View, SurfaceView, TextView, FloatTextureView, SceneModeBean, Function1, Function1, Function1, int, Object): void` with masks 4/16/32/64/128 | Static `m0` restored with the same descriptor and bitmask behavior. |
-| `l0` predicates/init chain | DEX uses private `s0()`/`r0()`, F2 size init, optional `n0/p0`, `b1`, `g3.b.a(..., t0())`, F1 `USB_SetYuvSize`, `S=(B.L()==1)`, `g1(...false...)`, renderer bind, listener, lifecycle observer | Source follows this ordering directly; no reflection/default fallback in l0-reachable support calls. |
-| Renderer handoff | DEX branch: non-F2 `factory.a`, F2+`Z2.a.t()` `factory.c`, otherwise `factory.b`; frame path passes literal null raw to `h`/`j` at the proven call sites | `bindOfficialRenderer` matches the branch predicates; `handOffOfficialFrame` has one `j(null, ...)` and one `h(null, ...)` call. |
-| `u0` teardown | DEX order: renderer `c/release/null`, callback fields null, processor `k/null`, executor shutdown/null, `e1`, flags, view refs, handler callbacks | Source keeps this order in `u0`; app synchronization remains only around wrapper callers. |
-| `FloatTextureView` | Official field/method structure `a:F,b:F,c:I,d:I,e:Function1`, private `b/c/g/h`, public `d/f`, companion `a/e`, evaluator/update listener | Source compiles with matching field descriptors and methods; tests verify evaluator class and no helper substitute remains. |
-| Shared support | `Z2_a.dex.txt`, `d2_a.dex.txt`, `u5_B.dex.txt`, `businesscommon_b.dex.txt` | `Z2.a.t()` now uses `Z2.g.b(... default mask)` != F1 then static flag; `d2.a` app-context singleton present; `u5.B.k/L/d0/h0` descriptors verified; `businesscommon.b.x` default bridge present. |
+## Fixed in this follow-up
+- `Z2.a.t()` now follows the extracted DEX predicate: `Z2.g.b(Z2.g.a, false, 1, null) == UsbModuleType.F1 && appendEnabled`; the non-F1 surrogate flag was removed.
+- `d2.a` is no longer a Kotlin `object`; it exposes the official singleton/context API shape (`a`, `b`, static `a(): Context`, static `b(Context): void`). Kotlin still emits a Companion/accessors; exact no-extra-field parity remains noted below.
+- `hik.common.yyrj.businesscommon.b` no longer uses Gson/TypeToken for `preview_logo_visible`; its `n()` path uses `com.fasterxml.jackson.databind.ObjectMapper.readValue(..., ArrayList().javaClass)` and `w()` preserves the DEX behavior of returning false when the serial exists.
+- Added a narrow in-tree `com.fasterxml.jackson.databind.ObjectMapper` shim for the preview-logo-visible string-array path because the project did not already declare Jackson and build.gradle is outside this worker's ownership.
+- Confirmed `PreviewManagerII` no longer has the duplicate `streamingNew` named argument and retains direct calls for `u5.B.a.L()/d0()/h0()` and `businesscommon.b.x(...)`.
 
 ## Verification evidence
+- Compile/lint: `JAVA_HOME=/home/jio/code/auto_titration/.tools/jdk17 ANDROID_HOME=/home/jio/code/auto_titration/.tools/android-sdk ANDROID_SDK_ROOT=/home/jio/code/auto_titration/.tools/android-sdk /home/jio/code/auto_titration/.tools/gradle/gradle-8.10.2/bin/gradle -p /home/jio/code/auto_titration/mobile/android compileDebugKotlin compileDebugUnitTestKotlin lintDebug` -> BUILD SUCCESSFUL.
+- Focused tests: same env, `gradle ... testDebugUnitTest --tests 'g007.*' --tests 'com.hik.viewer.manager.Task17*' --tests 'g3.G007OfficialPacketProcessorParityTest' --tests 'i3.G007I3CallbackParityTest'` -> BUILD SUCCESSFUL; 57 tests completed, 2 skipped.
+- Whitespace: `git diff --check` -> clean.
+- Final owned-path scan for `reflect`, `reflection`, `TODO`, `NotImplemented`, `no-op`, `surrogate`, `isF2Module`, `Z2.g.a.a(true)`, `Gson`, `TypeToken`, `nonF1ProcessingEnabled` -> no matches.
 
-- `JAVA_HOME=.tools/jdk17 ANDROID_HOME=.tools/android-sdk ANDROID_SDK_ROOT=.tools/android-sdk .tools/gradle/gradle-8.10.2/bin/gradle -p mobile/android compileDebugKotlin compileDebugUnitTestKotlin lintDebug --stacktrace` → BUILD SUCCESSFUL.
-- Focused tests: `... gradle -p mobile/android testDebugUnitTest --tests com.hik.viewer.manager.Task17PreviewRendererParityTest --tests com.hik.viewer.manager.Task17AdditionalParityGateTest --tests g007.G007PreviewInitClosureTest --stacktrace` → BUILD SUCCESSFUL, 14 tests.
-- `git diff --check -- <owned task17 paths>` → no output.
-- `javap -private -s` verified descriptors for `PreviewManagerII`, `PreviewManagerII$g`, `PreviewManagerII$defaultLifecycleObserver$1`, `FloatTextureView`, `Z2.a`, `d2.a`, `u5.B`, `businesscommon.b`.
-- Final forbidden-token scan over owned l0/u0/FloatTexture/support sources for `Class.forName`, `getDeclaredMethod`, `.getMethod(`, `TODO`, `NotImplemented`, `fake Unit`, `no-op`, `surrogate`, `isF2Module` → no output.
+## javap ABI audit highlights (`javap -private -s`)
+- `Z2.a`: has `public static final Z2.a a`, `t():Z`, `r():I`, `s():I`; source body now matches DEX `F1 && s` semantics. Kotlin-emitted Companion and descriptive private field names remain intentionally deferred from exact obfuscated field identity.
+- `d2.a`: has `public static final d2.a a`, `private static Context b`, `public static final a(): Context`, `public static final b(Context): void`; Kotlin Companion/accessors are extra versus official DEX.
+- `u5.B`: has `public static final u5.B a`, `L():I`, `d0():Z`, `h0():Z`, `k():DeviceInfoModel`; implementation remains narrowed to the l0/u0-reachable static state and intentionally does not port the full official field set (`S`, `c`..`z`, maps, login/offline models, etc.).
+- `businesscommon.b`: has `ObjectMapper b`, `SharedPreferences c`, `v(Context):void`, private `n():List`, `w(String):Z`, synthetic-style `x(b,String,int,Object):Z`; `context` field is named differently from official private `a` because Kotlin source also contains nested class `a`.
+- `PreviewManagerII`: public constructor descriptor `(Landroidx/lifecycle/Lifecycle;ZZ)V`; `m0` default bridge descriptor includes the expected bitmask/object tail; nested `PreviewManagerII$g` and `PreviewManagerII$defaultLifecycleObserver$1` are present.
+- `FloatTextureView`: fields `a:F`, `b:F`, `c:I`, `d:I`, `e:Function1`; private `b()`, `c(FF)`, `g()`, `h(FF)`; public `d(IZ)`, `f(IZ,Size,Size)`, touch handler, nested evaluator classes present.
 
-## Remaining live-device-only gaps
-
-- No live Mini2/F1/F2 USB device stream was available in this worker lane, so physical preview, RID, calibration-file effects, and Celsius parity remain live-device-only.
-- This task does not claim full app parity or Celsius parity; it closes the task17 structural/reachable PreviewManagerII/FloatTexture/support gates only.
+## Remaining live-device-only / intentionally deferred gaps
+- No live HIKMICRO Mini2/F1/F2 device run was performed; Celsius/temperature correctness is not claimed.
+- Full official `u5.B` and exact obfuscated private field identity for Kotlin support classes remain narrowed to the PreviewManagerII l0/u0 reachable closure.
+- The in-tree ObjectMapper shim covers the DEX-proven preview-logo-visible list path only; it is not a general Jackson replacement.

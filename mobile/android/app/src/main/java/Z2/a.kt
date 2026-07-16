@@ -25,7 +25,7 @@ class a private constructor() {
     fun r(): Int = RECORD_SOURCE_I420
     fun s(): Int = RECORD_SOURCE_NV12
     fun t(): Boolean =
-        Z2.g.b(Z2.g.a, false, 1, null) != UsbModuleType.F1 && nonF1ProcessingEnabled
+        Z2.g.b(Z2.g.a, false, 1, null) == UsbModuleType.F1 && appendEnabled
     fun u(profile: f3.k) { previewProfile = profile }
 
     companion object {
@@ -49,7 +49,6 @@ class a private constructor() {
         private var previewProfile: f3.k = f3.a()
         private var appendEnabled: Boolean = true
         private var reservedFlag: Boolean = false
-        private var nonF1ProcessingEnabled: Boolean = true
 
         // Extracted from classes4.dex:
         // org.Thermal.PlayM4.Player.RECORD_SOURCE_TYPE.

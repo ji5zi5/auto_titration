@@ -2,22 +2,27 @@ package hik.common.yyrj.businesscommon
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import com.fasterxml.jackson.databind.ObjectMapper
 
 /** Narrow Viewer 2.6.0 preference holder used by PreviewManagerII.l0/h1. */
 class b private constructor() {
-    private lateinit var sharedPreferences: SharedPreferences
+    private var context: Context? = null
+    private val b: ObjectMapper = ObjectMapper()
+    private lateinit var c: SharedPreferences
 
     fun v(context: Context) {
-        sharedPreferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        this.context = context
+        c = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
 
     private fun n(): MutableList<String> {
-        val json = sharedPreferences.getString(PREVIEW_LOGO_VISIBLE, "")
-        if (json.isNullOrEmpty()) return ArrayList()
-        val type = object : TypeToken<MutableList<String>>() {}.type
-        return Gson().fromJson(json, type)
+        val json = c.getString(PREVIEW_LOGO_VISIBLE, "")
+        return if (json.isNullOrEmpty()) {
+            ArrayList()
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            (b.readValue(json, ArrayList<String>().javaClass) as Collection<String>).toMutableList()
+        }
     }
 
     fun w(serialNum: String): Boolean = n().none { it == serialNum }

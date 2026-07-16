@@ -4,15 +4,20 @@ import android.annotation.SuppressLint
 import android.content.Context
 
 /** Official app-context singleton dependency for l2.k and USB-type probes. */
-object a {
-    @SuppressLint("StaticFieldLeak")
-    private lateinit var context: Context
+class a private constructor() {
+    companion object {
+        @JvmField
+        val a: d2.a = d2.a()
 
-    @JvmStatic
-    fun a(): Context = context
+        @SuppressLint("StaticFieldLeak")
+        private lateinit var b: Context
 
-    @JvmStatic
-    fun b(appContext: Context) {
-        context = appContext.applicationContext
+        @JvmStatic
+        fun a(): Context = b
+
+        @JvmStatic
+        fun b(context: Context) {
+            b = context.applicationContext
+        }
     }
 }
