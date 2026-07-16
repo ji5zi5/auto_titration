@@ -60,14 +60,15 @@ class Task17AdditionalParityGateTest {
             "p" to Size::class.java,
             "t" to Size::class.java,
             "q" to Float::class.javaPrimitiveType,
-            "v" to ArrayList::class.java,
             "A" to Class.forName("com.hik.viewer.manager.PreviewManagerII\$g"),
             "B" to Class.forName("com.hik.viewer.manager.PreviewManagerII\$defaultLifecycleObserver\$1"),
             "C" to java.util.concurrent.ExecutorService::class.java,
-            "F" to Boolean::class.javaPrimitiveType,
+            "B0" to com.hik.f1module.hcusbcamerasdk.callback.IStreamCallback::class.java,
+            "C0" to com.hcusbsdk.Interface.FStreamCallBack::class.java,
             "K" to android.os.Handler::class.java,
-            "L" to Boolean::class.javaPrimitiveType,
             "S" to Boolean::class.javaPrimitiveType,
+            "q0" to Boolean::class.javaPrimitiveType,
+            "m0" to Boolean::class.javaPrimitiveType,
             "i0" to com.hik.viewercommon.data.bean.PreviewInfoDataBean::class.java,
             "j0" to ByteArray::class.java,
             "l0" to Boolean::class.javaPrimitiveType,
@@ -136,9 +137,9 @@ class Task17AdditionalParityGateTest {
     fun sourceDoesNotContainTask17ForbiddenFallbacks() {
         val root = generateSequence(java.io.File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
             .flatMap { sequenceOf(it, java.io.File(it, "mobile/android")) }
-            .first { java.io.File(it, "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.kt").exists() }
-        val preview = java.io.File(root, "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.kt").readText()
-        val l0Reachable = preview.substringBefore("    private fun recordOfficialPacket")
+            .first { java.io.File(it, "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java").exists() }
+        val preview = java.io.File(root, "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java").readText()
+        val l0Reachable = preview.substringBefore("    private void recordOfficialPacket")
         listOf("Class.forName", "getDeclaredMethod", ".getMethod(", "TODO", "NotImplemented", "surrogate").forEach {
             assertTrue("forbidden token present: $it", !l0Reachable.contains(it))
         }

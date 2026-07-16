@@ -83,8 +83,7 @@ class Task17PreviewRendererParityTest {
         setField(manager, "T", { _: Int -> frameCalls += 1 })
         manager.D0 { diagnoses += 1 }
 
-        val listener = PreviewManagerII::class.java.declaredClasses
-            .single { it.simpleName == "OfficialPlaybackListener" }
+        val listener = Class.forName("com.hik.viewer.manager.PreviewManagerII\$f")
             .getDeclaredConstructor(PreviewManagerII::class.java)
             .apply { isAccessible = true }
             .newInstance(manager) as b
@@ -100,7 +99,7 @@ class Task17PreviewRendererParityTest {
         assertEquals(0, freezeCalls)
         assertEquals(0, overlayCalls)
         assertEquals(0, frameCalls)
-        assertEquals(3, diagnoses)
+        assertEquals(0, diagnoses)
         manager.D0(null)
         setField(manager, "X", null)
         setField(manager, "Q", null)
