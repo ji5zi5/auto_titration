@@ -22,6 +22,11 @@ let constantsSelectionMode = '';
 let candidateNoticeTimer = null;
 let currentAppMode = 'csv';
 let latestCsvStatus = null;
+let autoRoiSetupEnabled = false;
+let autoRoiSetupTimer = null;
+let autoRoiRequestInFlight = false;
+
+const AUTO_ROI_RETRY_MS = 1200;
 
 const TITRATION_SUBSTANCE_PRESETS = {
   strong_acid_strong_base: {
@@ -286,6 +291,39 @@ function celsiusSummaryLooksAllZero(data = {}) {
   return parsed.every((value) => Math.abs(value) <= 0.05);
 }
 
+function isDeviceGlobalSummaryTemperature(data = {}) {
+  const summary = data.temperature_summary && typeof data.temperature_summary === 'object'
+    ? data.temperature_summary
+    : {};
+  const provenance = String(data.temperature_provenance ?? summary.provenance ?? '').trim();
+  const scope = String(data.temperature_scope ?? summary.scope ?? '').trim();
+  return provenance === 'device_global_summary' && scope === 'device_global_summary';
+}
+
+function hasDeviceGlobalSummaryTrustPolicy(data = {}) {
+  return [
+    'temperature_provenance',
+    'temperature_scope',
+    'temperature_summary',
+    'full_matrix_temperature_status',
+  ].some((field) => Object.prototype.hasOwnProperty.call(data, field));
+}
+
+function hasTrustedCelsiusTemperature(data = {}) {
+  if (!hasFiniteNumber(data.temperature_avg_c) || isLikelyInvalidMini2ZeroCelsius(data)) return false;
+  const temp = parseFiniteNumber(data.temperature_avg_c);
+  const raw = parseFiniteNumber(data.raw_avg ?? data.thermal_raw_roi_p50);
+  if (Math.abs(temp) <= 0.05 && Number.isFinite(raw) && Math.abs(raw) > 1 && celsiusSummaryLooksAllZero(data)) {
+    return false;
+  }
+  const androidBridgeActive = typeof window !== 'undefined' && Boolean(window.AutoTitrationAndroid);
+  const deviceSummaryPolicyRequired = androidBridgeActive || hasDeviceGlobalSummaryTrustPolicy(data);
+  if (!deviceSummaryPolicyRequired) return data.celsius_allowed !== false && data.full_matrix_celsius_allowed !== true;
+  return data.celsius_allowed === true
+    && data.full_matrix_celsius_allowed !== true
+    && isDeviceGlobalSummaryTemperature(data);
+}
+
 function formatNumber(value, digits = 1) {
   const parsed = parseFiniteNumber(value);
   if (!Number.isFinite(parsed)) return '-';
@@ -465,13 +503,6 @@ function predictedEquivalencePhFromCsv(csv) {
   });
 }
 
-function formatPercent(value, digits = 2) {
-  const parsed = parseFiniteNumber(value);
-  if (!Number.isFinite(parsed)) return '-';
-  const sign = parsed > 0 ? '+' : '';
-  return `${sign}${parsed.toFixed(digits)}%`;
-}
-
 function formatPh(value, digits = 2) {
   const parsed = parseFiniteNumber(value);
   if (!Number.isFinite(parsed)) return '-';
@@ -578,12 +609,6 @@ function setAppMode(mode) {
   if (calculatorMode) updateConcentrationModePreview();
 }
 
-function formatSeconds(value, digits = 2) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return '-';
-  return `${parsed.toFixed(digits)}s`;
-}
-
 function setWaiting(message) {
   setText('previewStatus', message);
   setText('visibleState', '카메라 대기');
@@ -592,8 +617,24 @@ function setWaiting(message) {
 
 function csvStateLabel(csv) {
   if (csv?.recording) return '녹화';
+  if (csv?.finalizing || csv?.state === 'finalizing') return '분석 마무리';
   if (csv?.state === 'stopped') return '종료';
   return '대기';
+}
+
+function autoStopLabel(csv) {
+  const state = String(csv?.auto_stop_state || 'disabled');
+  const reason = String(csv?.auto_stop_reason || '');
+  if (state === 'triggered') {
+    return reason === 'persistent_color_change' ? '색 변화 감지 정지' : '최대량 안전정지';
+  }
+  if (state === 'armed_calibrating') return '초기 색 보정 중';
+  if (state === 'armed_confirming') return '색 변화 확인 중';
+  if (state === 'armed') return '색 변화 감시 중';
+  if (state === 'armed_safety_only') return '모델 없음 · 최대량 감시';
+  if (state === 'unavailable') return reason === 'pump_not_started' ? '펌프 연결 필요' : '사용 불가';
+  if (state === 'error') return '정지 오류';
+  return '꺼짐';
 }
 
 function formatHealthAge(value) {
@@ -649,12 +690,21 @@ async function refreshCollectorHealth() {
 
 function applyCsvStatus(csv) {
   if (!csv) return;
+  const previousState = latestCsvStatus?.state;
   latestCsvStatus = csv;
   setText('csvRowCount', formatNumber(csv.row_count, 0));
   const rowsPerSecond = parseFiniteNumber(csv.csv_rows_per_s);
   setText('csvRowsPerSecondValue', Number.isFinite(rowsPerSecond) ? `${rowsPerSecond.toFixed(1)}/s` : '-');
   setText('csvPathLabel', csv.path || '-');
   setText('csvStateLabel', csvStateLabel(csv));
+  setText('autoStopStatus', autoStopLabel(csv));
+  if (csv.auto_stop_state === 'triggered') {
+    const volume = parseFiniteNumber(csv.auto_stop_trigger_volume_ml);
+    setText(
+      'pumpCommandStatus',
+      `${autoStopLabel(csv)}${Number.isFinite(volume) ? ` · ${formatMl(volume, 2)}` : ''}`,
+    );
+  }
   setText('pumpVolumeValue', formatMl(csv.injected_volume_ml));
   if (hasFiniteNumber(csv.sample_concentration_from_predicted_equivalence_M)) {
     setText('calculatedConcentrationValue', formatMolar(csv.sample_concentration_from_predicted_equivalence_M));
@@ -682,9 +732,14 @@ function applyCsvStatus(csv) {
   setText('equivalenceLabelValue', csv.equivalence_window_label || '-');
   const startButton = $('csvStartButton');
   const stopButton = $('csvStopButton');
-  if (startButton) startButton.disabled = Boolean(csv.recording) || !latestRoiRecordable || !latestRoiComplete;
+  const busy = Boolean(csv.recording || csv.finalizing || csv.state === 'finalizing');
+  if (startButton) startButton.disabled = busy || !latestRoiRecordable || !latestRoiComplete;
   if (stopButton) stopButton.disabled = !csv.recording;
   updateCsvDownloadLinks('auto-titration-live.csv');
+  if (previousState === 'finalizing' && csv.state === 'stopped') {
+    triggerCsvAutoDownload();
+    setAppMode('calculator');
+  }
 }
 
 function readPositiveNumberInput(id, label) {
@@ -887,6 +942,11 @@ function buildPumpTimelineStartPayload() {
       ? Number(theoryVolume.toFixed(6))
       : readPositiveNumberInput('theoryEquivalenceInput', '이론 당량점'),
     equivalence_window_ml: readPositiveNumberInput('equivalenceWindowInput', '당량점 허용범위'),
+    auto_stop_enabled: Boolean($('autoStopEnabledInput')?.checked),
+    // Auto-stop learns the starting ROI color and waits for a live-model
+    // confirmation plus a persistent color transition. Theory is not a gate.
+    auto_stop_confirmation_delay_s: 0.4,
+    auto_stop_maximum_volume_ml: 100.0,
     ...buildChemistryMetadataPayload(),
   };
 }
@@ -1042,6 +1102,7 @@ async function sendPumpCommand(path, pendingText) {
 
 async function startCsvRecording() {
   setAppMode('csv');
+  stopAutoRoiSetup();
   if (!latestRoiRecordable || !latestRoiComplete) {
     setText('csvStateLabel', 'ROI 고정 필요');
     setText('previewStatus', '두 ROI를 잡고 ROI 고정을 누르세요');
@@ -1240,6 +1301,7 @@ function applyRoiStatus(data = {}) {
   latestRoiComplete = Boolean(data.roi_complete ?? (data.visible_roi_ready && data.thermal_roi_ready));
   latestRoiRecordable = Boolean(data.roi_recordable ?? (latestRoiLocked && latestRoiComplete && data.roi_state !== 'recording'));
   latestLiveMetadata = { ...latestLiveMetadata, ...data };
+  if (latestRoiLocked || data.roi_state === 'recording') stopAutoRoiSetup();
   const statusText = latestRoiLocked
     ? 'ROI 고정'
     : latestRoiComplete
@@ -1262,15 +1324,119 @@ function updateRoiButtons(data = latestLiveMetadata) {
   const editable = Boolean(data.roi_editable ?? (!locked && !recording));
   const recordable = Boolean(data.roi_recordable ?? (locked && complete && !recording));
   const setupButton = $('roiSetupButton');
+  const autoSetupButton = $('roiAutoSetupButton');
   const lockButton = $('roiLockButton');
   const unlockButton = $('roiUnlockButton');
   const resetButton = $('roiResetButton');
   const startButton = $('csvStartButton');
   if (setupButton) setupButton.disabled = recording;
+  if (autoSetupButton) autoSetupButton.disabled = recording || locked;
   if (lockButton) lockButton.disabled = recording || locked || !complete;
   if (unlockButton) unlockButton.disabled = recording || !locked;
   if (resetButton) resetButton.disabled = recording;
   if (startButton) startButton.disabled = recording || !recordable || !complete;
+}
+
+function updateAutoRoiSetupButton() {
+  const button = $('roiAutoSetupButton');
+  if (!button) return;
+  button.textContent = `자동 ROI ${autoRoiSetupEnabled ? 'ON' : 'OFF'}`;
+  button.setAttribute('aria-pressed', autoRoiSetupEnabled ? 'true' : 'false');
+  button.classList.toggle('is-active', autoRoiSetupEnabled);
+}
+
+function stopAutoRoiSetup() {
+  autoRoiSetupEnabled = false;
+  if (autoRoiSetupTimer) {
+    window.clearTimeout(autoRoiSetupTimer);
+    autoRoiSetupTimer = null;
+  }
+  updateAutoRoiSetupButton();
+}
+
+function scheduleAutoRoiCandidate(delayMs = AUTO_ROI_RETRY_MS) {
+  if (!autoRoiSetupEnabled || autoRoiSetupTimer) return;
+  autoRoiSetupTimer = window.setTimeout(() => {
+    autoRoiSetupTimer = null;
+    requestAutoRoiCandidate();
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function autoRoiFailureUsesMissingYolo(reason = '') {
+  return /yolo_(?:model|runtime)_unavailable|requires ultralytics/i.test(String(reason));
+}
+
+async function requestAutoRoiCandidate() {
+  if (!autoRoiSetupEnabled || autoRoiRequestInFlight) return;
+  if (latestRoiLocked || latestLiveMetadata.roi_state === 'recording') {
+    stopAutoRoiSetup();
+    return;
+  }
+  autoRoiRequestInFlight = true;
+  setText('roiSettingsStatus', '자동 ROI 찾는 중');
+  try {
+    const visibleWasReady = Boolean(latestLiveMetadata.visible_roi_ready);
+    const thermalWasReady = Boolean(latestLiveMetadata.thermal_roi_ready);
+    let target = 'both';
+    if (visibleWasReady && !thermalWasReady) {
+      target = 'thermal';
+    } else if (thermalWasReady && !visibleWasReady) {
+      target = 'visible';
+    }
+    const payload = await postRoiAction('/api/roi-auto-candidate', { target }, '자동 ROI 찾는 중');
+    const roi = payload.roi || {};
+    const visibleReady = Boolean(roi.visible_roi_ready);
+    const thermalReady = Boolean(roi.thermal_roi_ready);
+    const reason = String(payload.reason || '');
+    if (visibleReady && thermalReady) {
+      stopAutoRoiSetup();
+      setText('previewStatus', '두 ROI 자동 설정 완료 · 확인 후 ROI 고정');
+      setText('roiSettingsStatus', '자동 ROI 완료');
+      showVisibleCandidateNotice('success', '자동 ROI 완료', '두 영역을 확인한 뒤 ROI 고정을 누르세요');
+      return;
+    }
+    if (autoRoiFailureUsesMissingYolo(reason)) {
+      stopAutoRoiSetup();
+      const message = thermalReady
+        ? '열화상 ROI는 설정됨 · 카메라 ROI는 직접 드래그'
+        : 'YOLO가 없어 카메라 ROI는 직접 드래그';
+      setText('previewStatus', message);
+      setText('roiSettingsStatus', '자동 ROI 일부만 완료');
+      showVisibleCandidateNotice('waiting', '카메라 ROI 수동 선택', message);
+      return;
+    }
+    const waitingForFrame = /queued_waiting_for_/i.test(reason);
+    setText(
+      'roiSettingsStatus',
+      waitingForFrame ? '자동 ROI · 카메라 연결 대기' : '자동 ROI · 대상을 화면 중앙에 놓으세요',
+    );
+    scheduleAutoRoiCandidate(waitingForFrame ? 650 : AUTO_ROI_RETRY_MS);
+  } catch (error) {
+    stopAutoRoiSetup();
+    setText('previewStatus', `자동 ROI 실패 · ${error.message}`);
+    setText('roiSettingsStatus', '수동 ROI를 사용하세요');
+    showVisibleCandidateNotice('error', '자동 ROI 실패', error.message);
+  } finally {
+    autoRoiRequestInFlight = false;
+  }
+}
+
+async function toggleAutoRoiSetup() {
+  if (autoRoiSetupEnabled) {
+    stopAutoRoiSetup();
+    setText('roiSettingsStatus', '자동 ROI OFF · 직접 드래그');
+    return;
+  }
+  if (latestLiveMetadata.roi_state === 'recording') {
+    setText('previewStatus', '녹화 중 자동 ROI 사용 불가');
+    return;
+  }
+  const ready = await enterRoiSetupMode();
+  if (!ready) return;
+  autoRoiSetupEnabled = true;
+  updateAutoRoiSetupButton();
+  setText('previewStatus', '자동 ROI 설정 중 · 비커를 화면에 놓으세요');
+  await requestAutoRoiCandidate();
 }
 
 async function enterRoiSetupMode({ reset = false } = {}) {
@@ -1435,14 +1601,6 @@ async function applyRoiSettings(event) {
   }
 }
 
-function addSettingsHandler() {
-  const form = $('roiSettingsForm');
-  if (form) form.addEventListener('submit', applyRoiSettings);
-}
-
-
-
-
 function addRoiDragHandler(imageId, overlayId, target) {
   const image = $(imageId);
   if (!image) return;
@@ -1457,6 +1615,7 @@ function addRoiDragHandler(imageId, overlayId, target) {
       const ready = await enterRoiSetupMode();
       if (!ready) return;
     }
+    stopAutoRoiSetup();
     const start = imagePointFromEvent(image, event);
     if (!start) {
       setText('previewStatus', `${target} 화면 안쪽 드래그`);
@@ -1543,7 +1702,7 @@ function applyLiveMetadata(data) {
     latestRoiComplete = Boolean(effectiveData.roi_complete ?? (effectiveData.visible_roi && effectiveData.thermal_roi));
     applyRoiStatus(effectiveData);
   }
-  const hasCelsius = hasFiniteNumber(data.temperature_avg_c) && !isLikelyInvalidMini2ZeroCelsius(data);
+  const hasCelsius = hasTrustedCelsiusTemperature(data);
   if (hasCelsius) {
     setText('temperatureValue', formatNumber(data.temperature_avg_c, 1));
     setText('temperatureUnit', '℃');
@@ -1576,6 +1735,7 @@ function applyLiveMetadata(data) {
     path: data.csv_path,
     updated_epoch_s: data.csv_updated_epoch_s,
     recording: data.csv_recording,
+    finalizing: data.csv_finalizing,
     state: data.csv_state,
     pump_elapsed_s: data.pump_elapsed_s,
     pump_rate_ml_per_s: data.pump_run_rate_ml_per_s,
@@ -1648,9 +1808,15 @@ function applyLiveMetadata(data) {
   setText('latencyRoiValue', formatMs(roiMs));
   setText('latencySyncValue', formatSignedMs(syncMs));
   refreshRoiOverlays();
+  const captureFps = parseFiniteNumber(data.mini2_capture_fps);
+  const recordingBacklog = Math.max(0, Number(data.mini2_recording_backlog_frames) || 0);
+  const recordingDrops = Math.max(0, Number(data.mini2_recording_dropped_frames) || 0);
+  const captureStatus = Number.isFinite(captureFps) ? ` · ${captureFps.toFixed(1)} fps` : '';
+  const backlogStatus = recordingBacklog > 0 ? ` · 처리 대기 ${recordingBacklog}` : '';
+  const dropStatus = recordingDrops > 0 ? ` · 기록 누락 ${recordingDrops}` : '';
   setText(
     'previewStatus',
-    `연결 · frame ${data.frame_id ?? '-'} · ROI ${roiStateLabel(effectiveData.roi_state)}`,
+    `연결 · frame ${data.frame_id ?? '-'}${captureStatus}${backlogStatus}${dropStatus} · ROI ${roiStateLabel(effectiveData.roi_state)}`,
   );
 }
 
@@ -1842,18 +2008,25 @@ function addChemistryHandlers() {
 
 function addRoiSetupHandlers() {
   const setupButton = $('roiSetupButton');
+  const autoSetupButton = $('roiAutoSetupButton');
   const lockButton = $('roiLockButton');
   const unlockButton = $('roiUnlockButton');
   const resetButton = $('roiResetButton');
   const rotateButton = $('mini2RotateButton');
   if (setupButton) {
     setupButton.addEventListener('click', async () => {
+      stopAutoRoiSetup();
       await enterRoiSetupMode();
     });
+  }
+  if (autoSetupButton) {
+    updateAutoRoiSetupButton();
+    autoSetupButton.addEventListener('click', toggleAutoRoiSetup);
   }
   if (lockButton) {
     lockButton.addEventListener('click', async () => {
       try {
+        stopAutoRoiSetup();
         const payload = await postRoiAction('/api/roi-lock', {}, 'ROI 고정 중');
         roiSetupMode = false;
         let trackingStatus = '자동추적 off';

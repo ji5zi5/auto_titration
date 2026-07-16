@@ -60,6 +60,145 @@
     return `${text.slice(0, Math.max(0, maxChars - 1)).trim()}…`;
   }
 
+
+  function isAndroidPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function firstAndroidValue(...values) {
+    for (const value of values) {
+      if (value !== undefined && value !== null && value !== '') return value;
+    }
+    return '';
+  }
+
+  function androidHasFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+  }
+
+  function androidFiniteNumberOrNull(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'string' && value.trim() === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function androidTemperatureSummaryFrom(source = {}) {
+    if (!isAndroidPlainObject(source)) return null;
+    const summary = isAndroidPlainObject(source.temperature_summary) ? source.temperature_summary : source;
+    const avg = androidFiniteNumberOrNull(firstAndroidValue(source.temperature_avg_c, summary.avg_c));
+    const min = androidFiniteNumberOrNull(firstAndroidValue(source.temperature_min_c, summary.min_c));
+    const max = androidFiniteNumberOrNull(firstAndroidValue(source.temperature_max_c, summary.max_c));
+    const provenance = firstAndroidValue(source.temperature_provenance, summary.provenance);
+    const scope = firstAndroidValue(source.temperature_scope, summary.scope);
+    const celsiusAllowed = firstAndroidValue(source.celsius_allowed, summary.celsius_allowed);
+    const fullMatrixAllowed = firstAndroidValue(source.full_matrix_celsius_allowed, summary.full_matrix_celsius_allowed);
+    if (
+      avg === null ||
+      min === null ||
+      max === null ||
+      celsiusAllowed !== true ||
+      fullMatrixAllowed === true ||
+      provenance !== 'device_global_summary' ||
+      scope !== 'device_global_summary'
+    ) {
+      return null;
+    }
+    return {
+      celsius_allowed: true,
+      temperature_avg_c: avg,
+      temperature_min_c: min,
+      temperature_max_c: max,
+      temperature_delta_c: max - min,
+      temperature_provenance: 'device_global_summary',
+      temperature_scope: 'device_global_summary',
+      temperature_source: 'device_global_summary',
+      full_matrix_celsius_allowed: false,
+      full_matrix_temperature_status: firstAndroidValue(
+        source.full_matrix_temperature_status,
+        summary.full_matrix_temperature_status,
+        'unproved_not_emitted',
+      ),
+    };
+  }
+
+  function trustedAndroidDeviceGlobalTemperature(payload = {}) {
+    const mini2 = payload.mini2 || {};
+    const rawStream = isAndroidPlainObject(mini2.raw_stream) ? mini2.raw_stream : {};
+    const live = isAndroidPlainObject(payload.live) ? payload.live : {};
+    return androidTemperatureSummaryFrom(live)
+      || androidTemperatureSummaryFrom(rawStream)
+      || androidTemperatureSummaryFrom(rawStream.temperature_summary)
+      || androidTemperatureSummaryFrom(mini2.temperature_summary);
+  }
+
+  function androidRegexValue(text, pattern) {
+    const match = String(text || '').match(pattern);
+    return match?.[1] || '';
+  }
+
+  function androidNestedValue(source, path) {
+    return path.reduce((current, key) => (isAndroidPlainObject(current) ? current[key] : undefined), source);
+  }
+
+  function hasProvenAndroidRawMatrix(payload = {}) {
+    const mini2 = payload.mini2 || {};
+    const live = payload.live || {};
+    const rawStream = isAndroidPlainObject(mini2.raw_stream) ? mini2.raw_stream : {};
+    const status = firstAndroidValue(rawStream.raw_stream_status, mini2.raw_frame_status, live.raw_frame_status, live.raw_stream_status);
+    const frameCounter = Number(firstAndroidValue(rawStream.frame_counter, live.thermal_frame_counter, live.thermal_preview_frame_id, 0));
+    const width = Number(firstAndroidValue(rawStream.frame_width, live.thermal_frame_width, live.thermal_preview_width, 0));
+    const height = Number(firstAndroidValue(rawStream.frame_height, live.thermal_frame_height, live.thermal_preview_height, 0));
+    const hasRawStats = androidHasFiniteNumber(rawStream.raw_avg)
+      || androidHasFiniteNumber(live.raw_avg)
+      || androidHasFiniteNumber(rawStream.raw_min)
+      || androidHasFiniteNumber(live.raw_min);
+    const explicitRawMatrix = rawStream.raw_matrix_present === true
+      || live.raw_matrix_present === true
+      || rawStream.raw_matrix_status === 'available'
+      || live.raw_matrix_status === 'available';
+    return explicitRawMatrix || (
+      /raw_streaming_unverified|raw_unverified/i.test(String(status))
+      && Number.isFinite(frameCounter) && frameCounter > 0
+      && Number.isFinite(width) && width > 0
+      && Number.isFinite(height) && height > 0
+      && hasRawStats
+    );
+  }
+
+  function sanitizeAndroidBridgePayload(payload = {}) {
+    if (!isAndroidPlainObject(payload)) return payload;
+    const clean = { ...payload };
+    const live = isAndroidPlainObject(payload.live) ? { ...payload.live } : payload.live;
+    const roi = isAndroidPlainObject(payload.roi) ? { ...payload.roi } : payload.roi;
+    const rawMatrixReady = hasProvenAndroidRawMatrix(payload);
+    const trustedGlobalTemperature = trustedAndroidDeviceGlobalTemperature(payload);
+    if (isAndroidPlainObject(live)) {
+      if (!rawMatrixReady) {
+        live.thermal_roi_ready = false;
+        live.roi_complete = false;
+      }
+      if (trustedGlobalTemperature) {
+        Object.assign(live, trustedGlobalTemperature);
+      } else {
+        ['avg_c', 'min_c', 'max_c', 'delta_c'].forEach((suffix) => {
+          live[`temperature_${suffix}`] = null;
+        });
+        live.celsius_allowed = false;
+      }
+      clean.live = live;
+    }
+    if (isAndroidPlainObject(roi)) {
+      if (!rawMatrixReady) {
+        roi.thermal_roi_ready = false;
+        roi.roi_complete = false;
+        if (roi.thermal_roi && !roi.thermal_raw_matrix_proven) delete roi.thermal_roi;
+      }
+      clean.roi = roi;
+    }
+    return clean;
+  }
+
   function classifyMini2StageReport(stageReport, reason = '') {
     const text = `${stageReport || ''} ${reason || ''}`;
     if (/USB permission denied|mini2_usb_permission["']?\\s*[:=]\\s*false|permission_state["']?\\s*[:=]\\s*denied/i.test(text)) {
@@ -98,25 +237,58 @@
   function buildMini2DiagnosticExport(payload = {}) {
     const mini2 = payload.mini2 || {};
     const live = payload.live || {};
-    const rawStream = mini2.raw_stream || {};
-    const lastAttempt = mini2.last_stream_attempt || rawStream;
-    const currentPresence = mini2.current_usb_presence || {};
-    const stageReport = lastAttempt.stage_report || rawStream.stage_report || live.mini2_stage_report || '';
+    const rawStream = isAndroidPlainObject(mini2.raw_stream) ? mini2.raw_stream : {};
+    const explicitLastStreamAttempt = isAndroidPlainObject(mini2.last_stream_attempt) ? mini2.last_stream_attempt : {};
+    const hasExplicitLastStreamAttempt = Object.keys(explicitLastStreamAttempt).length > 0;
+    const lastAttempt = hasExplicitLastStreamAttempt ? explicitLastStreamAttempt : rawStream;
+    const currentPresence = isAndroidPlainObject(mini2.current_usb_presence) ? mini2.current_usb_presence : {};
+    const streamDiagnostics = lastAttempt.stream_diagnostics || rawStream.stream_diagnostics || {};
+    const stageReport = lastAttempt.stage_report || lastAttempt.raw_stage_report || rawStream.stage_report || rawStream.raw_stage_report || live.mini2_stage_report || '';
     const attempt = lastAttempt.attempt_diagnostics?.[0]
-      || lastAttempt.stream_diagnostics?.attempt_diagnostics?.[0]
+      || streamDiagnostics.attempt_diagnostics?.[0]
       || rawStream.attempt_diagnostics?.[0]
       || rawStream.stream_diagnostics?.attempt_diagnostics?.[0]
       || {};
-    const route = lastAttempt.device_route || rawStream.device_route || live.mini2_device_route || mini2.mini2_route_reason || currentPresence.route_reason || '';
-    const routeMatch = String(route).match(/(\\d+)\\s*[:/]\\s*(\\d+)/);
+    const lastAttemptRoute = lastAttempt.device_route || rawStream.device_route || live.mini2_device_route || '';
+    const currentPresenceRoute = currentPresence.device_route || currentPresence.route_reason || mini2.mini2_route_reason || '';
+    const route = lastAttemptRoute || currentPresenceRoute;
+    const routeMatch = String(route).match(/(\d+)\s*[:/]\s*(\d+)/);
     const classification = classifyMini2StageReport(stageReport, lastAttempt.reason || rawStream.reason || mini2.mini2_reason || live.mini2_reason);
+    const selectedProfile = firstAndroidValue(
+      attempt.profile_class,
+      attempt.selected_profile,
+      streamDiagnostics.profile_class,
+      rawStream.profile_class,
+      live.profile_class,
+      androidRegexValue(stageReport, /selectedProfile=([^;\s]+)/i),
+    );
+    const packetClassification = firstAndroidValue(
+      lastAttempt.packet_classification,
+      rawStream.packet_classification,
+      live.packet_classification,
+      androidRegexValue(lastAttempt.reason || rawStream.reason || live.mini2_reason || stageReport, /packet_classification=([^;\s]+)/i),
+    );
+    const packetStatus = firstAndroidValue(
+      lastAttempt.packet_status,
+      rawStream.packet_status,
+      live.packet_status,
+      androidRegexValue(lastAttempt.reason || rawStream.reason || live.mini2_reason || stageReport, /packet_status=([^;\s]+)/i),
+    );
+    const converterValidation = {
+      celsiusAllowed: firstAndroidValue(live.celsius_allowed, rawStream.celsius_allowed, mini2.celsius_allowed),
+      converterProfileStatus: firstAndroidValue(live.converter_profile_status, live.temperature_profile_status, rawStream.converter_profile_status, rawStream.temperature_profile_status, mini2.converter_profile_status),
+      celsiusPublishState: firstAndroidValue(live.celsius_publish_state, rawStream.celsius_publish_state, mini2.celsius_publish_state),
+      validationEvidence: firstAndroidValue(live.validation_evidence, rawStream.validation_evidence, mini2.validation_evidence, androidNestedValue(rawStream, ['converter_validation', 'validation_evidence'])),
+    };
     const summary = {
       classification,
       route,
-      vid: mini2.vid || mini2.vendor_id || routeMatch?.[1] || '',
-      pid: mini2.pid || mini2.product_id || routeMatch?.[2] || '',
+      lastAttemptRoute,
+      currentPresenceRoute,
+      vid: mini2.vid || mini2.vendor_id || currentPresence.vid || currentPresence.vendor_id || routeMatch?.[1] || '',
+      pid: mini2.pid || mini2.product_id || currentPresence.pid || currentPresence.product_id || routeMatch?.[2] || '',
       fd: attempt.fd ?? lastAttempt.fd ?? rawStream.fd ?? '',
-      userId: attempt.userId ?? lastAttempt.userId ?? rawStream.userId ?? '',
+      userId: attempt.userId ?? attempt.user_id ?? lastAttempt.userId ?? lastAttempt.user_id ?? rawStream.userId ?? rawStream.user_id ?? '',
       channel: attempt.channel ?? lastAttempt.channel ?? rawStream.channel ?? '',
       startMode: attempt.startMode || attempt.start_mode || '',
       videoFormat: attempt.videoFormat ?? attempt.video_format ?? '',
@@ -124,13 +296,18 @@
       setVideoStatus: attempt.setVideoStatus || attempt.set_video_status || '',
       startStatus: attempt.startStatus || attempt.start_status || lastAttempt.raw_stream_status || rawStream.raw_stream_status || '',
       lastError: attempt.lastError ?? attempt.last_error ?? '',
-      error84_after_video_ok: Boolean(lastAttempt.error84_after_video_ok || lastAttempt.stream_diagnostics?.error84_after_video_ok || classification === 'callback_start_failed_error84_after_video_ok'),
-      official_wrapper_parity_ok: lastAttempt.official_wrapper_parity_ok ?? lastAttempt.stream_diagnostics?.official_wrapper_parity_ok ?? false,
-      official_wrapper_parity: lastAttempt.official_wrapper_parity || lastAttempt.stream_diagnostics?.official_wrapper_parity || {},
-      converterStatus: lastAttempt.converter_status || lastAttempt.stream_diagnostics?.converter_status || rawStream.converter_status || rawStream.stream_diagnostics?.converter_status || 'converter_status_secondary_not_raw_stream_blocker',
+      selectedProfile,
+      packetClassification,
+      packetStatus,
+      converterValidation,
+      error84_after_video_ok: Boolean(lastAttempt.error84_after_video_ok || streamDiagnostics.error84_after_video_ok || classification === 'callback_start_failed_error84_after_video_ok'),
+      official_wrapper_parity_ok: lastAttempt.official_wrapper_parity_ok ?? streamDiagnostics.official_wrapper_parity_ok ?? false,
+      official_wrapper_parity: lastAttempt.official_wrapper_parity || streamDiagnostics.official_wrapper_parity || {},
+      converterStatus: lastAttempt.converter_status || streamDiagnostics.converter_status || rawStream.converter_status || rawStream.stream_diagnostics?.converter_status || 'converter_status_secondary_not_raw_stream_blocker',
       rawStageReport: stageReport,
       currentUsbPresence: currentPresence,
       lastStreamAttempt: lastAttempt,
+      hasExplicitLastStreamAttempt,
       runtimeMode: mini2.mini2_last_stream_probe_mode || mini2.mini2_runtime_mode || MINI2_OFFICIAL_PRIMARY_MODE,
     };
     return {
@@ -177,6 +354,85 @@
     } catch (error) {
       return { ok: false, error: error.message || String(error), mode: 'android_webview' };
     }
+  }
+
+  function ensureAndroidPumpControls() {
+    if ($android('androidPumpBluetoothControls')) return;
+    const anchor = $android('pumpTimelineForm');
+    if (!anchor) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'androidPumpBluetoothControls';
+    panel.className = 'pump-settings android-pump-settings csv-mode-only';
+    panel.setAttribute('aria-label', 'Bluetooth 펌프 연결');
+    panel.innerHTML = `
+      <label class="android-pump-device-field">
+        <span>Bluetooth 펌프</span>
+        <select id="pumpDeviceSelect" aria-label="연결할 Bluetooth 펌프">
+          <option value="">페어링된 기기 불러오기</option>
+        </select>
+      </label>
+      <button id="pumpRefreshButton" type="button">기기 새로고침</button>
+      <button id="pumpConnectButton" type="button">연결</button>
+      <button id="pumpDisconnectButton" class="secondary-button" type="button">연결 해제</button>
+      <button id="pumpBluetoothSettingsButton" class="secondary-button" type="button">Bluetooth 설정</button>
+      <button id="pumpBluetoothButton" class="secondary-button" type="button">상태 확인</button>
+      <button id="pumpResetButton" class="secondary-button" type="button">주입량 초기화</button>
+      <span id="pumpBluetoothStatus" class="android-pump-status" role="status" aria-live="polite">연결 안 됨</span>
+    `;
+    anchor.insertAdjacentElement('afterend', panel);
+  }
+
+  function populateAndroidPumpDevices(payload = {}) {
+    const select = $android('pumpDeviceSelect');
+    if (!select) return;
+    const pump = payload.pump || {};
+    const devices = Array.isArray(payload.pump_devices)
+      ? payload.pump_devices
+      : (Array.isArray(pump.paired_devices) ? pump.paired_devices : []);
+    if (!devices.length) return;
+
+    const selectedAddress = String(
+      pump.pump_bluetooth_device_address
+      || pump.selected_device_address
+      || devices.find((device) => device.selected)?.address
+      || select.value
+      || '',
+    );
+    select.replaceChildren();
+    devices.forEach((device) => {
+      const option = document.createElement('option');
+      option.value = String(device.address || '');
+      option.textContent = String(device.name || device.address || '이름 없는 Bluetooth 기기');
+      option.selected = option.value === selectedAddress;
+      select.appendChild(option);
+    });
+  }
+
+  function updateAndroidPumpControls(payload = {}) {
+    populateAndroidPumpDevices(payload);
+    const pump = payload.pump || {};
+    const connected = pump.pump_connected === true || pump.transport_connected === true;
+    const deviceName = pump.pump_bluetooth_device_name || pump.selected_device_name || '';
+    const state = pump.pump_state || pump.transport_state || (connected ? 'connected' : 'disconnected');
+    const warning = pump.pump_warning || pump.transport_warning || '';
+    const statusText = connected
+      ? `연결됨${deviceName ? ` · ${deviceName}` : ''}`
+      : (warning || `연결 안 됨 · ${state}`);
+    setAndroidText('pumpBluetoothStatus', statusText);
+    setAndroidText('pumpCommandStatus', connected ? `연결됨 · ${state}` : 'Bluetooth 연결 필요');
+    const disconnectButton = $android('pumpDisconnectButton');
+    if (disconnectButton) disconnectButton.disabled = !connected;
+  }
+
+  function refreshAndroidPumpDevices() {
+    if (typeof bridge.pumpDevices !== 'function') {
+      setAndroidText('pumpBluetoothStatus', '이 APK는 Bluetooth 기기 선택을 지원하지 않습니다');
+      return null;
+    }
+    const payload = readBridgeJson('pumpDevices');
+    applyBridgePayload(payload);
+    return payload;
   }
 
   function runManualMini2Probe(source = 'button') {
@@ -346,6 +602,12 @@
       'pumpRightButton',
       'pumpStopButton',
       'pumpResetButton',
+      'pumpRefreshButton',
+      'pumpConnectButton',
+      'pumpBluetoothSettingsButton',
+      'serialPumpDispenseButton',
+      'serialPumpRetractButton',
+      'serialPumpStopButton',
     ].forEach((id) => {
       const button = $android(id);
       if (button) button.disabled = false;
@@ -595,6 +857,7 @@
       showAndroidError('Android bridge 실패', payload);
       return;
     }
+    payload = sanitizeAndroidBridgePayload(payload);
     try {
       if (payload.live) applyAndroidVisiblePreview(payload.live);
       applyCrashReport(payload.last_crash_report || payload.crash);
@@ -606,6 +869,7 @@
       if (payload.live && typeof applyLiveMetadata === 'function') applyLiveMetadata(payload.live);
       if (payload.csv && typeof applyCsvStatus === 'function') applyCsvStatus(payload.csv);
       const pump = payload.pump || {};
+      updateAndroidPumpControls(payload);
       const pumpVolume = pump.pump_firmware_volume_ml ?? payload.live?.pump_firmware_volume_ml ?? payload.csv?.pump_firmware_volume_ml;
       if (pumpVolume !== undefined && pumpVolume !== null && pumpVolume !== '') {
         setAndroidText('pumpVolumeValue', `${Number(pumpVolume).toFixed(4)} mL`);
@@ -718,6 +982,8 @@
     applyBridgePayload(payload);
   };
 
+  ensureAndroidPumpControls();
+
   replaceButtonHandler('mobilePairButton', '적외선 USB 확인', () => {
     runManualMini2Probe('button');
   });
@@ -778,11 +1044,36 @@
     setAndroidText('previewStatus', '펌프 Bluetooth 상태 확인 중');
     applyBridgePayload(readBridgeJson('pumpStatus'));
   });
-  replaceButtonHandler('pumpRightButton', '펌프 시작(b)', () => {
+  replaceButtonHandler('pumpRefreshButton', '기기 새로고침', () => {
+    setAndroidText('pumpBluetoothStatus', '페어링된 기기 확인 중');
+    refreshAndroidPumpDevices();
+  });
+  replaceButtonHandler('pumpConnectButton', '연결', () => {
+    const address = $android('pumpDeviceSelect')?.value || '';
+    if (!address) {
+      refreshAndroidPumpDevices();
+      setAndroidText('pumpBluetoothStatus', '연결할 기기를 선택하세요');
+      return;
+    }
+    setAndroidText('pumpBluetoothStatus', 'Bluetooth 펌프 연결 중');
+    applyBridgePayload(readBridgeJson('connectPump', address));
+  });
+  replaceButtonHandler('pumpDisconnectButton', '연결 해제', () => {
+    setAndroidText('pumpBluetoothStatus', 'Bluetooth 연결 해제 중');
+    applyBridgePayload(readBridgeJson('disconnectPump'));
+  });
+  replaceButtonHandler('pumpBluetoothSettingsButton', 'Bluetooth 설정', () => {
+    applyBridgePayload(readBridgeJson('openBluetoothSettings'));
+  });
+  replaceButtonHandler('serialPumpDispenseButton', '펌프 주입', () => {
     setAndroidText('previewStatus', '펌프 b 명령 전송 중');
     applyBridgePayload(readBridgeJson('sendPumpCommand', 'b'));
   });
-  replaceButtonHandler('pumpStopButton', '펌프 정지(c)', () => {
+  replaceButtonHandler('serialPumpRetractButton', '펌프 되감기', () => {
+    setAndroidText('previewStatus', '펌프 a 명령 전송 중');
+    applyBridgePayload(readBridgeJson('sendPumpCommand', 'a'));
+  });
+  replaceButtonHandler('serialPumpStopButton', '펌프 정지', () => {
     setAndroidText('previewStatus', '펌프 c 명령 전송 중');
     applyBridgePayload(readBridgeJson('sendPumpCommand', 'c'));
   });
@@ -794,6 +1085,7 @@
   addAndroidVisibleRoiHandler();
   attachAndroidCsvDownloadHandler();
   simplifyAndroidRoiControls();
+  refreshAndroidPumpDevices();
   const crashLink = $android('crashDownloadLink');
   if (crashLink) {
     crashLink.addEventListener('click', () => {

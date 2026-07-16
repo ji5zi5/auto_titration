@@ -20,6 +20,7 @@
 
         <div id="csvCollectionControls" class="main-actions csv-mode-only" aria-label="ROI와 녹화 조작">
           <button id="roiSetupButton" type="button">ROI 선택</button>
+          <button id="roiAutoSetupButton" type="button" aria-pressed="false">자동 ROI OFF</button>
           <button id="roiLockButton" type="button">ROI 고정</button>
           <button id="csvStartButton" class="record-button start-button" type="button">녹화 시작</button>
           <button id="csvStopButton" class="record-button stop-button" type="button">녹화 종료</button>
@@ -41,6 +42,13 @@
           <label>
             <span>허용범위(mL)</span>
             <input id="equivalenceWindowInput" type="number" inputmode="decimal" min="0.001" step="0.01" value="0.05" />
+          </label>
+          <label class="checkbox-setting">
+            <span>자동 정지</span>
+            <span class="checkbox-control">
+              <input id="autoStopEnabledInput" type="checkbox" />
+              <strong>색 변화 후 정지</strong>
+            </span>
           </label>
         </form>
 
@@ -121,6 +129,7 @@
           <span class="badge">행 <strong id="csvRowCount">0</strong></span>
           <span class="badge">저장속도 <strong id="csvRowsPerSecondValue">0.0/s</strong></span>
           <span class="badge">펌프 <strong id="pumpCommandStatus">대기</strong></span>
+          <span class="badge">자동정지 <strong id="autoStopStatus">꺼짐</strong></span>
           <span class="badge">주입 <strong id="pumpVolumeValue">-</strong></span>
           <span class="badge">농도 <strong id="calculatedConcentrationValue">-</strong></span>
           <span class="badge">pH <strong id="predictedPhValue">-</strong></span>

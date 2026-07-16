@@ -1,0 +1,8 @@
+{
+  "apk": ".omx/goals/autoresearch/hikmicro-viewer-2-6-0-xapk-mini2-android-auto-ti/evidence/xapk/com.hikvision.thermalGoogle.apk",
+  "entry": "lib/arm64-v8a/libgyuv.so",
+  "entry_size": 438576,
+  "zip_crc32": "3d5469b9",
+  "sha256": "b1a5876fd7091927423aa5002eb56ca4d6b00c3571f5939a0768a247b865402f",
+  "output": "mobile/android/app/src/main/jniLibs/arm64-v8a/libgyuv.so"
+}

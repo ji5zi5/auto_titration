@@ -1,0 +1,33 @@
+### static constructor <clinit>()V regs=1 ins=0 outs=1
+0000: new-instance             v0, Lcom/louisgeek/gyuv/GYUV;
+0004: invoke-direct            v0, Lcom/louisgeek/gyuv/GYUV;-><init>()V
+000a: sput-object              v0, Lcom/louisgeek/gyuv/GYUV;->a Lcom/louisgeek/gyuv/GYUV;
+000e: const-string             v0, "gyuv"
+0012: invoke-static            v0, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+0018: return-void              
+
+### private constructor <init>()V regs=1 ins=1 outs=1
+0000: invoke-direct            v0, Ljava/lang/Object;-><init>()V
+0006: return-void              
+
+### public final native gyuv420pTo422p([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuv422pToNV16([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvI420Mirror([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvI420Rotate([B I I [B I)V regs=None ins=None outs=None
+
+### public final native gyuvI420Scale([B I I [B I I I)V regs=None ins=None outs=None
+
+### public final native gyuvI420ToNV12([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvI420ToNV21([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvNV12ToI420([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvNV16ToNV12([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvNV21ToI420([B I I [B)V regs=None ins=None outs=None
+
+### public final native gyuvYUY2ToI420([B I I [B I)V regs=None ins=None outs=None
