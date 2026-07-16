@@ -3,12 +3,12 @@ package kr.auto.titration.mobile.thermal.officialdex;
 import dalvik.system.DexClassLoader;
 
 /**
- * Narrow child-first loader for exact official HIKMICRO namespaces only.
+ * Dedicated child-first loader for exact official HIKMICRO bytecode.
  *
- * Platform/runtime namespaces remain parent-first. Official namespaces attempt
- * findClass() first so app-side reconstructed/shadow classes cannot satisfy the
- * Mini2 official-bytecode identity contract. Required identity classes are never
- * parent-resolved: absence in the official dex set is a closed failure.
+ * Platform/runtime namespaces stay parent-first. Every other class attempts
+ * findClass() first so reconstructed app classes with the same FQCN cannot shadow
+ * official dex definitions. Parent fallback is only for classes absent from the
+ * supplied official dex set; required identity probes never fall back.
  */
 public final class OfficialDexClassLoader extends DexClassLoader {
     OfficialDexClassLoader(
@@ -22,22 +22,20 @@ public final class OfficialDexClassLoader extends DexClassLoader {
 
     @Override
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-        synchronized (getClassLoadingLock(name)) {
+        synchronized (this) {
             Class<?> loaded = findLoadedClass(name);
             if (loaded == null) {
                 if (isParentFirst(name)) {
                     loaded = super.loadClass(name, false);
-                } else if (isOfficialChildFirst(name)) {
+                } else {
                     try {
                         loaded = findClass(name);
                     } catch (ClassNotFoundException officialMissing) {
-                        if (OfficialDexArtifacts.REQUIRED_OFFICIAL_CLASSES.contains(name)) {
+                        if (isRequiredOfficialIdentityClass(name)) {
                             throw officialMissing;
                         }
                         loaded = super.loadClass(name, false);
                     }
-                } else {
-                    loaded = super.loadClass(name, false);
                 }
             }
             if (resolve) {
@@ -56,15 +54,11 @@ public final class OfficialDexClassLoader extends DexClassLoader {
         return false;
     }
 
-    public static boolean isOfficialChildFirst(String className) {
-        if (OfficialDexArtifacts.REQUIRED_OFFICIAL_CLASSES.contains(className)) {
-            return true;
-        }
-        for (String prefix : OfficialDexArtifacts.OFFICIAL_CHILD_FIRST_PREFIXES) {
-            if (className.startsWith(prefix)) {
-                return true;
-            }
-        }
-        return false;
+    public static boolean isChildFirst(String className) {
+        return !isParentFirst(className);
+    }
+
+    public static boolean isRequiredOfficialIdentityClass(String className) {
+        return OfficialDexArtifacts.REQUIRED_OFFICIAL_CLASSES.contains(className);
     }
 }
