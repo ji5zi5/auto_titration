@@ -10,7 +10,7 @@ import kr.auto.titration.mobile.thermal.HikmicroF2ProfileResolution
 import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
 import kr.auto.titration.mobile.thermal.HikmicroF2Size
 
-/** Official-shaped public API boundary for the F2 USB preview lifecycle. */
+/** Public API boundary for the F2 USB preview lifecycle. */
 class F2UsbModuleApi private constructor() {
     private val helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
     private val lifecycleLock = Any()
@@ -21,36 +21,16 @@ class F2UsbModuleApi private constructor() {
         usbManager: UsbManager,
         device: UsbDevice,
         nativeLibraryDir: String,
-        maxRetries: Int = 5,
     ): F2OpenResult = synchronized(lifecycleLock) {
-        var retryIndex = 0
-        val attemptReports = mutableListOf("F2UsbModuleApi.openUsbModule:start retryIndex=0")
-        var last = helper.openUsbDevice(
+        val result = helper.openUsbDevice(
             context = context,
             usbManager = usbManager,
             device = device,
             nativeLibraryDir = nativeLibraryDir,
         )
-        attemptReports += "F2UsbModuleApi.openUsbModule:do retryIndex=$retryIndex success=${last.ok}"
-        while (!last.ok && retryIndex + 1 < maxRetries) {
-            retryIndex += 1
-            try {
-                Thread.sleep(retryIndex * 500L)
-            } catch (error: InterruptedException) {
-                Thread.currentThread().interrupt()
-                attemptReports += "F2UsbModuleApi.openUsbModule:sleepInterrupted retryIndex=$retryIndex"
-                break
-            }
-            last = helper.openUsbDevice(
-                context = context,
-                usbManager = usbManager,
-                device = device,
-                nativeLibraryDir = nativeLibraryDir,
-            )
-            attemptReports += "F2UsbModuleApi.openUsbModule:do retryIndex=$retryIndex success=${last.ok}"
-        }
-        attemptReports += "F2UsbModuleApi.openUsbModule:end retryIndex=$retryIndex success=${last.ok}"
-        last.copy(stageReport = "${attemptReports.joinToString("; ")}; ${last.stageReport}")
+        result.copy(
+            stageReport = "F2UsbModuleApi.openUsbModule:singleAttempt success=${result.ok}; ${result.stageReport}",
+        )
     }
 
     @Synchronized

@@ -130,6 +130,30 @@ class F2OfficialLifecycleTest {
         }
     }
 
+
+    @Test
+    fun openUsbModuleIsSingleOfficialOpenAttemptWithoutWrapperRetryLadder() {
+        val source = readProjectSource(
+            "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
+            "mobile/android/app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
+        )
+        val method = extractFunctionSource(source, "openUsbModule")
+
+        assertEquals(
+            "F2 open must make exactly one bounded helper.openUsbDevice call",
+            1,
+            Regex("helper\\.openUsbDevice\\s*\\(").findAll(method).count(),
+        )
+        assertFalse("openUsbModule must not expose a maxRetries wrapper", method.contains("maxRetries"))
+        assertFalse("openUsbModule must not track retryIndex", method.contains("retryIndex"))
+        assertFalse("openUsbModule must not sleep/back off around open", method.contains("Thread.sleep"))
+        assertFalse("openUsbModule must not wrap openUsbDevice in a retry loop", method.contains("while ("))
+        assertTrue(
+            "openUsbModule stage report must truthfully describe the single attempt",
+            method.contains("singleAttempt success="),
+        )
+    }
+
     @Test
     fun officialStopThermalControlRetryBoundMatchesDadLifecycle() {
         val helperConstants = Class.forName("com.hik.f2module.F2UsbModuleHelperKt")
@@ -181,6 +205,38 @@ class F2OfficialLifecycleTest {
         assertTrue(config.streamingNew)
         assertEquals(setOf(203_720, 183_496), config.allowedPacketSizes)
         assertFalse("profile resolution should not fall back to a universal packet-size ladder", 102_944 in config.allowedPacketSizes)
+    }
+
+
+    private fun readProjectSource(vararg relativePaths: String): String {
+        val roots = generateSequence(java.io.File(System.getProperty("user.dir"))) { it.parentFile }
+            .take(8)
+            .toList()
+        for (root in roots) {
+            for (relativePath in relativePaths) {
+                val file = java.io.File(root, relativePath)
+                if (file.isFile) return file.readText()
+            }
+        }
+        error("Unable to locate source file in ${roots.joinToString { it.absolutePath }}")
+    }
+
+    private fun extractFunctionSource(source: String, functionName: String): String {
+        val start = source.indexOf("fun $functionName(")
+        require(start >= 0) { "Function $functionName not found" }
+        val bodyStart = source.indexOf('{', start)
+        require(bodyStart >= 0) { "Function $functionName body not found" }
+        var depth = 0
+        for (index in bodyStart until source.length) {
+            when (source[index]) {
+                '{' -> depth += 1
+                '}' -> {
+                    depth -= 1
+                    if (depth == 0) return source.substring(start, index + 1)
+                }
+            }
+        }
+        error("Function $functionName body did not close")
     }
 
     private fun testLifecycle(): Lifecycle {
