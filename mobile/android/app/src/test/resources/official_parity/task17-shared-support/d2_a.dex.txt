@@ -1,0 +1,32 @@
+class Ld2/a; dex=classes2.dex super=Ljava/lang/Object; interfaces=[]
+FIELDS
+public static final a Ld2/a;
+private static b Landroid/content/Context;
+METHODS
+### static constructor <clinit>()V regs=1 ins=0 outs=1
+0000: new-instance             v0, Ld2/a;
+0004: invoke-direct            v0, Ld2/a;-><init>()V
+000a: sput-object              v0, Ld2/a;->a Ld2/a;
+000e: return-void              
+
+### private constructor <init>()V regs=1 ins=1 outs=1
+0000: invoke-direct            v0, Ljava/lang/Object;-><init>()V
+0006: return-void              
+
+### public static final a()Landroid/content/Context; regs=1 ins=0 outs=1
+0000: sget-object              v0, Ld2/a;->b Landroid/content/Context;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "appContext"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: return-object            v0
+
+### public static final b(Landroid/content/Context;)V regs=2 ins=1 outs=2
+0000: const-string             v0, "context"
+0004: invoke-static            v1, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: invoke-virtual           v1, Landroid/content/Context;->getApplicationContext()Landroid/content/Context;
+0010: move-result-object       v1
+0012: const-string             v0, "context.applicationContext"
+0016: invoke-static            v1, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+001c: sput-object              v1, Ld2/a;->b Landroid/content/Context;
+0020: return-void              

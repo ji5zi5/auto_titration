@@ -1,0 +1,723 @@
+CLASS LV2/d; extends Ljava/lang/Object; implements ['LV2/f;']
+FIELD public static final c LV2/d$a;
+FIELD private final a Landroid/view/SurfaceView;
+FIELD private b Lcom/hik/thermalplayer/ThermalPlayer;
+
+METHOD static constructor <clinit>()V regs=2 ins=0 outs=2
+0000: new-instance             v0, LV2/d$a;
+0004: const/4                  v1, 0
+0006: invoke-direct            v0, v1, LV2/d$a;-><init>(Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+000c: sput-object              v0, LV2/d;->c LV2/d$a;
+0010: return-void              
+
+METHOD public constructor <init>(Landroid/view/SurfaceView;)V regs=6 ins=2 outs=5
+0000: const-string             v0, "surfaceView"
+0004: invoke-static            v5, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: invoke-direct            v4, Ljava/lang/Object;-><init>()V
+0010: iput-object              v5, v4, LV2/d;->a Landroid/view/SurfaceView;
+0014: new-instance             v0, Lcom/hik/thermalplayer/ThermalPlayer;
+0018: invoke-virtual           v5, Landroid/view/View;->getContext()Landroid/content/Context;
+001e: move-result-object       v1
+0020: const-string             v2, "getContext(...)"
+0024: invoke-static            v1, v2, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+002a: invoke-virtual           v5, Landroid/view/SurfaceView;->getHolder()Landroid/view/SurfaceHolder;
+0030: move-result-object       v5
+0032: const-string             v2, "getHolder(...)"
+0036: invoke-static            v5, v2, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+003c: const-wide/16            v2, 25000
+0040: invoke-direct            v0, v1, v5, v2, v3, Lcom/hik/thermalplayer/ThermalPlayer;-><init>(Landroid/content/Context; Landroid/view/SurfaceHolder; J)V
+0046: iput-object              v0, v4, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+004a: return-void              
+
+METHOD private final l()Ljava/lang/String; regs=2 ins=1 outs=1
+0000: sget-object              v0, LZ2/g;->a LZ2/g;
+0004: invoke-virtual           v0, LZ2/g;->U()Lcom/hik/modulelib/UsbModuleInfo;
+000a: move-result-object       v0
+000c: invoke-virtual           v0, Lcom/hik/modulelib/UsbModuleInfo;->getModuleID()Ljava/lang/String;
+0012: move-result-object       v0
+0014: return-object            v0
+
+METHOD private final m()Lhik/common/yyrj/uicommon/data/ModuleType; regs=3 ins=1 outs=2
+0000: sget-object              v0, Ld3/c;->a Ld3/c;
+0004: invoke-direct            v2, LV2/d;->l()Ljava/lang/String;
+000a: move-result-object       v1
+000c: invoke-virtual           v0, v1, Ld3/c;->a(Ljava/lang/String;)Lhik/common/yyrj/uicommon/data/ModuleType;
+0012: move-result-object       v0
+0014: return-object            v0
+
+METHOD private final n()Z regs=3 ins=1 outs=1
+0000: invoke-direct            v2, LV2/d;->m()Lhik/common/yyrj/uicommon/data/ModuleType;
+0006: move-result-object       v0
+0008: sget-object              v1, Lhik/common/yyrj/uicommon/data/ModuleType$F2ModuleType;->F0 Lhik/common/yyrj/uicommon/data/ModuleType$F2ModuleType;
+000c: if-ne                    v0, v1, +004h
+0010: const/4                  v0, 1
+0012: goto                     +2h
+0014: const/4                  v0, 0
+0016: return                   v0
+
+METHOD private final o()Z regs=3 ins=1 outs=1
+0000: sget-object              v0, LZ2/g;->a LZ2/g;
+0004: invoke-virtual           v0, LZ2/g;->U()Lcom/hik/modulelib/UsbModuleInfo;
+000a: move-result-object       v0
+000c: invoke-virtual           v0, Lcom/hik/modulelib/UsbModuleInfo;->getDevType()I
+0012: move-result              v0
+0014: const/4                  v1, 1
+0016: if-ne                    v0, v1, +003h
+001a: goto                     +2h
+001c: const/4                  v1, 0
+001e: return                   v1
+
+METHOD public a()Z regs=2 ins=1 outs=1
+0000: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0004: invoke-virtual           v0, Lcom/hik/thermalplayer/ThermalPlayer;->stopRecord()Z
+000a: move-result              v0
+000c: return                   v0
+
+METHOD public b(Lcom/hik/library/player/b;)V regs=3 ins=2 outs=2
+0000: const-string             v0, "listener"
+0004: invoke-static            v2, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+000e: invoke-virtual           v0, v2, Lcom/hik/library/player/a;->addPlayListener(Lcom/hik/library/player/b;)V
+0014: return-void              
+
+METHOD public c()V regs=2 ins=1 outs=1
+0000: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0004: invoke-virtual           v0, Lcom/hik/library/player/a;->removeAllPlayListener()V
+000a: return-void              
+
+METHOD public d(Landroid/util/Size; Ljava/lang/String;)Z regs=5 ins=3 outs=4
+0000: const-string             v0, "picSize"
+0004: invoke-static            v3, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: const-string             v0, "filePath"
+000e: invoke-static            v4, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+0014: sget-object              v0, LA2/d;->a LA2/d;
+0018: invoke-virtual           v0, LA2/d;->a()I
+001e: move-result              v0
+0020: const-string             v1, "RECORD_CODEC_TYPE"
+0024: invoke-static            v1, v0, Ll2/k;->e(Ljava/lang/String; I)I
+002a: move-result              v0
+002c: iget-object              v1, v2, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0030: invoke-virtual           v1, v4, v3, v0, Lcom/hik/thermalplayer/ThermalPlayer;->startRecord(Ljava/lang/String; Landroid/util/Size; I)Z
+0036: move-result              v3
+0038: return                   v3
+
+METHOD public e(Landroid/util/Size;)[B regs=3 ins=2 outs=2
+0000: const-string             v0, "picSize"
+0004: invoke-static            v2, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+000e: invoke-virtual           v0, v2, Lcom/hik/thermalplayer/ThermalPlayer;->takePhoto(Landroid/util/Size;)Lcom/hik/library/player/d;
+0014: move-result-object       v2
+0016: invoke-virtual           v2, Lcom/hik/library/player/d;->b()[B
+001c: move-result-object       v2
+001e: return-object            v2
+
+METHOD public f(Landroid/util/Size;)Lcom/hik/library/player/d; regs=3 ins=2 outs=2
+0000: const-string             v0, "picSize"
+0004: invoke-static            v2, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+000e: invoke-virtual           v0, v2, Lcom/hik/thermalplayer/ThermalPlayer;->takePhoto(Landroid/util/Size;)Lcom/hik/library/player/d;
+0014: move-result-object       v2
+0016: return-object            v2
+
+METHOD public g(Z Z Z Z I F F)V regs=24 ins=8 outs=5
+0000: move-object/from16       v0, v16
+0004: move/from16              v1, v21
+0008: sget-object              v2, LZ2/g;->a LZ2/g;
+000c: invoke-virtual           v2, LZ2/g;->s()Z
+0012: invoke-virtual           v2, LZ2/g;->E()Landroid/util/Size;
+0018: move-result-object       v3
+001a: new-instance             v4, Ljava/lang/StringBuilder;
+001e: invoke-direct            v4, Ljava/lang/StringBuilder;-><init>()V
+0024: const-string             v5, "setupOsdBgPicAddInfo: showFirSize="
+0028: invoke-virtual           v4, v5, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+002e: invoke-virtual           v4, v3, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
+0034: invoke-virtual           v3, Landroid/util/Size;->getWidth()I
+003a: move-result              v4
+003c: invoke-virtual           v3, Landroid/util/Size;->getHeight()I
+0042: move-result              v3
+0044: const/4                  v5, 0
+0046: const/4                  v6, 1
+0048: if-le                    v4, v3, +004h
+004c: move                     v3, v6
+004e: goto                     +2h
+0050: move                     v3, v5
+0052: invoke-static            Ld2/a;->a()Landroid/content/Context;
+0058: move-result-object       v4
+005a: if-eqz                   v19, +005h
+005e: add-int/lit8             v7, v18, 1
+0062: goto                     +3h
+0064: move/from16              v7, v18
+0068: if-eqz                   v20, +004h
+006c: add-int/lit8             v7, v7, 1
+0070: invoke-virtual           v4, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+0076: move-result-object       v4
+0078: invoke-virtual           v4, Landroid/content/res/Resources;->getAssets()Landroid/content/res/AssetManager;
+007e: move-result-object       v4
+0080: const-string             v8, "osd_bg.png"
+0084: invoke-virtual           v4, v8, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
+008a: move-result-object       v4
+008c: const-string             v8, "open(...)"
+0090: invoke-static            v4, v8, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+0096: invoke-static            v4, Landroid/graphics/BitmapFactory;->decodeStream(Ljava/io/InputStream;)Landroid/graphics/Bitmap;
+009c: move-result-object       v4
+009e: const/4                  v8, 3
+00a0: const/4                  v10, 2
+00a2: if-eq                    v7, v6, +010h
+00a6: if-eq                    v7, v10, +00ah
+00aa: if-eq                    v7, v8, +004h
+00ae: const/4                  v11, 0
+00b0: goto                     +ch
+00b2: const                    v11, 1039516303
+00b8: goto                     +8h
+00ba: const                    v11, 1034684465
+00c0: goto                     +4h
+00c2: const                    v11, 1027369599
+00c8: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+00ce: move-result-object       v12
+00d0: invoke-interface         v12, Ljava/util/List;->size()I
+00d6: move-result              v12
+00d8: const                    v13, 1008981770
+00de: const                    v14, 1000593162
+00e4: const                    v15, 1025893204
+00ea: if-lez                   v12, +01fh
+00ee: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+00f4: move-result-object       v12
+00f6: invoke-interface         v12, v5, Ljava/util/List;->get(I)Ljava/lang/Object;
+00fc: move-result-object       v12
+00fe: check-cast               v12, Ljava/lang/Number;
+0102: invoke-virtual           v12, Ljava/lang/Number;->intValue()I
+0108: move-result              v12
+010a: add-int/lit8             v9, v12, 1
+010e: int-to-float             v9, v9
+0110: mul-float/2addr          v9, v15
+0112: if-eqz                   v12, +009h
+0116: if-eq                    v12, v6, +005h
+011a: if-eq                    v12, v10, +003h
+011e: goto                     +6h
+0120: add-float/2addr          v9, v14
+0122: goto                     +4h
+0124: add-float/2addr          v9, v13
+0126: goto                     +2h
+0128: const/4                  v9, 0
+012a: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+0130: move-result-object       v12
+0132: invoke-interface         v12, Ljava/util/List;->size()I
+0138: move-result              v12
+013a: if-le                    v12, v6, +021h
+013e: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+0144: move-result-object       v12
+0146: invoke-interface         v12, v6, Ljava/util/List;->get(I)Ljava/lang/Object;
+014c: move-result-object       v12
+014e: check-cast               v12, Ljava/lang/Number;
+0152: invoke-virtual           v12, Ljava/lang/Number;->intValue()I
+0158: move-result              v12
+015a: add-int/lit8             v5, v12, 1
+015e: int-to-float             v5, v5
+0160: mul-float/2addr          v5, v15
+0162: if-eqz                   v12, +00bh
+0166: if-eq                    v12, v6, +007h
+016a: if-eq                    v12, v10, +003h
+016e: goto                     +8h
+0170: add-float/2addr          v9, v14
+0172: goto                     +6h
+0174: add-float/2addr          v5, v14
+0176: goto                     +4h
+0178: add-float/2addr          v5, v13
+017a: goto                     +2h
+017c: const/4                  v5, 0
+017e: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+0184: move-result-object       v12
+0186: invoke-interface         v12, Ljava/util/List;->size()I
+018c: move-result              v12
+018e: if-le                    v12, v10, +021h
+0192: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+0198: move-result-object       v12
+019a: invoke-interface         v12, v10, Ljava/util/List;->get(I)Ljava/lang/Object;
+01a0: move-result-object       v12
+01a2: check-cast               v12, Ljava/lang/Number;
+01a6: invoke-virtual           v12, Ljava/lang/Number;->intValue()I
+01ac: move-result              v12
+01ae: add-int/lit8             v8, v12, 1
+01b2: int-to-float             v8, v8
+01b4: mul-float/2addr          v8, v15
+01b6: if-eqz                   v12, +00bh
+01ba: if-eq                    v12, v6, +007h
+01be: if-eq                    v12, v10, +003h
+01c2: goto                     +8h
+01c4: add-float/2addr          v9, v14
+01c6: goto                     +6h
+01c8: add-float/2addr          v8, v14
+01ca: goto                     +4h
+01cc: add-float/2addr          v8, v13
+01ce: goto                     +2h
+01d0: const/4                  v8, 0
+01d2: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+01d8: move-result-object       v12
+01da: invoke-interface         v12, Ljava/util/List;->size()I
+01e0: move-result              v12
+01e2: const/4                  v13, 3
+01e4: if-le                    v12, v13, +029h
+01e8: invoke-virtual           v2, LZ2/g;->F()Ljava/util/List;
+01ee: move-result-object       v2
+01f0: invoke-interface         v2, v13, Ljava/util/List;->get(I)Ljava/lang/Object;
+01f6: move-result-object       v2
+01f8: check-cast               v2, Ljava/lang/Number;
+01fc: invoke-virtual           v2, Ljava/lang/Number;->intValue()I
+0202: move-result              v2
+0204: add-int/lit8             v12, v2, 1
+0208: int-to-float             v12, v12
+020a: mul-float/2addr          v12, v15
+020c: if-eqz                   v2, +010h
+0210: if-eq                    v2, v6, +00ah
+0214: if-eq                    v2, v10, +006h
+0218: const                    v2, 1008981770
+021e: goto                     +10h
+0220: add-float/2addr          v9, v14
+0222: goto                     -5h
+0224: add-float                v2, v12, v14
+0228: move                     v12, v2
+022a: goto                     -9h
+022c: const                    v2, 1008981770
+0232: add-float/2addr          v12, v2
+0234: goto                     +5h
+0236: const                    v2, 1008981770
+023c: const/4                  v12, 0
+023e: const                    v13, 1021665346
+0244: mul-float                v13, v13, v22
+0248: const                    v14, 1038979432
+024e: add-float/2addr          v14, v13
+0250: add-float/2addr          v14, v2
+0252: if-eqz                   v3, +010h
+0256: const                    v2, 1004888130
+025c: mul-float                v2, v2, v22
+0260: const                    v3, 1038174126
+0266: add-float/2addr          v3, v2
+0268: const                    v2, 998445679
+026e: add-float                v14, v3, v2
+0272: invoke-direct/range      v16, LV2/d;->n()Z
+0278: move-result              v2
+027a: if-eqz                   v2, +006h
+027e: const                    v2, 1061997773
+0284: mul-float/2addr          v14, v2
+0286: new-instance             v2, Landroid/graphics/RectF;
+028a: invoke-direct            v2, Landroid/graphics/RectF;-><init>()V
+0290: const                    v3, 1008981770
+0296: iput                     v3, v2, Landroid/graphics/RectF;->left F
+029a: const                    v3, 1006834287
+02a0: iput                     v3, v2, Landroid/graphics/RectF;->top F
+02a4: iput                     v14, v2, Landroid/graphics/RectF;->right F
+02a8: add-float/2addr          v11, v3
+02aa: iput                     v11, v2, Landroid/graphics/RectF;->bottom F
+02ae: if-lez                   v7, +004h
+02b2: move                     v11, v6
+02b4: goto                     +2h
+02b6: const/4                  v11, 0
+02b8: iget-object              v13, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+02bc: invoke-static            v4, Lkotlin/jvm/internal/Intrinsics;->checkNotNull(Ljava/lang/Object;)V
+02c2: const                    v15, 1057803469
+02c8: invoke-virtual           v13, v4, v2, v15, v11, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo00(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+02ce: iget                     v11, v2, Landroid/graphics/RectF;->left F
+02d2: new-instance             v13, Landroid/graphics/RectF;
+02d6: invoke-direct            v13, Landroid/graphics/RectF;-><init>()V
+02dc: iput                     v11, v13, Landroid/graphics/RectF;->left F
+02e0: if-lez                   v7, +006h
+02e4: iget                     v7, v2, Landroid/graphics/RectF;->bottom F
+02e8: add-float/2addr          v7, v3
+02ea: goto                     +3h
+02ec: iget                     v7, v2, Landroid/graphics/RectF;->bottom F
+02f0: iput                     v7, v13, Landroid/graphics/RectF;->top F
+02f4: iput                     v14, v13, Landroid/graphics/RectF;->right F
+02f8: add-float/2addr          v7, v9
+02fa: iput                     v7, v13, Landroid/graphics/RectF;->bottom F
+02fe: new-instance             v7, Landroid/graphics/RectF;
+0302: invoke-direct            v7, Landroid/graphics/RectF;-><init>()V
+0308: iput                     v11, v7, Landroid/graphics/RectF;->left F
+030c: iget                     v9, v13, Landroid/graphics/RectF;->bottom F
+0310: add-float/2addr          v9, v3
+0312: iput                     v9, v7, Landroid/graphics/RectF;->top F
+0316: iput                     v14, v7, Landroid/graphics/RectF;->right F
+031a: add-float/2addr          v9, v5
+031c: iput                     v9, v7, Landroid/graphics/RectF;->bottom F
+0320: new-instance             v5, Landroid/graphics/RectF;
+0324: invoke-direct            v5, Landroid/graphics/RectF;-><init>()V
+032a: iput                     v11, v5, Landroid/graphics/RectF;->left F
+032e: iget                     v9, v7, Landroid/graphics/RectF;->bottom F
+0332: add-float/2addr          v9, v3
+0334: iput                     v9, v5, Landroid/graphics/RectF;->top F
+0338: iput                     v14, v5, Landroid/graphics/RectF;->right F
+033c: add-float/2addr          v9, v8
+033e: iput                     v9, v5, Landroid/graphics/RectF;->bottom F
+0342: new-instance             v8, Landroid/graphics/RectF;
+0346: invoke-direct            v8, Landroid/graphics/RectF;-><init>()V
+034c: iput                     v11, v8, Landroid/graphics/RectF;->left F
+0350: iget                     v9, v5, Landroid/graphics/RectF;->bottom F
+0354: add-float/2addr          v9, v3
+0356: iput                     v9, v8, Landroid/graphics/RectF;->top F
+035a: iput                     v14, v8, Landroid/graphics/RectF;->right F
+035e: add-float/2addr          v9, v12
+0360: iput                     v9, v8, Landroid/graphics/RectF;->bottom F
+0364: invoke-direct/range      v16, LV2/d;->o()Z
+036a: move-result              v3
+036c: if-eqz                   v3, +036h
+0370: if-eq                    v1, v6, +062h
+0374: if-eq                    v1, v10, +04ah
+0378: const/4                  v3, 3
+037a: if-eq                    v1, v3, +031h
+037e: const/4                  v3, 4
+0380: if-eq                    v1, v3, +018h
+0384: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0388: const/4                  v3, 0
+038a: invoke-virtual           v1, v4, v13, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo01(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0390: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0394: invoke-virtual           v1, v4, v7, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo02(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+039a: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+039e: invoke-virtual           v1, v4, v5, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo03(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03a4: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03a8: invoke-virtual           v1, v4, v8, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo04(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03ae: goto                     +58h
+03b0: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03b4: invoke-virtual           v1, v4, v13, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo01(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03ba: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03be: invoke-virtual           v1, v4, v7, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo02(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03c4: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03c8: invoke-virtual           v1, v4, v5, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo03(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03ce: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03d2: invoke-virtual           v1, v4, v8, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo04(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03d8: const/4                  v3, 0
+03da: goto                     +42h
+03dc: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03e0: invoke-virtual           v1, v4, v13, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo01(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03e6: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03ea: invoke-virtual           v1, v4, v7, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo02(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03f0: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03f4: invoke-virtual           v1, v4, v5, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo03(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+03fa: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+03fe: const/4                  v3, 0
+0400: invoke-virtual           v1, v4, v8, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo04(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0406: goto                     +2ch
+0408: const/4                  v3, 0
+040a: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+040e: invoke-virtual           v1, v4, v13, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo01(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0414: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0418: invoke-virtual           v1, v4, v7, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo02(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+041e: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0422: invoke-virtual           v1, v4, v5, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo03(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0428: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+042c: invoke-virtual           v1, v4, v8, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo04(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0432: goto                     +16h
+0434: const/4                  v3, 0
+0436: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+043a: invoke-virtual           v1, v4, v13, v15, v6, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo01(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0440: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0444: invoke-virtual           v1, v4, v7, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo02(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+044a: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+044e: invoke-virtual           v1, v4, v5, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo03(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0454: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0458: invoke-virtual           v1, v4, v8, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo04(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+045e: if-nez                   v17, +01bh
+0462: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0466: invoke-virtual           v1, v4, v2, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo00(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+046c: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0470: invoke-virtual           v1, v4, v13, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo01(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0476: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+047a: invoke-virtual           v1, v4, v7, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo02(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0480: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0484: invoke-virtual           v1, v4, v5, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo03(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+048a: iget-object              v1, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+048e: invoke-virtual           v1, v4, v8, v15, v3, Lcom/hik/thermalplayer/ThermalPlayer;->setOsdBgPicAddInfo04(Landroid/graphics/Bitmap; Landroid/graphics/RectF; F Z)V
+0494: return-void              
+
+METHOD public h([B [B Landroid/util/Size; I)V regs=27 ins=5 outs=14
+0000: move-object/from16       v0, v22
+0004: move-object/from16       v1, v24
+0008: move-object/from16       v2, v25
+000c: move/from16              v3, v26
+0010: const-string             v4, "nv12Data"
+0014: invoke-static            v1, v4, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+001a: const-string             v4, "yuvImgSize"
+001e: invoke-static            v2, v4, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+0024: new-instance             v4, Ljava/lang/StringBuilder;
+0028: invoke-direct            v4, Ljava/lang/StringBuilder;-><init>()V
+002e: const-string             v5, "updateFrameData: f2ModuleOsdUseM4 "
+0032: invoke-virtual           v4, v5, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0038: sget-object              v5, LZ2/a;->a LZ2/a;
+003c: invoke-virtual           v5, LZ2/a;->i()Z
+0042: move-result              v6
+0044: invoke-virtual           v4, v6, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
+004a: invoke-virtual           v5, LZ2/a;->i()Z
+0050: move-result              v4
+0052: if-nez                   v4, +010h
+0056: sget-object              v3, Lcom/hik/f1module/helper/ThermalInfoHelper;->INSTANCE Lcom/hik/f1module/helper/ThermalInfoHelper;
+005a: invoke-virtual           v3, v1, v2, Lcom/hik/f1module/helper/ThermalInfoHelper;->getYuvThermalDataInfo([B Landroid/util/Size;)[B
+0060: move-result-object       v1
+0062: if-eqz                   v1, +007h
+0066: iget-object              v2, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+006a: invoke-virtual           v2, v1, Lcom/hik/thermalplayer/ThermalPlayer;->updateFrameData([B)Z
+0070: return-void              
+0072: sget-object              v4, LZ2/g;->a LZ2/g;
+0076: invoke-virtual           v4, LZ2/g;->U()Lcom/hik/modulelib/UsbModuleInfo;
+007c: move-result-object       v5
+007e: invoke-virtual           v5, Lcom/hik/modulelib/UsbModuleInfo;->getSerialNumber()Ljava/lang/String;
+0084: move-result-object       v5
+0086: invoke-virtual           v4, LZ2/g;->U()Lcom/hik/modulelib/UsbModuleInfo;
+008c: move-result-object       v6
+008e: invoke-virtual           v6, Lcom/hik/modulelib/UsbModuleInfo;->getModuleID()Ljava/lang/String;
+0094: move-result-object       v6
+0096: sget-object              v7, Ld3/c;->a Ld3/c;
+009a: invoke-virtual           v7, v6, Ld3/c;->a(Ljava/lang/String;)Lhik/common/yyrj/uicommon/data/ModuleType;
+00a0: move-result-object       v20
+00a2: invoke-virtual           v4, LZ2/g;->f()Z
+00a8: move-result              v6
+00aa: invoke-virtual           v4, LZ2/g;->e()Ljava/lang/String;
+00b0: move-result-object       v7
+00b2: invoke-virtual           v4, v5, v6, LZ2/g;->i(Ljava/lang/String; I)I
+00b8: move-result              v6
+00ba: invoke-virtual           v4, v5, v7, LZ2/g;->g(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+00c0: move-result-object       v7
+00c2: invoke-virtual           v4, v5, LZ2/g;->h(Ljava/lang/String;)Ljava/lang/String;
+00c8: move-result-object       v17
+00ca: invoke-virtual           v4, v5, LZ2/g;->w(Ljava/lang/String;)I
+00d0: move-result              v5
+00d2: const                    v8, 98304
+00d8: invoke-static            v8, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+00de: move-result-object       v8
+00e0: const                    v9, 221184
+00e6: invoke-static            v9, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+00ec: move-result-object       v9
+00ee: filled-new-array         v8, v9, [Ljava/lang/Integer;
+00f4: move-result-object       v8
+00f6: invoke-virtual           v4, LZ2/g;->o()Lh3/a;
+00fc: move-result-object       v9
+00fe: new-instance             v10, Ljava/lang/StringBuilder;
+0102: invoke-direct            v10, Ljava/lang/StringBuilder;-><init>()V
+0108: const-string             v11, "updateFrameData: iStreamInfo "
+010c: invoke-virtual           v10, v11, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0112: invoke-virtual           v10, v9, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
+0118: instance-of              v10, v9, Lh3/b;
+011c: const/4                  v15, 2
+011e: const/4                  v14, 0
+0120: if-eqz                   v10, +03ah
+0124: new-instance             v8, Ljava/lang/StringBuilder;
+0128: invoke-direct            v8, Ljava/lang/StringBuilder;-><init>()V
+012e: const-string             v10, "updateFrameData:is PrivateStreamInfo frameNumStamp="
+0132: invoke-virtual           v8, v10, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0138: invoke-virtual           v8, v3, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+013e: invoke-virtual           v4, LZ2/g;->v()Z
+0144: move-result              v10
+0146: check-cast               v9, Lh3/b;
+014a: invoke-virtual           v9, Lh3/b;->a()Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$THERMAL_PRIVATE_INFO;
+0150: move-result-object       v13
+0152: sget-object              v8, Ld3/i;->a Ld3/i;
+0156: invoke-virtual           v4, LZ2/g;->u()I
+015c: move-result              v4
+015e: move-object              v9, v13
+0160: move                     v11, v6
+0162: move-object              v12, v7
+0164: move-object              v6, v13
+0166: move-object/from16       v13, v17
+016a: move-object              v7, v14
+016c: move                     v14, v4
+016e: move                     v4, v15
+0170: move                     v15, v5
+0172: invoke-virtual/range     v8 ... v15, Ld3/i;->m(Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$THERMAL_PRIVATE_INFO; Z I Ljava/lang/String; Ljava/lang/String; I I)Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$THERMAL_PRIVATE_INFO;
+0178: move-result-object       v5
+017a: iget-object              v6, v6, Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$THERMAL_PRIVATE_INFO;->privateInfo_header Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$PRIVATE_DATA_INFO_HEADER;
+017e: iput                     v3, v6, Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$PRIVATE_DATA_INFO_HEADER;->dsp_std_stamp I
+0182: sget-object              v3, Lk3/b;->a Lk3/b;
+0186: invoke-static            v3, v5, v7, v4, v7, Lk3/b;->b(Lk3/b; Ljava/lang/Object; Ljava/nio/ByteOrder; I Ljava/lang/Object;)[B
+018c: move-result-object       v14
+018e: move-object              v0, v7
+0190: goto/16                  +075h
+0194: instance-of              v10, v9, Lh3/c;
+0198: if-eqz                   v10, +070h
+019c: check-cast               v9, Lh3/c;
+01a0: invoke-virtual           v9, Lh3/c;->a()Lcom/hik/f2module/IFR_INFO$IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO;
+01a6: move-result-object       v9
+01a8: new-instance             v10, Ljava/lang/StringBuilder;
+01ac: invoke-direct            v10, Ljava/lang/StringBuilder;-><init>()V
+01b2: const-string             v11, "updateFrameData: 8 11 12的抓图和12的假图 frameNumStamp="
+01b6: invoke-virtual           v10, v11, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+01bc: invoke-virtual           v10, v3, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+01c2: invoke-virtual           v4, LZ2/g;->n()I
+01c8: move-result              v10
+01ca: invoke-static            v10, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+01d0: move-result-object       v10
+01d2: invoke-static            v8, v10, Lkotlin/collections/ArraysKt;->contains([Ljava/lang/Object; Ljava/lang/Object;)Z
+01d8: move-result              v8
+01da: if-eqz                   v8, +014h
+01de: invoke-virtual           v4, LZ2/g;->j()[B
+01e4: move-result-object       v1
+01e6: sget-object              v3, Lcom/hik/f1module/helper/ThermalInfoHelper;->INSTANCE Lcom/hik/f1module/helper/ThermalInfoHelper;
+01ea: invoke-virtual           v3, v1, v2, Lcom/hik/f1module/helper/ThermalInfoHelper;->getYuvThermalDataInfo([B Landroid/util/Size;)[B
+01f0: move-result-object       v1
+01f2: if-eqz                   v1, +007h
+01f6: iget-object              v2, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+01fa: invoke-virtual           v2, v1, Lcom/hik/thermalplayer/ThermalPlayer;->updateFrameData([B)Z
+0200: return-void              
+0202: invoke-virtual           v4, LZ2/g;->K()Lcom/hik/modulelib/bean/ThermometryBasicBean;
+0208: move-result-object       v8
+020a: invoke-virtual           v4, LZ2/g;->L()Ljava/util/List;
+0210: move-result-object       v13
+0212: sget-object              v10, Ld3/i;->a Ld3/i;
+0216: invoke-virtual           v8, Lcom/hik/modulelib/bean/ThermometryBasicBean;->getEnableCenterTem()Z
+021c: move-result              v11
+021e: invoke-virtual           v8, Lcom/hik/modulelib/bean/ThermometryBasicBean;->getEnableHighTem()Z
+0224: move-result              v12
+0226: invoke-virtual           v8, Lcom/hik/modulelib/bean/ThermometryBasicBean;->getEnableLowTem()Z
+022c: move-result              v16
+022e: invoke-virtual           v4, LZ2/g;->u()I
+0234: move-result              v18
+0236: invoke-virtual           v4, LZ2/g;->M()I
+023c: move-result              v19
+023e: const/4                  v4, 1
+0240: move-object              v8, v10
+0242: move                     v10, v11
+0244: move                     v11, v12
+0246: move/from16              v12, v16
+024a: move-object              v0, v14
+024c: move                     v14, v4
+024e: move                     v4, v15
+0250: move                     v15, v6
+0252: move-object/from16       v16, v7
+0256: move/from16              v21, v5
+025a: invoke-virtual/range     v8 ... v21, Ld3/i;->k(Lcom/hik/f2module/IFR_INFO$IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO; Z Z Z Ljava/util/List; Z I Ljava/lang/String; Ljava/lang/String; I I Lhik/common/yyrj/uicommon/data/ModuleType; I)Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$THERMAL_PRIVATE_INFO;
+0260: move-result-object       v5
+0262: iget-object              v6, v5, Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$THERMAL_PRIVATE_INFO;->privateInfo_header Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$PRIVATE_DATA_INFO_HEADER;
+0266: iput                     v3, v6, Lcom/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy$PRIVATE_DATA_INFO_HEADER;->dsp_std_stamp I
+026a: sget-object              v3, Lk3/b;->a Lk3/b;
+026e: invoke-static            v3, v5, v0, v4, v0, Lk3/b;->b(Lk3/b; Ljava/lang/Object; Ljava/nio/ByteOrder; I Ljava/lang/Object;)[B
+0274: move-result-object       v14
+0276: goto                     +2h
+0278: move-object              v0, v14
+027a: if-eqz                   v14, +051h
+027e: new-instance             v3, Ljava/lang/StringBuilder;
+0282: invoke-direct            v3, Ljava/lang/StringBuilder;-><init>()V
+0288: const-string             v4, "updateFrameData: thermalPrivateInfoData="
+028c: invoke-virtual           v3, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0292: array-length             v4, v14
+0294: invoke-virtual           v3, v4, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+029a: const-string             v4, " nv12Data="
+029e: invoke-virtual           v3, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+02a4: array-length             v4, v1
+02a6: invoke-virtual           v3, v4, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+02ac: const-string             v4, " yuvImgSize="
+02b0: invoke-virtual           v3, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+02b6: invoke-virtual           v3, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
+02bc: invoke-direct/range      v22, LV2/d;->n()Z
+02c2: move-result              v3
+02c4: if-eqz                   v3, +005h
+02c8: const/16                 v3, 27640
+02cc: goto                     +2h
+02ce: const/4                  v3, 0
+02d0: sget-object              v4, Lcom/hik/f1module/helper/ThermalInfoHelper;->INSTANCE Lcom/hik/f1module/helper/ThermalInfoHelper;
+02d4: invoke-virtual           v4, v14, v1, v2, v3, Lcom/hik/f1module/helper/ThermalInfoHelper;->getThermalDataInfo([B [B Landroid/util/Size; I)[B
+02da: move-result-object       v1
+02dc: new-instance             v2, Ljava/lang/StringBuilder;
+02e0: invoke-direct            v2, Ljava/lang/StringBuilder;-><init>()V
+02e6: const-string             v3, "updateFrameData: frameDataNew "
+02ea: invoke-virtual           v2, v3, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+02f0: if-eqz                   v1, +008h
+02f4: array-length             v0, v1
+02f6: invoke-static            v0, Ljava/lang/Integer;->valueOf(I)Ljava/lang/Integer;
+02fc: move-result-object       v14
+02fe: goto                     +2h
+0300: move-object              v14, v0
+0302: invoke-virtual           v2, v14, Ljava/lang/StringBuilder;->append(Ljava/lang/Object;)Ljava/lang/StringBuilder;
+0308: if-eqz                   v1, +00ah
+030c: move-object/from16       v0, v22
+0310: iget-object              v2, v0, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0314: invoke-virtual           v2, v1, Lcom/hik/thermalplayer/ThermalPlayer;->updateFrameData([B)Z
+031a: goto                     +3h
+031c: move-object/from16       v0, v22
+0320: return-void              
+
+METHOD public i(Landroid/util/Size;)V regs=9 ins=2 outs=3
+0000: const-string             v0, "showSize"
+0004: invoke-static            v8, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: sget-object              v0, LZ2/g;->a LZ2/g;
+000e: invoke-virtual           v0, LZ2/g;->s()Z
+0014: move-result              v0
+0016: invoke-static            Ld2/a;->a()Landroid/content/Context;
+001c: move-result-object       v1
+001e: invoke-virtual           v1, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+0024: move-result-object       v1
+0026: invoke-virtual           v1, Landroid/content/res/Resources;->getAssets()Landroid/content/res/AssetManager;
+002c: move-result-object       v1
+002e: const-string             v2, "logo_hik_w.png"
+0032: invoke-virtual           v1, v2, Landroid/content/res/AssetManager;->open(Ljava/lang/String;)Ljava/io/InputStream;
+0038: move-result-object       v1
+003a: const-string             v2, "open(...)"
+003e: invoke-static            v1, v2, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+0044: invoke-static            v1, Landroid/graphics/BitmapFactory;->decodeStream(Ljava/io/InputStream;)Landroid/graphics/Bitmap;
+004a: move-result-object       v1
+004c: invoke-virtual           v1, Landroid/graphics/Bitmap;->getHeight()I
+0052: move-result              v2
+0054: int-to-float             v2, v2
+0056: const/high16             v3, 1065353216
+005a: mul-float/2addr          v2, v3
+005c: invoke-virtual           v8, Landroid/util/Size;->getHeight()I
+0062: move-result              v4
+0064: int-to-float             v4, v4
+0066: div-float/2addr          v2, v4
+0068: const                    v4, 1031127695
+006e: div-float                v2, v4, v2
+0072: new-instance             v5, Landroid/graphics/RectF;
+0076: invoke-direct            v5, Landroid/graphics/RectF;-><init>()V
+007c: const                    v6, 1006834287
+0082: iput                     v6, v5, Landroid/graphics/RectF;->left F
+0086: invoke-virtual           v1, Landroid/graphics/Bitmap;->getWidth()I
+008c: move-result              v6
+008e: int-to-float             v6, v6
+0090: mul-float/2addr          v6, v3
+0092: invoke-virtual           v8, Landroid/util/Size;->getWidth()I
+0098: move-result              v8
+009a: int-to-float             v8, v8
+009c: div-float/2addr          v6, v8
+009e: mul-float/2addr          v6, v2
+00a0: iput                     v6, v5, Landroid/graphics/RectF;->right F
+00a4: if-eqz                   v0, +006h
+00a8: const/4                  v8, 0
+00aa: iput                     v8, v5, Landroid/graphics/RectF;->top F
+00ae: goto                     +6h
+00b0: const                    v8, 1064346583
+00b6: iput                     v8, v5, Landroid/graphics/RectF;->top F
+00ba: iget                     v8, v5, Landroid/graphics/RectF;->top F
+00be: add-float/2addr          v8, v4
+00c0: iput                     v8, v5, Landroid/graphics/RectF;->bottom F
+00c4: iget-object              v8, v7, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+00c8: invoke-static            v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNull(Ljava/lang/Object;)V
+00ce: invoke-virtual           v8, v1, v5, Lcom/hik/thermalplayer/ThermalPlayer;->setLogoPicAddInfo(Landroid/graphics/Bitmap; Landroid/graphics/RectF;)V
+00d4: return-void              
+
+METHOD public j([B [B Landroid/util/Size; I Ljava/util/List; Landroid/graphics/Bitmap;)V regs=7 ins=7 outs=2
+0000: const-string             v1, "nv12Data"
+0004: invoke-static            v2, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: const-string             v1, "yuvImgSize"
+000e: invoke-static            v3, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+0014: return-void              
+
+METHOD public k(I)V regs=6 ins=2 outs=3
+0000: iget-object              v0, v4, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0004: new-instance             v1, Landroid/util/Size;
+0008: const/16                 v2, 12
+000c: const/16                 v3, 83
+0010: invoke-direct            v1, v2, v3, Landroid/util/Size;-><init>(I I)V
+0016: invoke-virtual           v0, v5, v1, Lcom/hik/thermalplayer/ThermalPlayer;->setPseudoPicAddInfo(I Landroid/util/Size;)V
+001c: return-void              
+
+METHOD public release()V regs=2 ins=1 outs=1
+0000: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0004: invoke-virtual           v0, Lcom/hik/thermalplayer/ThermalPlayer;->release()V
+000a: sget-object              v0, Lcom/hik/f1module/helper/ThermalInfoHelper;->INSTANCE Lcom/hik/f1module/helper/ThermalInfoHelper;
+000e: invoke-virtual           v0, Lcom/hik/f1module/helper/ThermalInfoHelper;->release()V
+0014: return-void              
+
+METHOD public start()V regs=2 ins=1 outs=1
+0000: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0004: invoke-virtual           v0, Lcom/hik/thermalplayer/ThermalPlayer;->start()V
+000a: return-void              
+
+METHOD public stop()V regs=2 ins=1 outs=1
+0000: iget-object              v0, v1, LV2/d;->b Lcom/hik/thermalplayer/ThermalPlayer;
+0004: invoke-virtual           v0, Lcom/hik/thermalplayer/ThermalPlayer;->stop()V
+000a: return-void              

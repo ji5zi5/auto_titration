@@ -1,0 +1,49 @@
+class LA2/d; super=Ljava/lang/Object; interfaces=[]
+FIELDS
+public static final a LA2/d;
+METHODS
+### static constructor <clinit>()V regs=1 ins=0 outs=1
+0000: new-instance             v0, LA2/d;
+0004: invoke-direct            v0, LA2/d;-><init>()V
+000a: sput-object              v0, LA2/d;->a LA2/d;
+000e: return-void              
+
+### private constructor <init>()V regs=1 ins=1 outs=1
+0000: invoke-direct            v0, Ljava/lang/Object;-><init>()V
+0006: return-void              
+
+### public final a()I regs=4 ins=1 outs=2
+0000: sget-object              v0, LA2/b;->a LA2/b;
+0004: invoke-virtual           v0, LA2/b;->e()Z
+000a: move-result              v1
+000c: if-nez                   v1, +01eh
+0010: invoke-virtual           v0, LA2/b;->b()Z
+0016: move-result              v1
+0018: if-nez                   v1, +018h
+001c: invoke-virtual           v0, LA2/b;->c()Z
+0022: move-result              v1
+0024: if-nez                   v1, +012h
+0028: invoke-virtual           v0, LA2/b;->d()Z
+002e: move-result              v1
+0030: if-nez                   v1, +00ch
+0034: invoke-virtual           v0, LA2/b;->a()Z
+003a: move-result              v0
+003c: if-eqz                   v0, +003h
+0040: goto                     +4h
+0042: sget                     v0, Lorg/Thermal/PlayM4/Player$RECORD_SOURCE_TYPE;->RECORD_SOURCE_NV12 I
+0046: goto                     +3h
+0048: sget                     v0, Lorg/Thermal/PlayM4/Player$RECORD_SOURCE_TYPE;->RECORD_SOURCE_I420 I
+004c: new-instance             v1, Ljava/lang/StringBuilder;
+0050: invoke-direct            v1, Ljava/lang/StringBuilder;-><init>()V
+0056: const-string             v2, "getDefaultRecordCodecType:manufacturer_"
+005a: invoke-virtual           v1, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0060: sget-object              v2, Landroid/os/Build;->MANUFACTURER Ljava/lang/String;
+0064: invoke-virtual           v1, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+006a: const-string             v2, "_model_"
+006e: invoke-virtual           v1, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0074: sget-object              v2, Landroid/os/Build;->MODEL Ljava/lang/String;
+0078: invoke-virtual           v1, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+007e: const-string             v2, "_defaultRecordCodecType_"
+0082: invoke-virtual           v1, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0088: invoke-virtual           v1, v0, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
+008e: return                   v0

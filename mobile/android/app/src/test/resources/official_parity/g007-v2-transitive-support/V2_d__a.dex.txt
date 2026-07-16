@@ -1,0 +1,9 @@
+CLASS LV2/d$a; extends Ljava/lang/Object; implements []
+
+METHOD private constructor <init>()V regs=1 ins=1 outs=1
+0000: invoke-direct            v0, Ljava/lang/Object;-><init>()V
+0006: return-void              
+
+METHOD public synthetic constructor <init>(Lkotlin/jvm/internal/DefaultConstructorMarker;)V regs=2 ins=2 outs=1
+0000: invoke-direct            v0, LV2/d$a;-><init>()V
+0006: return-void              

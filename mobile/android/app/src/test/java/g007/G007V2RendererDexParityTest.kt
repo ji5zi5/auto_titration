@@ -417,9 +417,6 @@ class G007V2RendererDexParityTest {
         .flatMap { sequenceOf(it, File(it, "mobile/android")) }
         .first { File(it, "app/src/main/java/V2/b.java").exists() }
 
-    private fun repoRoot(): File = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
-        .first { File(it, "_workspace/hikmicro-parity-20260715/g007-v2-transitive-support/V2_d.dex.txt").exists() }
-
-    private fun officialSupport(name: String): File = File(repoRoot(), "_workspace/hikmicro-parity-20260715/g007-v2-transitive-support/$name")
-    private fun officialExtract(name: String): File = File(repoRoot(), ".omx/analysis/a2-official-extract/$name")
+    private fun officialSupport(name: String): File = File(mobileRoot(), "app/src/test/resources/official_parity/g007-v2-transitive-support/$name")
+    private fun officialExtract(name: String): File = File(mobileRoot(), "app/src/test/resources/official_parity/a2-official-extract/$name")
 }

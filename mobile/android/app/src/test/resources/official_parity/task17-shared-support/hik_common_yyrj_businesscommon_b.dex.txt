@@ -1,0 +1,765 @@
+class Lhik/common/yyrj/businesscommon/b; dex=classes3.dex super=Ljava/lang/Object; interfaces=[]
+FIELDS
+public static final d Lhik/common/yyrj/businesscommon/b$a;
+private static final e Lkotlin/Lazy;
+private a Landroid/content/Context;
+private final b Lcom/fasterxml/jackson/databind/ObjectMapper;
+private c Landroid/content/SharedPreferences;
+METHODS
+### static constructor <clinit>()V regs=2 ins=0 outs=2
+0000: new-instance             v0, Lhik/common/yyrj/businesscommon/b$a;
+0004: const/4                  v1, 0
+0006: invoke-direct            v0, v1, Lhik/common/yyrj/businesscommon/b$a;-><init>(Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+000c: sput-object              v0, Lhik/common/yyrj/businesscommon/b;->d Lhik/common/yyrj/businesscommon/b$a;
+0010: sget-object              v0, Lkotlin/LazyThreadSafetyMode;->SYNCHRONIZED Lkotlin/LazyThreadSafetyMode;
+0014: new-instance             v1, Lu5/x;
+0018: invoke-direct            v1, Lu5/x;-><init>()V
+001e: invoke-static            v0, v1, Lkotlin/LazyKt;->lazy(Lkotlin/LazyThreadSafetyMode; Lkotlin/jvm/functions/Function0;)Lkotlin/Lazy;
+0024: move-result-object       v0
+0026: sput-object              v0, Lhik/common/yyrj/businesscommon/b;->e Lkotlin/Lazy;
+002a: return-void              
+
+### public constructor <init>()V regs=2 ins=1 outs=1
+0000: invoke-direct            v1, Ljava/lang/Object;-><init>()V
+0006: new-instance             v0, Lcom/fasterxml/jackson/databind/ObjectMapper;
+000a: invoke-direct            v0, Lcom/fasterxml/jackson/databind/ObjectMapper;-><init>()V
+0010: iput-object              v0, v1, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+0014: return-void              
+
+### private final J(Ljava/util/List;)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+0004: invoke-virtual           v0, v3, Lcom/fasterxml/jackson/databind/ObjectMapper;->writeValueAsString(Ljava/lang/Object;)Ljava/lang/String;
+000a: move-result-object       v3
+000c: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0010: if-nez                   v0, +008h
+0014: const-string             v0, "sharedPreferences"
+0018: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+001e: const/4                  v0, 0
+0020: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v0
+0028: const-string             v1, "preview_logo_visible"
+002c: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+0032: move-result-object       v3
+0034: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+003a: return-void              
+
+### private static final K(Ljava/lang/String; Ljava/lang/String;)Z regs=3 ins=2 outs=2
+0000: const-string             v0, "it"
+0004: invoke-static            v2, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: invoke-static            v2, v1, Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object; Ljava/lang/Object;)Z
+0010: move-result              v1
+0012: return                   v1
+
+### public static synthetic a(Ljava/lang/String; Ljava/lang/String;)Z regs=2 ins=2 outs=2
+0000: invoke-static            v0, v1, Lhik/common/yyrj/businesscommon/b;->K(Ljava/lang/String; Ljava/lang/String;)Z
+0006: move-result              v0
+0008: return                   v0
+
+### public static synthetic b()Lhik/common/yyrj/businesscommon/b; regs=1 ins=0 outs=0
+0000: invoke-static            Lhik/common/yyrj/businesscommon/b;->c()Lhik/common/yyrj/businesscommon/b;
+0006: move-result-object       v0
+0008: return-object            v0
+
+### private static final c()Lhik/common/yyrj/businesscommon/b; regs=1 ins=0 outs=1
+0000: new-instance             v0, Lhik/common/yyrj/businesscommon/b;
+0004: invoke-direct            v0, Lhik/common/yyrj/businesscommon/b;-><init>()V
+000a: return-object            v0
+
+### public static final synthetic d()Lkotlin/Lazy; regs=1 ins=0 outs=0
+0000: sget-object              v0, Lhik/common/yyrj/businesscommon/b;->e Lkotlin/Lazy;
+0004: return-object            v0
+
+### private final n()Ljava/util/List; regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "preview_logo_visible"
+0018: const-string             v2, ""
+001c: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getString(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+0022: move-result-object       v0
+0024: if-eqz                   v0, +024h
+0028: invoke-interface         v0, Ljava/lang/CharSequence;->length()I
+002e: move-result              v1
+0030: if-nez                   v1, +003h
+0034: goto                     +1ch
+0036: iget-object              v1, v3, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+003a: new-instance             v2, Ljava/util/ArrayList;
+003e: invoke-direct            v2, Ljava/util/ArrayList;-><init>()V
+0044: invoke-virtual           v2, Ljava/lang/Object;->getClass()Ljava/lang/Class;
+004a: move-result-object       v2
+004c: invoke-virtual           v1, v0, v2, Lcom/fasterxml/jackson/databind/ObjectMapper;->readValue(Ljava/lang/String; Ljava/lang/Class;)Ljava/lang/Object;
+0052: move-result-object       v0
+0054: const-string             v1, "readValue(...)"
+0058: invoke-static            v0, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+005e: check-cast               v0, Ljava/util/Collection;
+0062: invoke-static            v0, Lkotlin/collections/CollectionsKt;->toMutableList(Ljava/util/Collection;)Ljava/util/List;
+0068: move-result-object       v0
+006a: goto                     +6h
+006c: new-instance             v0, Ljava/util/ArrayList;
+0070: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+0076: return-object            v0
+
+### public static synthetic x(Lhik/common/yyrj/businesscommon/b; Ljava/lang/String; I Ljava/lang/Object;)Z regs=4 ins=4 outs=2
+0000: and-int/lit8             v2, v2, 1
+0004: if-eqz                   v2, +00ch
+0008: sget-object              v1, Lu5/B;->a Lu5/B;
+000c: invoke-virtual           v1, Lu5/B;->k()Lhik/common/yyrj/businesscommon/data/DeviceInfoModel;
+0012: move-result-object       v1
+0014: invoke-virtual           v1, Lhik/common/yyrj/businesscommon/data/DeviceInfoModel;->getSerialNumber()Ljava/lang/String;
+001a: move-result-object       v1
+001c: invoke-virtual           v0, v1, Lhik/common/yyrj/businesscommon/b;->w(Ljava/lang/String;)Z
+0022: move-result              v0
+0024: return                   v0
+
+### public final A(J)V regs=5 ins=3 outs=4
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "agree_privacy_version"
+0020: invoke-interface         v0, v1, v3, v4, Landroid/content/SharedPreferences$Editor;->putLong(Ljava/lang/String; J)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final B(J)V regs=5 ins=3 outs=4
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "privacy_version"
+0020: invoke-interface         v0, v1, v3, v4, Landroid/content/SharedPreferences$Editor;->putLong(Ljava/lang/String; J)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final C(Ljava/util/List;)V regs=4 ins=2 outs=3
+0000: const-string             v0, "value"
+0004: invoke-static            v3, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+000e: invoke-virtual           v0, v3, Lcom/fasterxml/jackson/databind/ObjectMapper;->writeValueAsString(Ljava/lang/Object;)Ljava/lang/String;
+0014: move-result-object       v3
+0016: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+001a: if-nez                   v0, +008h
+001e: const-string             v0, "sharedPreferences"
+0022: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0028: const/4                  v0, 0
+002a: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+0030: move-result-object       v0
+0032: const-string             v1, "device_list_for_name"
+0036: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+003c: move-result-object       v3
+003e: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+0044: return-void              
+
+### public final D(I)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "imageManagerFileType"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putInt(Ljava/lang/String; I)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final E(Ljava/util/List;)V regs=5 ins=2 outs=5
+0000: const-string             v0, "value"
+0004: invoke-static            v4, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+000e: invoke-virtual           v0, v4, Lcom/fasterxml/jackson/databind/ObjectMapper;->writeValueAsString(Ljava/lang/Object;)Ljava/lang/String;
+0014: move-result-object       v4
+0016: invoke-static            v4, Lkotlin/jvm/internal/Intrinsics;->checkNotNull(Ljava/lang/Object;)V
+001c: invoke-interface         v4, Ljava/lang/CharSequence;->length()I
+0022: move-result              v0
+0024: const/4                  v1, 0
+0026: if-lez                   v0, +00dh
+002a: new-instance             v0, Lhik/common/yyrj/businesscommon/utils/w;
+002e: invoke-direct            v0, Lhik/common/yyrj/businesscommon/utils/w;-><init>()V
+0034: const/4                  v2, 2
+0036: invoke-static            v0, v4, v1, v2, v1, Lhik/common/yyrj/businesscommon/utils/w;->h(Lhik/common/yyrj/businesscommon/utils/w; Ljava/lang/String; Ljava/lang/String; I Ljava/lang/Object;)Ljava/lang/String;
+003c: move-result-object       v4
+003e: goto                     +3h
+0040: const-string             v4, ""
+0044: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0048: if-nez                   v0, +008h
+004c: const-string             v0, "sharedPreferences"
+0050: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0056: goto                     +2h
+0058: move-object              v1, v0
+005a: invoke-interface         v1, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+0060: move-result-object       v0
+0062: const-string             v1, "logged_devices_list"
+0066: invoke-interface         v0, v1, v4, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+006c: move-result-object       v4
+006e: invoke-interface         v4, Landroid/content/SharedPreferences$Editor;->apply()V
+0074: return-void              
+
+### public final F(Ljava/lang/String;)V regs=4 ins=2 outs=3
+0000: const-string             v0, "value"
+0004: invoke-static            v3, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+000e: if-nez                   v0, +008h
+0012: const-string             v0, "sharedPreferences"
+0016: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+001c: const/4                  v0, 0
+001e: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+0024: move-result-object       v0
+0026: const-string             v1, "manual_login_ip"
+002a: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+0030: move-result-object       v3
+0032: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+0038: return-void              
+
+### public final G(Ljava/lang/String;)V regs=4 ins=2 outs=3
+0000: const-string             v0, "value"
+0004: invoke-static            v3, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+000e: if-nez                   v0, +008h
+0012: const-string             v0, "sharedPreferences"
+0016: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+001c: const/4                  v0, 0
+001e: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+0024: move-result-object       v0
+0026: const-string             v1, "pdfList"
+002a: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+0030: move-result-object       v3
+0032: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+0038: return-void              
+
+### public final H(Ljava/util/List;)V regs=4 ins=2 outs=3
+0000: const-string             v0, "value"
+0004: invoke-static            v3, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+000e: invoke-virtual           v0, v3, Lcom/fasterxml/jackson/databind/ObjectMapper;->writeValueAsString(Ljava/lang/Object;)Ljava/lang/String;
+0014: move-result-object       v3
+0016: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+001a: if-nez                   v0, +008h
+001e: const-string             v0, "sharedPreferences"
+0022: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0028: const/4                  v0, 0
+002a: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+0030: move-result-object       v0
+0032: const-string             v1, "permission_request_list"
+0036: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+003c: move-result-object       v3
+003e: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+0044: return-void              
+
+### public final I(Ljava/lang/String; Z)V regs=4 ins=3 outs=2
+0000: const-string             v0, "serialNum"
+0004: invoke-static            v2, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: invoke-direct            v1, Lhik/common/yyrj/businesscommon/b;->n()Ljava/util/List;
+0010: move-result-object       v0
+0012: if-eqz                   v3, +00bh
+0016: new-instance             v3, Lu5/y;
+001a: invoke-direct            v3, v2, Lu5/y;-><init>(Ljava/lang/String;)V
+0020: invoke-static            v0, v3, Lkotlin/collections/CollectionsKt;->removeAll(Ljava/util/List; Lkotlin/jvm/functions/Function1;)Z
+0026: goto                     +4h
+0028: invoke-interface         v0, v2, Ljava/util/List;->add(Ljava/lang/Object;)Z
+002e: invoke-direct            v1, v0, Lhik/common/yyrj/businesscommon/b;->J(Ljava/util/List;)V
+0034: return-void              
+
+### public final L(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "privacy_policy_agree"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final M(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "save_pic_to_phone"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final N(Ljava/util/List;)V regs=5 ins=2 outs=3
+0000: const-string             v0, "value"
+0004: invoke-static            v4, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+000e: invoke-virtual           v0, v4, Lcom/fasterxml/jackson/databind/ObjectMapper;->writeValueAsString(Ljava/lang/Object;)Ljava/lang/String;
+0014: move-result-object       v4
+0016: new-instance             v0, Ljava/lang/StringBuilder;
+001a: invoke-direct            v0, Ljava/lang/StringBuilder;-><init>()V
+0020: const-string             v1, "JSON STR"
+0024: invoke-virtual           v0, v1, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+002a: invoke-virtual           v0, v4, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0030: invoke-virtual           v0, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+0036: move-result-object       v0
+0038: const-string             v1, "SettingConfig"
+003c: invoke-static            v1, v0, LV5/c;->b(Ljava/lang/String; Ljava/lang/String;)V
+0042: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0046: if-nez                   v0, +008h
+004a: const-string             v0, "sharedPreferences"
+004e: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0054: const/4                  v0, 0
+0056: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+005c: move-result-object       v0
+005e: const-string             v2, "permission_list"
+0062: invoke-interface         v0, v2, v4, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String; Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
+0068: move-result-object       v4
+006a: invoke-interface         v4, Landroid/content/SharedPreferences$Editor;->commit()Z
+0070: move-result              v4
+0072: new-instance             v0, Ljava/lang/StringBuilder;
+0076: invoke-direct            v0, Ljava/lang/StringBuilder;-><init>()V
+007c: const-string             v2, "SP commit result = "
+0080: invoke-virtual           v0, v2, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+0086: invoke-virtual           v0, v4, Ljava/lang/StringBuilder;->append(Z)Ljava/lang/StringBuilder;
+008c: invoke-virtual           v0, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+0092: move-result-object       v4
+0094: invoke-static            v1, v4, LV5/c;->b(Ljava/lang/String; Ljava/lang/String;)V
+009a: return-void              
+
+### public final O(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "scene_permission_migration_tag"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final P(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "splash_guide"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final Q(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "is_show_detail_info"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final R(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "software_licensing_permission"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final S(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "STARTUP_PRIVACY_SHOWN"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              
+
+### public final e()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "activate_business_agree"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final f()J regs=5 ins=1 outs=4
+0000: iget-object              v0, v4, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "agree_privacy_version"
+0018: const-wide/16            v2, 0
+001c: invoke-interface         v0, v1, v2, v3, Landroid/content/SharedPreferences;->getLong(Ljava/lang/String; J)J
+0022: move-result-wide         v0
+0024: return-wide              v0
+
+### public final g()J regs=5 ins=1 outs=4
+0000: iget-object              v0, v4, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "privacy_version"
+0018: const-wide/16            v2, 0
+001c: invoke-interface         v0, v1, v2, v3, Landroid/content/SharedPreferences;->getLong(Ljava/lang/String; J)J
+0022: move-result-wide         v0
+0024: return-wide              v0
+
+### public final h()Ljava/util/List; regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "device_list_for_name"
+0018: const-string             v2, ""
+001c: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getString(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+0022: move-result-object       v0
+0024: if-eqz                   v0, +01dh
+0028: invoke-interface         v0, Ljava/lang/CharSequence;->length()I
+002e: move-result              v1
+0030: if-nez                   v1, +003h
+0034: goto                     +15h
+0036: iget-object              v1, v3, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+003a: const-class              v2, [Lhik/common/yyrj/businesscommon/entry/DeviceInfo;
+003e: invoke-virtual           v1, v0, v2, Lcom/fasterxml/jackson/databind/ObjectMapper;->readValue(Ljava/lang/String; Ljava/lang/Class;)Ljava/lang/Object;
+0044: move-result-object       v0
+0046: const-string             v1, "readValue(...)"
+004a: invoke-static            v0, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+0050: check-cast               v0, [Ljava/lang/Object;
+0054: invoke-static            v0, Lkotlin/collections/ArraysKt;->toMutableList([Ljava/lang/Object;)Ljava/util/List;
+005a: move-result-object       v0
+005c: goto                     +6h
+005e: new-instance             v0, Ljava/util/ArrayList;
+0062: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+0068: return-object            v0
+
+### public final i()I regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "imageManagerFileType"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getInt(Ljava/lang/String; I)I
+0020: move-result              v0
+0022: return                   v0
+
+### public final j()J regs=5 ins=1 outs=4
+0000: iget-object              v0, v4, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "latest_privacy_version"
+0018: const-wide/16            v2, 1
+001c: invoke-interface         v0, v1, v2, v3, Landroid/content/SharedPreferences;->getLong(Ljava/lang/String; J)J
+0022: move-result-wide         v0
+0024: return-wide              v0
+
+### public final k()Ljava/util/List; regs=6 ins=1 outs=5
+0000: iget-object              v0, v5, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: const/4                  v1, 0
+0006: if-nez                   v0, +008h
+000a: const-string             v0, "sharedPreferences"
+000e: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0014: move-object              v0, v1
+0016: const-string             v2, "logged_devices_list"
+001a: const-string             v3, ""
+001e: invoke-interface         v0, v2, v3, Landroid/content/SharedPreferences;->getString(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+0024: move-result-object       v0
+0026: if-eqz                   v0, +03ah
+002a: new-instance             v2, Lhik/common/yyrj/businesscommon/utils/w;
+002e: invoke-direct            v2, Lhik/common/yyrj/businesscommon/utils/w;-><init>()V
+0034: const/4                  v4, 2
+0036: invoke-static            v2, v0, v1, v4, v1, Lhik/common/yyrj/businesscommon/utils/w;->f(Lhik/common/yyrj/businesscommon/utils/w; Ljava/lang/String; Ljava/lang/String; I Ljava/lang/Object;)Ljava/lang/String;
+003c: move-result-object       v1
+003e: invoke-interface         v1, Ljava/lang/CharSequence;->length()I
+0044: move-result              v2
+0046: if-nez                   v2, +004h
+004a: move-object              v3, v0
+004c: goto                     +7h
+004e: move-object              v3, v1
+0050: goto                     +5h
+0052: move-exception           v0
+0054: invoke-virtual           v0, Ljava/lang/Throwable;->printStackTrace()V
+005a: invoke-interface         v3, Ljava/lang/CharSequence;->length()I
+0060: move-result              v0
+0062: if-nez                   v0, +008h
+0066: new-instance             v0, Ljava/util/ArrayList;
+006a: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+0070: goto                     +14h
+0072: iget-object              v0, v5, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+0076: const-class              v1, [Lhik/common/yyrj/businesscommon/login/SADPDevice;
+007a: invoke-virtual           v0, v3, v1, Lcom/fasterxml/jackson/databind/ObjectMapper;->readValue(Ljava/lang/String; Ljava/lang/Class;)Ljava/lang/Object;
+0080: move-result-object       v0
+0082: const-string             v1, "readValue(...)"
+0086: invoke-static            v0, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+008c: check-cast               v0, [Ljava/lang/Object;
+0090: invoke-static            v0, Lkotlin/collections/ArraysKt;->toMutableList([Ljava/lang/Object;)Ljava/util/List;
+0096: move-result-object       v0
+0098: return-object            v0
+009a: new-instance             v0, Ljava/util/ArrayList;
+009e: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+00a4: return-object            v0
+
+### public final l()Ljava/lang/String; regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "manual_login_ip"
+0018: const-string             v2, ""
+001c: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getString(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+0022: move-result-object       v0
+0024: if-nez                   v0, +003h
+0028: goto                     +2h
+002a: move-object              v2, v0
+002c: return-object            v2
+
+### public final m()Ljava/util/List; regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "permission_request_list"
+0018: const-string             v2, ""
+001c: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getString(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+0022: move-result-object       v0
+0024: if-eqz                   v0, +024h
+0028: invoke-interface         v0, Ljava/lang/CharSequence;->length()I
+002e: move-result              v1
+0030: if-nez                   v1, +003h
+0034: goto                     +1ch
+0036: iget-object              v1, v3, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+003a: new-instance             v2, Ljava/util/ArrayList;
+003e: invoke-direct            v2, Ljava/util/ArrayList;-><init>()V
+0044: invoke-virtual           v2, Ljava/lang/Object;->getClass()Ljava/lang/Class;
+004a: move-result-object       v2
+004c: invoke-virtual           v1, v0, v2, Lcom/fasterxml/jackson/databind/ObjectMapper;->readValue(Ljava/lang/String; Ljava/lang/Class;)Ljava/lang/Object;
+0052: move-result-object       v0
+0054: const-string             v1, "readValue(...)"
+0058: invoke-static            v0, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+005e: check-cast               v0, Ljava/util/Collection;
+0062: invoke-static            v0, Lkotlin/collections/CollectionsKt;->toMutableList(Ljava/util/Collection;)Ljava/util/List;
+0068: move-result-object       v0
+006a: goto                     +6h
+006c: new-instance             v0, Ljava/util/ArrayList;
+0070: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+0076: return-object            v0
+
+### public final o()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "privacy_policy_agree"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final p()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "save_pic_to_phone"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final q()Ljava/util/List; regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "permission_list"
+0018: const-string             v2, ""
+001c: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getString(Ljava/lang/String; Ljava/lang/String;)Ljava/lang/String;
+0022: move-result-object       v0
+0024: if-eqz                   v0, +00bh
+0028: invoke-interface         v0, Ljava/lang/CharSequence;->length()I
+002e: move-result              v1
+0030: if-nez                   v1, +003h
+0034: goto                     +3h
+0036: const/4                  v1, 0
+0038: goto                     +2h
+003a: const/4                  v1, 1
+003c: const-string             v2, "[]"
+0040: invoke-static            v0, v2, Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object; Ljava/lang/Object;)Z
+0046: move-result              v2
+0048: or-int/2addr             v1, v2
+004a: if-eqz                   v1, +008h
+004e: new-instance             v0, Ljava/util/ArrayList;
+0052: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+0058: goto                     +1ah
+005a: iget-object              v1, v3, Lhik/common/yyrj/businesscommon/b;->b Lcom/fasterxml/jackson/databind/ObjectMapper;
+005e: const-class              v2, [Lhik/common/yyrj/businesscommon/permision/ScenePermission;
+0062: invoke-virtual           v1, v0, v2, Lcom/fasterxml/jackson/databind/ObjectMapper;->readValue(Ljava/lang/String; Ljava/lang/Class;)Ljava/lang/Object;
+0068: move-result-object       v0
+006a: const-string             v1, "readValue(...)"
+006e: invoke-static            v0, v1, Lkotlin/jvm/internal/Intrinsics;->checkNotNullExpressionValue(Ljava/lang/Object; Ljava/lang/String;)V
+0074: check-cast               v0, [Ljava/lang/Object;
+0078: invoke-static            v0, Lkotlin/collections/ArraysKt;->toMutableList([Ljava/lang/Object;)Ljava/util/List;
+007e: move-result-object       v0
+0080: goto                     +6h
+0082: new-instance             v0, Ljava/util/ArrayList;
+0086: invoke-direct            v0, Ljava/util/ArrayList;-><init>()V
+008c: return-object            v0
+
+### public final r()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "scene_permission_migration_tag"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final s()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "should_skip_guide"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final t()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "splash_guide"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final u()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "STARTUP_PRIVACY_SHOWN"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final v(Landroid/content/Context;)V regs=4 ins=2 outs=3
+0000: const-string             v0, "context"
+0004: invoke-static            v3, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: iput-object              v3, v2, Lhik/common/yyrj/businesscommon/b;->a Landroid/content/Context;
+000e: const-string             v0, "com.hikvison.commercialvision:settingConfig"
+0012: const/4                  v1, 0
+0014: invoke-virtual           v3, v0, v1, Landroid/content/Context;->getSharedPreferences(Ljava/lang/String; I)Landroid/content/SharedPreferences;
+001a: move-result-object       v3
+001c: iput-object              v3, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0020: return-void              
+
+### public final w(Ljava/lang/String;)Z regs=5 ins=2 outs=2
+0000: const-string             v0, "serialNum"
+0004: invoke-static            v4, v0, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object; Ljava/lang/String;)V
+000a: invoke-direct            v3, Lhik/common/yyrj/businesscommon/b;->n()Ljava/util/List;
+0010: move-result-object       v0
+0012: check-cast               v0, Ljava/lang/Iterable;
+0016: invoke-interface         v0, Ljava/lang/Iterable;->iterator()Ljava/util/Iterator;
+001c: move-result-object       v0
+001e: invoke-interface         v0, Ljava/util/Iterator;->hasNext()Z
+0024: move-result              v1
+0026: if-eqz                   v1, +010h
+002a: invoke-interface         v0, Ljava/util/Iterator;->next()Ljava/lang/Object;
+0030: move-result-object       v1
+0032: move-object              v2, v1
+0034: check-cast               v2, Ljava/lang/String;
+0038: invoke-static            v2, v4, Lkotlin/jvm/internal/Intrinsics;->areEqual(Ljava/lang/Object; Ljava/lang/Object;)Z
+003e: move-result              v2
+0040: if-eqz                   v2, -011h
+0044: goto                     +2h
+0046: const/4                  v1, 0
+0048: check-cast               v1, Ljava/lang/String;
+004c: if-eqz                   v1, +004h
+0050: const/4                  v4, 0
+0052: return                   v4
+0054: const/4                  v4, 1
+0056: return                   v4
+
+### public final y()Z regs=4 ins=1 outs=3
+0000: iget-object              v0, v3, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: const-string             v1, "is_show_detail_info"
+0018: const/4                  v2, 0
+001a: invoke-interface         v0, v1, v2, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String; Z)Z
+0020: move-result              v0
+0022: return                   v0
+
+### public final z(Z)V regs=4 ins=2 outs=3
+0000: iget-object              v0, v2, Lhik/common/yyrj/businesscommon/b;->c Landroid/content/SharedPreferences;
+0004: if-nez                   v0, +008h
+0008: const-string             v0, "sharedPreferences"
+000c: invoke-static            v0, Lkotlin/jvm/internal/Intrinsics;->throwUninitializedPropertyAccessException(Ljava/lang/String;)V
+0012: const/4                  v0, 0
+0014: invoke-interface         v0, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
+001a: move-result-object       v0
+001c: const-string             v1, "activate_business_agree"
+0020: invoke-interface         v0, v1, v3, Landroid/content/SharedPreferences$Editor;->putBoolean(Ljava/lang/String; Z)Landroid/content/SharedPreferences$Editor;
+0026: move-result-object       v3
+0028: invoke-interface         v3, Landroid/content/SharedPreferences$Editor;->apply()V
+002e: return-void              

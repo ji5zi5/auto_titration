@@ -147,8 +147,9 @@ class Task17AdditionalParityGateTest {
 
     private fun officialFields(name: String): Map<String, String> {
         val root = generateSequence(java.io.File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
-            .first { java.io.File(it, ".omx/analysis/task17-shared-support/$name").exists() }
-        val text = java.io.File(root, ".omx/analysis/task17-shared-support/$name").readText()
+            .flatMap { sequenceOf(it, java.io.File(it, "mobile/android")) }
+            .first { java.io.File(it, "app/src/test/resources/official_parity/task17-shared-support/$name").exists() }
+        val text = java.io.File(root, "app/src/test/resources/official_parity/task17-shared-support/$name").readText()
         return text.substringAfter("FIELDS\n").substringBefore("METHODS").lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
