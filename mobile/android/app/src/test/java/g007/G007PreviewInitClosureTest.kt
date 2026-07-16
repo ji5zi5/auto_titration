@@ -9,9 +9,9 @@ import org.junit.Test
 class G007PreviewInitClosureTest {
     private val root: File = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
         .flatMap { sequenceOf(it, File(it, "mobile/android")) }
-        .first { File(it, "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.kt").exists() }
+        .first { File(it, "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java").exists() }
 
-    private val preview: String = source("com/hik/viewer/manager/PreviewManagerII.kt")
+    private val preview: String = source("com/hik/viewer/manager/PreviewManagerII.java")
 
     @Test
     fun l0UsesTheOfficialPredicatesAndCompleteF2InitializationChain() {

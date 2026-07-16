@@ -74,20 +74,20 @@ class G007ParityFixRegressionTest {
     @Test fun productionSourcesDoNotContainLegacyG007Fallbacks() {
         val root = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
             .flatMap { sequenceOf(it, File(it, "mobile/android")) }
-            .first { File(it, "app/src/main/java/g3/F2OfficialPacketProcessor.kt").exists() }
+            .first { File(it, "app/src/main/java/g3/d.java").exists() }
         val sources = listOf(
             "app/src/main/java/com/hik/f2module/IFR_INFO.kt",
             "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
             "app/src/main/java/com/hik/f1module/hcusbcamerasdk/jna/HCUSBCameraSDKBy.kt",
             "app/src/main/java/Z2/a.java",
-            "app/src/main/java/g3/F2OfficialPacketProcessor.kt",
+            "app/src/main/java/g3/d.java",
             "app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt",
         ).associateWith { File(root, it).readText() }
 
         sources.forEach { (_, text) ->
             assertFalse(text.contains("OfficialFieldOrder"))
         }
-        val processor = sources.getValue("app/src/main/java/g3/F2OfficialPacketProcessor.kt")
+        val processor = sources.getValue("app/src/main/java/g3/d.java")
         assertFalse(processor.contains("hydrateOfflineUploadHeader"))
         assertFalse(processor.contains("java.vm.name"))
         assertFalse(processor.contains("rotatedWidth * rotatedHeight * 3 / 2"))
