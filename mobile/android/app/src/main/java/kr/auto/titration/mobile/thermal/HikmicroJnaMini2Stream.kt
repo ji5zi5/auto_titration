@@ -102,6 +102,20 @@ object HikmicroJnaMini2Stream {
         }
     }
 
+    fun shutdownOfficialPreviewSession() {
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            closeBoundOfficialPreviewLocked()
+        }
+        synchronized(this) {
+            latestFrameSnapshot = null
+            lastInvalidPacketDiagnostic = null
+            previewSuccessTimes = 0L
+            f2Helper.closeSession()
+            lastFailureReason = "terminal official preview shutdown"
+            lastStreamStageReport = "${f2Helper.lastStageReport}; terminal_official_preview_shutdown"
+        }
+    }
+
     private fun closeBoundOfficialPreviewLocked() {
         val manager = officialPreviewManager ?: return
         officialPreviewManager = null

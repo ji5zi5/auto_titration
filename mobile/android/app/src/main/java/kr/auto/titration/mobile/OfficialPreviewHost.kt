@@ -23,6 +23,7 @@ internal class OfficialPreviewHost(
     activity: ComponentActivity,
     private val bindPreview: (OfficialPreviewBinding) -> Unit = HikmicroJnaMini2Stream::bindOfficialPreviewSurface,
     private val unbindPreview: () -> Unit = HikmicroJnaMini2Stream::unbindOfficialPreviewSurface,
+    private val shutdownPreviewSession: () -> Unit = HikmicroJnaMini2Stream::shutdownOfficialPreviewSession,
 ) : SurfaceHolder.Callback {
     val rootView: FrameLayout = FrameLayout(activity)
     private val previewRoot: FrameLayout = FrameLayout(activity)
@@ -67,10 +68,8 @@ internal class OfficialPreviewHost(
         selectedHolder?.removeCallback(this)
         selectedHolder = null
         holderCreated = false
-        if (bound) {
-            bound = false
-            unbindPreview()
-        }
+        bound = false
+        terminalShutdownPreviewSession()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -89,6 +88,10 @@ internal class OfficialPreviewHost(
             bound = false
             unbindPreview()
         }
+    }
+
+    private fun terminalShutdownPreviewSession() {
+        shutdownPreviewSession()
     }
 
     private fun selectOfficialSurface() {

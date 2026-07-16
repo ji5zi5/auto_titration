@@ -24,6 +24,9 @@ class Task16ProductionOfficialPreviewBindingTest {
         assertTrue(source.contains("setContentView(officialPreviewHost.rootView)"))
         assertFalse("task16 must replace the WebView-only content root", source.contains("setContentView(webView)"))
         assertTrue("activity teardown must route through the native preview host", source.contains("officialPreviewHost.destroy()"))
+
+        val host = source("app/src/main/java/kr/auto/titration/mobile/OfficialPreviewHost.kt")
+        assertTrue("host destroy must route to terminal native session shutdown", host.contains("HikmicroJnaMini2Stream::shutdownOfficialPreviewSession"))
     }
 
     @Test
@@ -50,9 +53,22 @@ class Task16ProductionOfficialPreviewBindingTest {
         assertTrue("valid repeated layout/surfaceChanged callbacks must not rebind", source.contains("destroyed || bound || !holderCreated"))
         assertTrue(source.contains("override fun surfaceDestroyed"))
         assertTrue(source.contains("if (bound)"))
-        assertEquals("host should have exactly one unbind call site for destroy and one for surfaceDestroyed", 2, Regex("unbindPreview\\(\\)").findAll(source).count())
+        assertEquals("ordinary surface teardown should have exactly one renderer-only unbind call site", 1, Regex("unbindPreview\\(\\)").findAll(source).count())
         assertTrue(source.contains("selectedHolder?.removeCallback(this)"))
     }
+
+    @Test
+    fun nativeHostSeparatesSurfaceRebindUnbindFromTerminalSessionShutdown() {
+        val source = source("app/src/main/java/kr/auto/titration/mobile/OfficialPreviewHost.kt")
+        val surfaceDestroyed = functionSlice(source, "override fun surfaceDestroyed", "    private fun terminalShutdownPreviewSession")
+        val destroy = functionSlice(source, "fun destroy()", "    override fun surfaceCreated")
+
+        assertTrue("surface recreation may unbind only the renderer", surfaceDestroyed.contains("unbindPreview()"))
+        assertFalse("surface recreation must not close the native F2 session", surfaceDestroyed.contains("shutdownPreviewSession()"))
+        assertTrue("terminal host destroy must run the full native close path", destroy.contains("terminalShutdownPreviewSession()"))
+        assertFalse("destroy must not rely on bound renderer state to close native session", destroy.contains("if (bound)"))
+    }
+
 
     @Test
     fun sceneModeComesFromRecoveredOfficialHolderSemanticsNotBlankGuess() {
@@ -68,18 +84,36 @@ class Task16ProductionOfficialPreviewBindingTest {
     @Test
     fun streamUsesOfficialDefaultBridgeBoundaryAndTeardownBeforeRealRebind() {
         val source = source("app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt")
+        val appBinding = source("app/src/main/java/kr/auto/titration/mobile/thermal/PreviewManagerIIAppBinding.java")
         val bindStart = source.indexOf("fun bindOfficialPreviewSurface(binding: OfficialPreviewBinding)")
-        val u0 = source.indexOf("manager.u0()", bindStart)
+        val close = source.indexOf("closeBoundOfficialPreviewLocked()", bindStart)
         val m0 = source.indexOf("PreviewManagerII.m0", bindStart)
 
         assertTrue(bindStart >= 0)
-        assertTrue("u0 must precede the next official m0/l0 bind on real rebind", u0 in bindStart until m0)
+        assertTrue("full callback/surface close must precede the next official m0/l0 bind on real rebind", close in bindStart until m0)
+        assertTrue(source.contains("PreviewManagerIIAppBinding.unbind(manager)"))
+        assertTrue(appBinding.contains("manager.closePreviewCallback();"))
         assertTrue(source.contains("null as TextView?"))
         assertTrue(source.contains("binding.visibleLightView"))
         assertTrue(source.contains("binding.sceneMode"))
         assertTrue(source.contains("{ value: Boolean -> binding.freezeCallback(value); Unit }"))
         assertTrue(source.contains("{ value: Boolean -> binding.overlayAvailabilityCallback(value); Unit }"))
         assertTrue(source.contains("128,"))
+    }
+
+    @Test
+    fun streamHasDistinctIdempotentTerminalShutdownThatClearsStaleAppFrameState() {
+        val source = source("app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt")
+        val unbind = functionSlice(source, "fun unbindOfficialPreviewSurface()", "    fun shutdownOfficialPreviewSession()")
+        val shutdown = functionSlice(source, "fun shutdownOfficialPreviewSession()", "    private fun closeBoundOfficialPreviewLocked()")
+
+        assertFalse("ordinary renderer unbind must not close the native F2 session", unbind.contains("f2Helper.closeSession()"))
+        assertTrue("terminal shutdown must close any bound PreviewManager renderer", shutdown.contains("closeBoundOfficialPreviewLocked()"))
+        assertTrue("terminal shutdown must close the native F2 USB session", shutdown.contains("f2Helper.closeSession()"))
+        assertTrue("terminal shutdown must clear stale raw frame snapshots", shutdown.contains("latestFrameSnapshot = null"))
+        assertTrue("terminal shutdown must reset preview success state", shutdown.contains("previewSuccessTimes = 0L"))
+        assertTrue("terminal shutdown must clear invalid-packet diagnostics from the dead session", shutdown.contains("lastInvalidPacketDiagnostic = null"))
+        assertTrue("terminal shutdown should leave an explicit stage breadcrumb", shutdown.contains("terminal_official_preview_shutdown"))
     }
 
     @Test
@@ -100,6 +134,14 @@ class Task16ProductionOfficialPreviewBindingTest {
         )
 
         assertEquals(Void.TYPE, method.returnType)
+    }
+
+    private fun functionSlice(source: String, startNeedle: String, endNeedle: String): String {
+        val start = source.indexOf(startNeedle)
+        val end = source.indexOf(endNeedle, start.coerceAtLeast(0))
+        assertTrue("missing start needle: $startNeedle", start >= 0)
+        assertTrue("missing end needle after $startNeedle: $endNeedle", end > start)
+        return source.substring(start, end)
     }
 
     private fun source(relativePath: String): String {
