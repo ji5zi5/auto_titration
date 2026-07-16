@@ -1,27 +1,21 @@
-# Task17 G007 audit recovery evidence
+# Task17 G007 final recovery evidence
 
-## Fixed in this follow-up
-- `Z2.a.t()` now follows the extracted DEX predicate: `Z2.g.b(Z2.g.a, false, 1, null) == UsbModuleType.F1 && appendEnabled`; the non-F1 surrogate flag was removed.
-- `d2.a` is no longer a Kotlin `object`; it exposes the official singleton/context API shape (`a`, `b`, static `a(): Context`, static `b(Context): void`). Kotlin still emits a Companion/accessors; exact no-extra-field parity remains noted below.
-- `hik.common.yyrj.businesscommon.b` no longer uses Gson/TypeToken for `preview_logo_visible`; its `n()` path uses `com.fasterxml.jackson.databind.ObjectMapper.readValue(..., ArrayList().javaClass)` and `w()` preserves the DEX behavior of returning false when the serial exists.
-- Added a narrow in-tree `com.fasterxml.jackson.databind.ObjectMapper` shim for the preview-logo-visible string-array path because the project did not already declare Jackson and build.gradle is outside this worker's ownership.
-- Confirmed `PreviewManagerII` no longer has the duplicate `streamingNew` named argument and retains direct calls for `u5.B.a.L()/d0()/h0()` and `businesscommon.b.x(...)`.
+## Corrective implementation
+- Replaced Kotlin `d2.a` with Java `d2.a`: fields are only `public static final d2.a a` and `private static android.content.Context b`; `a()` throws Kotlin uninitialized-property exception for `appContext` when unset; `b(Context)` stores `context.getApplicationContext()`.
+- Replaced Kotlin `Z2.a` with Java `Z2.a`: official obfuscated singleton fields `a` through `u`, no Companion/accessors, and `t()` preserves the audited `UsbModuleType.F1 && s` predicate.
+- Replaced Kotlin `hik.common.yyrj.businesscommon.b` with Java field/method ABI matching the official preference holder; `w(String)` returns false when the serial is present in `preview_logo_visible` and true otherwise; `x(...)` preserves the default serial lookup through `u5.B.a.k().getSerialNumber()`.
+- Expanded `u5.B` from the reachable-only Kotlin surrogate to Java with the official field/method descriptor surface used by the task17 support DEX. Added minimal entry/support types needed for descriptors to compile.
+- Strengthened task17/G007 tests to assert official field descriptors and absence of `Companion`/`access$` artifacts for recovered support classes.
 
 ## Verification evidence
-- Compile/lint: `JAVA_HOME=/home/jio/code/auto_titration/.tools/jdk17 ANDROID_HOME=/home/jio/code/auto_titration/.tools/android-sdk ANDROID_SDK_ROOT=/home/jio/code/auto_titration/.tools/android-sdk /home/jio/code/auto_titration/.tools/gradle/gradle-8.10.2/bin/gradle -p /home/jio/code/auto_titration/mobile/android compileDebugKotlin compileDebugUnitTestKotlin lintDebug` -> BUILD SUCCESSFUL.
-- Focused tests: same env, `gradle ... testDebugUnitTest --tests 'g007.*' --tests 'com.hik.viewer.manager.Task17*' --tests 'g3.G007OfficialPacketProcessorParityTest' --tests 'i3.G007I3CallbackParityTest'` -> BUILD SUCCESSFUL; 57 tests completed, 2 skipped.
+- Required compile/lint: `JAVA_HOME=/home/jio/code/auto_titration/.tools/jdk17 ANDROID_HOME=/home/jio/code/auto_titration/.tools/android-sdk ANDROID_SDK_ROOT=/home/jio/code/auto_titration/.tools/android-sdk /home/jio/code/auto_titration/.tools/gradle/gradle-8.10.2/bin/gradle -p /home/jio/code/auto_titration/mobile/android compileDebugKotlin compileDebugUnitTestKotlin lintDebug` -> BUILD SUCCESSFUL.
+- Focused tests: same env, `gradle -p /home/jio/code/auto_titration/mobile/android testDebugUnitTest --tests 'g007.*' --tests 'com.hik.viewer.manager.Task17*' --tests 'g3.G007OfficialPacketProcessorParityTest' --tests 'i3.G007I3CallbackParityTest'` -> BUILD SUCCESSFUL.
+- Combined focused gate with compile/lint and `Task17AdditionalParityGateTest`/`g007.*` -> BUILD SUCCESSFUL.
 - Whitespace: `git diff --check` -> clean.
-- Final owned-path scan for `reflect`, `reflection`, `TODO`, `NotImplemented`, `no-op`, `surrogate`, `isF2Module`, `Z2.g.a.a(true)`, `Gson`, `TypeToken`, `nonF1ProcessingEnabled` -> no matches.
+- `javap -private -s -classpath mobile/android/app/build/tmp/kotlin-classes/debug:mobile/android/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes d2.a` -> exactly `public static final d2.a a; private static android.content.Context b; private constructor; static a()/b(Context);` and no `Companion`.
+- Filesystem/class check: `find mobile/android/app/build -path '*d2/a$Companion.class' ...` -> no Companion class files; `find .../d2/*` shows only `d2/a.class`.
+- Synthetic accessor check: `javap -private` grep for `access$` across `d2.a`, `Z2.a`, `hik.common.yyrj.businesscommon.b`, `u5.B` -> no matches.
 
-## javap ABI audit highlights (`javap -private -s`)
-- `Z2.a`: has `public static final Z2.a a`, `t():Z`, `r():I`, `s():I`; source body now matches DEX `F1 && s` semantics. Kotlin-emitted Companion and descriptive private field names remain intentionally deferred from exact obfuscated field identity.
-- `d2.a`: has `public static final d2.a a`, `private static Context b`, `public static final a(): Context`, `public static final b(Context): void`; Kotlin Companion/accessors are extra versus official DEX.
-- `u5.B`: has `public static final u5.B a`, `L():I`, `d0():Z`, `h0():Z`, `k():DeviceInfoModel`; implementation remains narrowed to the l0/u0-reachable static state and intentionally does not port the full official field set (`S`, `c`..`z`, maps, login/offline models, etc.).
-- `businesscommon.b`: has `ObjectMapper b`, `SharedPreferences c`, `v(Context):void`, private `n():List`, `w(String):Z`, synthetic-style `x(b,String,int,Object):Z`; `context` field is named differently from official private `a` because Kotlin source also contains nested class `a`.
-- `PreviewManagerII`: public constructor descriptor `(Landroidx/lifecycle/Lifecycle;ZZ)V`; `m0` default bridge descriptor includes the expected bitmask/object tail; nested `PreviewManagerII$g` and `PreviewManagerII$defaultLifecycleObserver$1` are present.
-- `FloatTextureView`: fields `a:F`, `b:F`, `c:I`, `d:I`, `e:Function1`; private `b()`, `c(FF)`, `g()`, `h(FF)`; public `d(IZ)`, `f(IZ,Size,Size)`, touch handler, nested evaluator classes present.
-
-## Remaining live-device-only / intentionally deferred gaps
-- No live HIKMICRO Mini2/F1/F2 device run was performed; Celsius/temperature correctness is not claimed.
-- Full official `u5.B` and exact obfuscated private field identity for Kotlin support classes remain narrowed to the PreviewManagerII l0/u0 reachable closure.
-- The in-tree ObjectMapper shim covers the DEX-proven preview-logo-visible list path only; it is not a general Jackson replacement.
+## Notes / limits
+- The official APK evidence contains `com.fasterxml.jackson.databind.ObjectMapper`; the existing in-tree ObjectMapper surface remains the local compile-time substitute because Gradle dependency edits were outside this worker's requested source focus.
+- No live HIKMICRO Mini2/F1/F2 hardware run was performed; Celsius/live-device parity is not claimed.

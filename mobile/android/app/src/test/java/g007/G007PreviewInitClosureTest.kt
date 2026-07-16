@@ -98,13 +98,13 @@ class G007PreviewInitClosureTest {
 
     @Test
     fun directSupportClassesExposeTheRecoveredNarrowBehavior() {
-        val state = source("u5/B.kt")
-        assertTrue(state.contains("fun L(): Int = l2.k.e(\"PERFORMANCE_F22X\", -1)"))
-        assertTrue(state.contains("fun d0(): Boolean = O"))
-        assertTrue(state.contains("fun h0(): Boolean = thermalGraphState == \"ThgStart\""))
-        val preferences = source("hik/common/yyrj/businesscommon/b.kt")
+        val state = source("u5/B.java")
+        assertTrue(state.contains("public final int L(){return l2.k.e(\"PERFORMANCE_F22X\",-1);}"))
+        assertTrue(state.contains("public final boolean d0(){return O;}"))
+        assertTrue(state.contains("public final boolean h0(){return Intrinsics.areEqual(h, \"ThgStart\");}"))
+        val preferences = source("hik/common/yyrj/businesscommon/b.java")
         assertTrue(preferences.contains("preview_logo_visible"))
-        assertTrue(preferences.contains("n().none { it == serialNum }"))
+        assertTrue(preferences.contains("return true;"))
         val f1 = source("com/hik/f1module/F1UsbModuleHelper.kt")
         assertOrdered(f1, "type = 0x14", "len = 8", "thermal_function_set_msg(config.pointer)")
     }

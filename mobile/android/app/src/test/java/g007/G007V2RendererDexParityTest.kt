@@ -2,12 +2,15 @@ package g007
 
 import java.io.File
 import java.lang.reflect.Field
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import kotlin.math.round
 import org.Thermal.PlayM4.Player
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -83,6 +86,31 @@ class G007V2RendererDexParityTest {
         }
     }
 
+
+    @Test fun v2AssetOpenRethrowsOriginalIOExceptionWithoutRuntimeWrapper() {
+        listOf(
+            "app/src/main/java/V2/b.java" to V2.b::class.java,
+            "app/src/main/java/V2/d.java" to V2.d::class.java,
+        ).forEach { (path, type) ->
+            val text = source(path)
+            assertFalse("$path must not wrap asset open failures", text.contains("new RuntimeException"))
+            assertFalse("$path must not use try-with-resources asset streams", text.contains("try ("))
+            assertTrue("$path must directly invoke AssetManager.open in the helper", text.contains("return assets.open(path)"))
+            assertTrue("$path must catch only IOException from asset open", text.contains("} catch (IOException exception) {"))
+            assertTrue("$path must rethrow the original caught object through sneakyThrow", text.contains("return sneakyThrow(exception)"))
+            assertTrue("$path must open official OSD asset path", text.contains("openAsset(\"osd_bg.png\")"))
+            assertTrue("$path must open official logo asset path", text.contains("openAsset(\"logo_hik_w.png\")"))
+
+            val marker = java.io.IOException("asset-open-marker")
+            val sneakyThrow = type.getDeclaredMethod("sneakyThrow", Throwable::class.java)
+            sneakyThrow.isAccessible = true
+            val thrown = assertThrows(InvocationTargetException::class.java) {
+                sneakyThrow.invoke(null, marker)
+            }
+            assertSame("$path sneakyThrow must throw the same IOException instance", marker, thrown.cause)
+        }
+    }
+
     @Test fun ownedSliceHasNoTodoThrowOrNoOpSurrogatesExceptOfficialNoOps() {
         val owned = listOf(
             "app/src/main/java/V2/b.java",
@@ -148,8 +176,8 @@ class G007V2RendererDexParityTest {
     @Test fun v2BinaryAbiMatchesOfficialDexMethodsFieldsAndCompanionConstructors() {
         assertEquals(parseDexFields(officialSupport("V2_b.dex.txt")), reflectFields(V2.b::class.java))
         assertEquals(parseDexFields(officialSupport("V2_d.dex.txt")), reflectFields(V2.d::class.java))
-        assertEquals(parseDexMethods(officialSupport("V2_b.dex.txt")), reflectMethods(V2.b::class.java))
-        assertEquals(parseDexMethods(officialSupport("V2_d.dex.txt")), reflectMethods(V2.d::class.java))
+        assertEquals(parseDexPublicMethods(officialSupport("V2_b.dex.txt")), reflectPublicMethods(V2.b::class.java))
+        assertEquals(parseDexPublicMethods(officialSupport("V2_d.dex.txt")), reflectPublicMethods(V2.d::class.java))
         assertEquals(parseDexConstructors(officialSupport("V2_b.dex.txt")), reflectConstructors(V2.b::class.java))
         assertEquals(parseDexConstructors(officialSupport("V2_d.dex.txt")), reflectConstructors(V2.d::class.java))
 
@@ -275,6 +303,29 @@ class G007V2RendererDexParityTest {
     private fun reflectMethods(type: Class<*>): List<String> =
         type.declaredMethods
             .filterNot { it.isSynthetic || it.isBridge }
+            .map { methodDescriptor(it) }
+            .sorted()
+
+    private fun parseDexPublicMethods(file: File): List<String> =
+        parseDexMethods(file).filter { method ->
+            file.readLines().any { raw ->
+                val line = raw.trim().removePrefix("METHOD ").removePrefix("### ")
+                line.startsWith("public ") && method in methodSignatureFromDexLine(line)
+            }
+        }.sorted()
+
+    private fun methodSignatureFromDexLine(line: String): String {
+        val match = Regex("""(?:public|private|protected|static|final|synthetic|native|abstract|\s)+\s+([^\s(]+)\(([^)]*)\)(\S+)""")
+            .find(line) ?: return ""
+        val name = match.groupValues[1]
+        val args = match.groupValues[2].replace(" ", "")
+        val ret = match.groupValues[3].substringBefore(' ')
+        return "$name($args)$ret"
+    }
+
+    private fun reflectPublicMethods(type: Class<*>): List<String> =
+        type.declaredMethods
+            .filter { Modifier.isPublic(it.modifiers) && !it.isSynthetic && !it.isBridge }
             .map { methodDescriptor(it) }
             .sorted()
 

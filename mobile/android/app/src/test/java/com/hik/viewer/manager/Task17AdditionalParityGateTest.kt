@@ -8,6 +8,7 @@ import com.hik.viewercommon.data.bean.SceneModeBean
 import hik.common.yyrj.uicommon.widget.FloatTextureView
 import kotlin.jvm.functions.Function1
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -94,6 +95,27 @@ class Task17AdditionalParityGateTest {
             android.content.Context::class.java,
             d2.a::class.java.getDeclaredMethod("a").returnType,
         )
+        val d2Fields = d2.a::class.java.declaredFields.associateBy { it.name }
+        assertEquals(d2.a::class.java, d2Fields.getValue("a").type)
+        assertEquals(android.content.Context::class.java, d2Fields.getValue("b").type)
+        assertFalse("official d2.a has no Companion field", d2Fields.containsKey("Companion"))
+        assertFalse("official d2.a has no Companion nested class", d2.a::class.java.declaredClasses.any { it.simpleName == "Companion" })
+    }
+
+
+    @Test
+    fun recoveredSupportClassesHaveOfficialFieldAbiAndNoKotlinCompanionArtifacts() {
+        mapOf(
+            d2.a::class.java to "d2_a.dex.txt",
+            Z2.a::class.java to "Z2_a.dex.txt",
+            u5.B::class.java to "u5_B.dex.txt",
+            hik.common.yyrj.businesscommon.b::class.java to "hik_common_yyrj_businesscommon_b.dex.txt",
+        ).forEach { (clazz, dexName) ->
+            assertEquals("${clazz.name} fields", officialFields(dexName), reflectFields(clazz))
+            assertFalse("${clazz.name} has Companion field", clazz.declaredFields.any { it.name == "Companion" })
+            assertFalse("${clazz.name} has Companion nested class", clazz.declaredClasses.any { it.simpleName == "Companion" })
+            assertFalse("${clazz.name} has Kotlin property accessors", clazz.declaredMethods.any { it.name.startsWith("access$") })
+        }
     }
 
     @Test
@@ -106,5 +128,38 @@ class Task17AdditionalParityGateTest {
         listOf("Class.forName", "getDeclaredMethod", ".getMethod(", "TODO", "NotImplemented", "surrogate").forEach {
             assertTrue("forbidden token present: $it", !l0Reachable.contains(it))
         }
+    }
+
+    private fun officialFields(name: String): Map<String, String> {
+        val root = generateSequence(java.io.File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
+            .first { java.io.File(it, ".omx/analysis/task17-shared-support/$name").exists() }
+        val text = java.io.File(root, ".omx/analysis/task17-shared-support/$name").readText()
+        return text.substringAfter("FIELDS\n").substringBefore("METHODS").lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .associate { line ->
+                val parts = line.split(Regex("\\s+"))
+                parts[parts.size - 2] to parts.last()
+            }
+    }
+
+    private fun reflectFields(clazz: Class<*>): Map<String, String> =
+        clazz.declaredFields.associate { it.name to descriptor(it.type) }
+
+    private fun descriptor(type: Class<*>): String = when {
+        type.isArray -> type.name.replace('.', '/')
+        type.isPrimitive -> when (type) {
+            java.lang.Boolean.TYPE -> "Z"
+            java.lang.Byte.TYPE -> "B"
+            java.lang.Character.TYPE -> "C"
+            java.lang.Short.TYPE -> "S"
+            java.lang.Integer.TYPE -> "I"
+            java.lang.Long.TYPE -> "J"
+            java.lang.Float.TYPE -> "F"
+            java.lang.Double.TYPE -> "D"
+            java.lang.Void.TYPE -> "V"
+            else -> error("unknown primitive $type")
+        }
+        else -> "L${type.name.replace('.', '/')};"
     }
 }
