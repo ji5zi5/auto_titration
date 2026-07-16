@@ -119,6 +119,20 @@ class Task17AdditionalParityGateTest {
     }
 
     @Test
+    fun u5BH0ReadsOfficialProductFieldMViaOfficialSetter() {
+        val state = u5.B.a
+        state.O0("ThgStart")
+        state.P0("NotThgStart")
+        assertFalse("h0 must ignore field h/O0 and read official field m", state.h0())
+
+        state.P0("ThgStart")
+        assertTrue("h0 must compare official field m against ThgStart", state.h0())
+
+        state.P0("google")
+        state.O0("")
+    }
+
+    @Test
     fun sourceDoesNotContainTask17ForbiddenFallbacks() {
         val root = generateSequence(java.io.File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
             .flatMap { sequenceOf(it, java.io.File(it, "mobile/android")) }

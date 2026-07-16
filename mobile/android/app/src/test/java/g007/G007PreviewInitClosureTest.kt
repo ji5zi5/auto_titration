@@ -101,7 +101,7 @@ class G007PreviewInitClosureTest {
         val state = source("u5/B.java")
         assertTrue(state.contains("public final int L(){return l2.k.e(\"PERFORMANCE_F22X\",-1);}"))
         assertTrue(state.contains("public final boolean d0(){return O;}"))
-        assertTrue(state.contains("public final boolean h0(){return Intrinsics.areEqual(h, \"ThgStart\");}"))
+        assertTrue(state.contains("public final boolean h0(){return Intrinsics.areEqual(m, \"ThgStart\");}"))
         val preferences = source("hik/common/yyrj/businesscommon/b.java")
         assertTrue(preferences.contains("preview_logo_visible"))
         assertTrue(preferences.contains("return true;"))

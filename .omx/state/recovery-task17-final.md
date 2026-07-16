@@ -1,21 +1,28 @@
-# Task17 G007 final recovery evidence
+# Task17 G007 follow-up recovery evidence
 
-## Corrective implementation
-- Replaced Kotlin `d2.a` with Java `d2.a`: fields are only `public static final d2.a a` and `private static android.content.Context b`; `a()` throws Kotlin uninitialized-property exception for `appContext` when unset; `b(Context)` stores `context.getApplicationContext()`.
-- Replaced Kotlin `Z2.a` with Java `Z2.a`: official obfuscated singleton fields `a` through `u`, no Companion/accessors, and `t()` preserves the audited `UsbModuleType.F1 && s` predicate.
-- Replaced Kotlin `hik.common.yyrj.businesscommon.b` with Java field/method ABI matching the official preference holder; `w(String)` returns false when the serial is present in `preview_logo_visible` and true otherwise; `x(...)` preserves the default serial lookup through `u5.B.a.k().getSerialNumber()`.
-- Expanded `u5.B` from the reachable-only Kotlin surrogate to Java with the official field/method descriptor surface used by the task17 support DEX. Added minimal entry/support types needed for descriptors to compile.
-- Strengthened task17/G007 tests to assert official field descriptors and absence of `Companion`/`access$` artifacts for recovered support classes.
+## Scope and outcome
 
-## Verification evidence
-- Required compile/lint: `JAVA_HOME=/home/jio/code/auto_titration/.tools/jdk17 ANDROID_HOME=/home/jio/code/auto_titration/.tools/android-sdk ANDROID_SDK_ROOT=/home/jio/code/auto_titration/.tools/android-sdk /home/jio/code/auto_titration/.tools/gradle/gradle-8.10.2/bin/gradle -p /home/jio/code/auto_titration/mobile/android compileDebugKotlin compileDebugUnitTestKotlin lintDebug` -> BUILD SUCCESSFUL.
-- Focused tests: same env, `gradle -p /home/jio/code/auto_titration/mobile/android testDebugUnitTest --tests 'g007.*' --tests 'com.hik.viewer.manager.Task17*' --tests 'g3.G007OfficialPacketProcessorParityTest' --tests 'i3.G007I3CallbackParityTest'` -> BUILD SUCCESSFUL.
-- Combined focused gate with compile/lint and `Task17AdditionalParityGateTest`/`g007.*` -> BUILD SUCCESSFUL.
-- Whitespace: `git diff --check` -> clean.
-- `javap -private -s -classpath mobile/android/app/build/tmp/kotlin-classes/debug:mobile/android/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes d2.a` -> exactly `public static final d2.a a; private static android.content.Context b; private constructor; static a()/b(Context);` and no `Companion`.
-- Filesystem/class check: `find mobile/android/app/build -path '*d2/a$Companion.class' ...` -> no Companion class files; `find .../d2/*` shows only `d2/a.class`.
-- Synthetic accessor check: `javap -private` grep for `access$` across `d2.a`, `Z2.a`, `hik.common.yyrj.businesscommon.b`, `u5.B` -> no matches.
+This follow-up commit corrects the production-critical `u5.B.h0()` reachable body against `.omx/analysis/task17-shared-support/u5_B.dex.txt`.
 
-## Notes / limits
-- The official APK evidence contains `com.fasterxml.jackson.databind.ObjectMapper`; the existing in-tree ObjectMapper surface remains the local compile-time substitute because Gradle dependency edits were outside this worker's requested source focus.
-- No live HIKMICRO Mini2/F1/F2 hardware run was performed; Celsius/live-device parity is not claimed.
+- `u5.B.h0()` now reads static field `m` and compares it to `"ThgStart"` with `Intrinsics.areEqual`, matching DEX instructions `sget-object Lu5/B;->m` then `Intrinsics.areEqual`.
+- `u5.B.P0(String)` is the official setter path for field `m`; it now checks parameter name `product` and writes `m`.
+- `u5.B.l()`/`p()` map returns were corrected after DEX audit: `l()` returns `t`; `p()` returns `s`.
+- PreviewManagerII-reachable `u5.B` methods audited for this task: `k()` returns field `b`, `L()` calls `l2.k.e("PERFORMANCE_F22X", -1)`, `d0()` returns field `O`, and `h0()` returns `Intrinsics.areEqual(m, "ThgStart")`.
+
+## Parity boundary
+
+Do **not** treat this as full `u5.B` whole-class body parity. Current support keeps field/method ABI shape for the task17 support surface, but several non-reachable `u5.B` bodies and transitive models remain intentionally outside the accepted claim because official dependencies are not fully ported here:
+
+- `DeviceLoginModel`, `F1DeviceInfo`, and `OfflineFileModel` are compile support stubs, not official full object structures.
+- `u5.B.<clinit>()` does not reproduce official `OlmtLib` default credential calls or the full 1087-entry `S` serial array.
+- `hik.common.yyrj.businesscommon.b` is retained for PreviewManagerII preference reachability; no full preference-holder body parity is claimed beyond the audited reachable behavior.
+- No live-device, full app, or Celsius/temperature-conversion parity is claimed.
+
+## Verification to rerun after this commit
+
+Required gates for this follow-up:
+
+- `./gradlew compileDebugKotlin compileDebugUnitTestKotlin lintDebug`
+- focused task17/G007 unit tests including `Task17AdditionalParityGateTest` and `G007PreviewInitClosureTest`
+- `git diff --check`
+- `javap`/scan evidence for `u5.B` reachable descriptors and absence of Companion/accessor artifacts in `d2.a`, `Z2.a`, `hik.common.yyrj.businesscommon.b`, and `u5.B`.
