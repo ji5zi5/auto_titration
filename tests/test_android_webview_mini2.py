@@ -1,12 +1,24 @@
 from pathlib import Path
-import json
 import re
+import subprocess
 import unittest
 
 
-ANDROID_ROOT = Path("mobile/android")
+ROOT = Path(__file__).resolve().parents[1]
+ANDROID_ROOT = ROOT / "mobile/android"
 JAVA_ROOT = ANDROID_ROOT / "app/src/main/java/kr/auto/titration/mobile"
-WEBSITE_ROOT = Path("website")
+WEBSITE_ROOT = ROOT / "website"
+TECH_ANALYSIS = ROOT / "_workspace/hikmicro-analysis-20260714/final-technical-analysis.md"
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def function_slice(source: str, start: str, end: str | None = None) -> str:
+    begin = source.index(start)
+    finish = source.index(end, begin) if end else len(source)
+    return source[begin:finish]
 
 
 class AndroidWebViewMini2Tests(unittest.TestCase):
@@ -326,7 +338,9 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("NATIVE_LOAD_RETRY_INTERVAL_MS", backend)
         self.assertIn("cachedReportLoadedAtMs", backend)
         self.assertIn("forceRetry", backend)
-        self.assertIn("!cached.allLoaded", backend)
+        self.assertIn("coreLoadedFor(moduleType)", backend)
+        self.assertIn("attempted_libraries_loaded", backend)
+        self.assertNotIn("!cached.allLoaded", backend)
         self.assertIn("forceNativeLoad", probe)
 
     def test_webview_header_is_removed_but_status_remains_visible(self):
@@ -373,7 +387,8 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("native_symbol_discovery", status_model + backend + probe)
         self.assertIn("frame_counter", status_model)
         self.assertIn("thermal_preview_data_url", status_model)
-        self.assertNotIn("temperature_avg_c", status_model + probe)
+        self.assertIn('put("temperature_avg_c", summary?.avgC ?: JSONObject.NULL)', status_model)
+        self.assertNotIn("temperature_avg_c || 0", adapter)
         self.assertIn("showAndroidThermalPlaceholder", adapter)
         self.assertIn("적외선 화면 대기", adapter)
         self.assertIn("Mini2 연결 재시도 중", adapter)
@@ -411,9 +426,14 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("F2UsbModuleHelper.INSTANCE", stream)
         self.assertIn("latestFrameSnapshot", stream)
         self.assertIn("thermal_preview_data_url", stream)
-        self.assertIn("USB_FRAME_INFO", helper)
+        java_interface = (interface_root / "JavaInterface.kt").read_text(encoding="utf-8")
+        preview_manager = (ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
+        g3_factory = (ANDROID_ROOT / "app/src/main/java/g3/b.java").read_text(encoding="utf-8")
         for token in ["USB_Init", "USB_Login", "USB_StartStreamCallback", "USB_DEVICE_INFO", "USB_USER_LOGIN_INFO", "USB_DEVICE_REG_RES"]:
-            self.assertIn(token, helper + jna)
+            self.assertIn(token, helper + jna + java_interface)
+        for token in ["PreviewManagerIIAppBinding", "processor.d(packet)", "officialProcessedF2PacketDimensions", "g3.b.a.a"]:
+            self.assertIn(token, stream + preview_manager)
+        self.assertIn("case 12: return streamingNew ? new g3.e(streamInfoDeal) : new g3.d(streamInfoDeal);", g3_factory)
 
     def test_mini2_routes_official_f1_f2_backends_by_vid_pid(self):
         route = (JAVA_ROOT / "thermal/HikmicroMini2ModuleType.kt").read_text(encoding="utf-8")
@@ -450,7 +470,7 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             "com/hik/f2module/F2UsbModuleApi.kt",
             "com/hik/f2module/F2UsbModuleHelper.kt",
             "com/hik/viewercommon/data/device/api/callback/F2ModuleStreamCallback.kt",
-            "com/hik/viewer/manager/PreviewManagerII.kt",
+            "com/hik/viewer/manager/PreviewManagerII.java",
         ]
         for rel in expected:
             with self.subTest(rel=rel):
@@ -524,9 +544,10 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         for token in ["sdkInited", "deviceInfoList", "userId", "channel"]:
             self.assertIn(token, helper)
 
+        start_locked = function_slice(api, "private fun startStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
         self.assertLess(
-            api.index("helper.stopStreamPreview(context, streamingNew)"),
-            api.index("helper.startStreamPreview"),
+            start_locked.index("helper.stopStreamPreview(context, config.streamingNew)"),
+            start_locked.index("helper.startStreamPreview"),
         )
 
         for forbidden in [
@@ -547,13 +568,14 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
 
         self.assertLess(helper.index("if (!sdkInited)"), helper.index("USB_GetDeviceCount(context)"))
         self.assertLess(helper.index("USB_GetDeviceCount(context)"), helper.index("USB_EnumDevices(count"))
-        self.assertLess(helper.index("cleanupPreviousOfficialF2Login()"), helper.index("USB_Login(loginInfo"))
-        self.assertIn("nativeEnum=count=", helper)
-        open_slice = helper.split("fun openUsbDevice(", 1)[1].split("fun openUsbDevice(context: Context): Boolean", 1)[0]
-        self.assertIn("val nativeEnumCount = runCatching { javaInterface.USB_GetDeviceCount() }.getOrDefault(-1)", open_slice)
+        self.assertIn("enumerationInventory=", helper)
+        open_slice = function_slice(helper, "fun openUsbDevice(\n        context: Context", "    @Synchronized\n    fun openUsbDevice(context: Context)")
+        self.assertLess(open_slice.index("cleanupPreviousOfficialF2Login"), open_slice.index("USB_Login(loginInfo"))
+        self.assertIn("officialSelection=deviceInfoList[0]", open_slice)
 
-        self.assertLess(api.index("helper.stopStreamPreview(context, streamingNew)"), api.index("helper.startStreamPreview"))
-        start_slice = helper[helper.index("private fun startStreamPreviewCandidate"):]
+        start_locked = function_slice(api, "private fun startStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
+        self.assertLess(start_locked.index("helper.stopStreamPreview(context, config.streamingNew)"), start_locked.index("helper.startStreamPreview"))
+        start_slice = function_slice(helper, "fun startStreamPreview(\n        fStreamCallBack: FStreamCallBack", "    @Synchronized\n    fun stopStreamPreview")
         self.assertLess(start_slice.index("USB_SetVideoParam"), start_slice.index("USB_StartStreamCallback"))
         self.assertLess(start_slice.index("USB_StartStreamCallback"), start_slice.index("USB_SetThermalStreamParam"))
         self.assertLess(start_slice.index("USB_SetThermalStreamParam"), start_slice.index("Thread.sleep(100)"))
@@ -570,37 +592,46 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         ]:
             self.assertIn(token, helper)
 
-    def test_mini2_error29_regression_reconciles_official_thermal_coding_type_12(self):
-        payload = json.loads(Path("error6.txt").read_text(encoding="utf-8"))
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        api = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt").read_text(encoding="utf-8")
-        readme = (ANDROID_ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("USB_StartStreamCallback=ok channel=0", payload["rawStageReport"])
-        self.assertIn("USB_SET_THERMAL_STREAM_PARAM=failed command=2039 videoCodingType=12 error=29", payload["rawStageReport"])
-        self.assertIn("HIKMICRO_PREVIEW_HEIGHT: Int = 344", helper)
-        self.assertIn("HIKMICRO_THERMAL_VIDEO_CODING_TYPE: Int = 12", helper)
-        self.assertNotIn("HIKMICRO_THERMAL_VIDEO_CODING_TYPE: Int = 8", helper)
-        self.assertIn("mini2_f2_p20_256x344_thermal_type12", helper)
+    def test_mini2_error29_regression_reconciles_official_thermal_param_nonfatal_contract(self):
+        """error6/error8 logs are gone; lock the durable source/evidence contract instead.
+
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §1, §5.2, §6.
+        """
+        analysis = read(TECH_ANALYSIS)
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        api = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt")
+        readme = read(ANDROID_ROOT / "README.md")
+
+        self.assertIn("오류 29", analysis)
+        self.assertIn("USB_SetThermalStreamParam", analysis)
+        self.assertIn("실패를 비치명적으로 처리", analysis)
         self.assertIn("thermal coding `12`", readme)
-        self.assertIn("videoCodingType: Int = HIKMICRO_THERMAL_VIDEO_CODING_TYPE", api)
+        self.assertIn("HIKMICRO_THERMAL_VIDEO_CODING_TYPE: Int = 12", helper)
+        self.assertIn("videoCodingTypeOverride ?: profile.thermalCoding", api)
+        self.assertNotIn("HIKMICRO_THERMAL_VIDEO_CODING_TYPE: Int = 8", helper)
+        start_candidate = function_slice(helper, "fun startStreamPreview(\n        fStreamCallBack: FStreamCallBack", "    @Synchronized\n    fun stopStreamPreview")
+        self.assertLess(start_candidate.index("USB_StartStreamCallback(callbackParam)"), start_candidate.index("USB_SetThermalStreamParam(videoCodingType)"))
+        self.assertNotIn("USB_SET_THERMAL_STREAM_PARAM=failed_nonfatal", helper)
+        self.assertNotIn("diagnostic_fallback_format_ladder", helper)
+
 
     def test_mini2_stop_lifecycle_verifies_thermal_ctrl_before_stop_channel(self):
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        java_interface = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt").read_text(encoding="utf-8")
-        jna = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/jna/HCUSBSDKByJNA.kt").read_text(encoding="utf-8")
-        decompiled = Path(".omx/analysis/hikmicro_viewer_xapk/deep_callbacks_helpers_methods.txt").read_text(encoding="utf-8")
+        """Stop must use bounded thermal-control teardown before channel stop.
 
-        official_stop = decompiled.split("## METHOD stopStreamPreview (Landroid/content/Context; Z)Z", 1)[1]
-        self.assertIn("USB_GetThermalStreamCtrl", official_stop)
-        self.assertIn("USB_SetThermalStreamCtrl2", official_stop)
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §5.2 establishes
+        the official stream lifecycle; source locks the app's conservative 100-poll safety teardown.
+        """
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        java_interface = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt")
+        jna = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/jna/HCUSBSDKByJNA.kt")
 
         for token in [
             "USB_GetDeviceConfig",
             "USB_GetThermalStreamCtrl",
             "getThermalStreamCtrlState",
             "verifyThermalStreamCtrlDisabled",
-            "OFFICIAL_STOP_THERMAL_CTRL_MAX_RETRIES",
+            "OFFICIAL_STOP_THERMAL_CTRL_MAX_RETRIES: Int = 100",
             "streamEnable=",
             "retryIndex=",
             "USB_SetThermalStreamCtrl(false)#retry",
@@ -608,95 +639,137 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, helper + java_interface + jna)
 
-        stop_slice = helper.split("fun stopStreamPreview(", 1)[1].split("fun closeSession", 1)[0]
+        stop_slice = function_slice(helper, "fun stopStreamPreview(context: Context", "    @Synchronized\n    fun closeSession")
         self.assertLess(stop_slice.index("setThermalStreamCtrl(currentUserId, enable = false)"), stop_slice.index("verifyThermalStreamCtrlDisabled"))
         self.assertLess(stop_slice.index("verifyThermalStreamCtrlDisabled"), stop_slice.index("USB_StopChannel"))
+        verify_slice = function_slice(helper, "private fun verifyThermalStreamCtrlDisabled", "    private fun clearOfficialCallbackSlots")
+        self.assertIn("0..OFFICIAL_STOP_THERMAL_CTRL_MAX_RETRIES", verify_slice)
+        self.assertIn("coerceAtMost(100L)", verify_slice)
 
-    def test_mini2_first_frame_wait_uses_official_patience_and_reuses_active_session(self):
+    def test_mini2_first_frame_wait_explicit_retry_cleans_and_passive_poll_does_not_restart(self):
         stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
-        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
 
         self.assertIn("const val FRAME_WAIT_TIMEOUT_MS = 30_000L", stream)
-        self.assertIn("STREAM_RETRY_INTERVAL_MS = 30_500L", stream)
-        self.assertIn("active_session_reuse_no_restart", stream)
-        self.assertIn("elapsedMs=$elapsed", stream)
-        self.assertIn("MINI2_MANUAL_PROBE_MIN_INTERVAL_MS = 10000", adapter)
+        self.assertNotIn("STREAM_RETRY_INTERVAL_MS = 30_500L", stream)
+        self.assertNotIn("active_session_reuse_no_restart", stream)
+        self.assertNotIn("retry_throttled", stream)
+        ensure_entry = function_slice(stream, "fun ensureStreaming(", "    /**\n     * Passive status polling")
+        self.assertIn("explicit manual confirm forces fresh official retry", ensure_entry)
+        self.assertIn("f2Helper.closeSession()", ensure_entry)
+        self.assertIn("f2Api.openUsbModule(", ensure_entry)
+        self.assertLess(ensure_entry.index("f2Helper.closeSession()"), ensure_entry.index("f2Api.openUsbModule("))
+        passive_entry = function_slice(stream, "fun peekActiveStatus(", "    @Synchronized\n    fun latestRawFrameSummary")
+        self.assertIn("passive_status_peek is read-only", passive_entry)
+        self.assertNotIn("f2Api.openUsbModule(", passive_entry)
+
 
     def test_mini2_error8_regression_active_probe_uses_official_public_api_interface_route(self):
-        payload = json.loads(Path("error8.txt").read_text(encoding="utf-8"))
-        decompiled = Path(".omx/analysis/hikmicro_viewer_xapk/deep_f1_f2_key_methods.txt").read_text(encoding="utf-8")
-        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
+        """Official UI path is interface/JNI, not direct JNA.
 
-        self.assertEqual(payload["classification"], "thermal_stream_param_failed_error29_after_callback_ok")
-        self.assertIn("videoCodingType=8 error=29", payload["rawStageReport"])
-        self.assertTrue(payload["official_wrapper_parity"]["checks"]["startStreamPreviewJNA"])
-        self.assertIn("## METHOD startStreamPreview (Lm2/a;)Lcom/hik/library/data/ApiResult;", decompiled)
-        self.assertIn("getFStreamCallBack()Lcom/hcusbsdk/Interface/FStreamCallBack", decompiled)
-        self.assertIn("F2UsbModuleHelper;->startStreamPreview(Lcom/hcusbsdk/Interface/FStreamCallBack;", decompiled)
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §5.1-§5.3.
+        """
+        analysis = read(TECH_ANALYSIS)
+        api = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
 
-        ensure_entry = stream.split("fun ensureStreaming(", 1)[1].split("fun peekActiveStatus", 1)[0]
+        self.assertIn("공식 UI의 F2 기본 시작 경로", analysis)
+        self.assertIn("직접 JNA 콜백이 아니라 JNI 콜백", analysis)
+        api_entry = function_slice(api, "private fun startStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
+        self.assertIn("streamCallback.getFStreamCallBack()", api_entry)
+        self.assertNotIn("wrapCalibrationPrefetchCallbacks", api)
+        self.assertIn("helper.startStreamPreview(", api_entry)
+        self.assertNotIn("getFStreamCallBackJNA", api_entry)
+        self.assertNotIn("startStreamPreviewJNA", api_entry)
+        ensure_entry = function_slice(stream, "fun ensureStreaming(", "    /**\n     * Passive status polling")
         self.assertIn("f2Api.startStreamPreview(", ensure_entry)
-        self.assertIn("callback = { frame -> captureOfficialF2Frame(frame) }", ensure_entry)
+        self.assertIn("callback = { frame ->", ensure_entry)
+        self.assertIn("captureOfficialF2Frame(frame)", ensure_entry)
+        self.assertIn("onOfficialPreviewSuccess(context.cacheDir)", ensure_entry)
+        self.assertLess(ensure_entry.index("captureOfficialF2Frame(frame)"), ensure_entry.index("onOfficialPreviewSuccess(context.cacheDir)"))
         self.assertNotIn("f2Api.startStreamPreviewJNA", ensure_entry)
 
+
+    def test_mini2_waiting_status_surfaces_java_interface_callback_and_invalid_packet_diagnostics(self):
+        status = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
+        api = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt")
+
+        for token in [
+            "java_interface_callback_entry_count",
+            "java_interface_callback_entry_detail",
+            "invalid_packet_size_timeout",
+            "observed_packet_size",
+            "allowed_packet_sizes",
+            "profile_class",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, status)
+        self.assertIn("JavaInterface.getInstance().streamCallbackEntryCount", stream)
+        self.assertIn("JavaInterface.getInstance().lastStreamCallbackEntryDetail", stream)
+        self.assertIn("onInvalidPacketSizeTimeout", api)
+        self.assertIn("onInvalidPacketSizeTimeout = { packetSize, elapsedMs ->", stream)
+        self.assertIn("lastInvalidPacketDiagnostic = Mini2InvalidPacketDiagnostic", stream)
+
+    def test_f2_open_logs_inventory_and_uses_context_enumerated_first_device_without_fallback_ladder(self):
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        java_interface = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt")
+
+        self.assertIn("enumerationInventory=", helper)
+        self.assertIn("officialSelection=deviceInfoList[0]", helper)
+        self.assertIn("private fun selectOfficialContextEnumeratedDeviceInfo(): USB_DEVICE_INFO?", helper)
+        selection = function_slice(helper, "private fun selectOfficialContextEnumeratedDeviceInfo", "    private fun normalizeOfficialFirmwareVersion")
+        self.assertIn("deviceInfoList.firstOrNull()", selection)
+        self.assertNotIn("?:", selection)
+        enum_slice = function_slice(java_interface, "fun USB_GetDeviceCount(context: Context)", "    fun USB_EnumDevices(count")
+        self.assertNotIn("sortedWith(compareBy<UsbDevice>", enum_slice)
+
+
     def test_mini2_error8_thermal_param_failure_is_official_nonfatal_after_callback_start(self):
-        payload = json.loads(Path("error8.txt").read_text(encoding="utf-8"))
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
+        """SetVideo and SetThermalParam failures remain diagnostic/nonfatal where official ordering allows it.
 
-        self.assertEqual(payload["startMode"], "official_jna_wrapper")
-        self.assertTrue(payload["official_wrapper_parity"]["checks"]["startStreamPreviewJNA"])
-        self.assertIn("USB_StartStreamCallback=ok channel=0", payload["rawStageReport"])
-        self.assertIn("USB_SET_THERMAL_STREAM_PARAM=failed command=2039 videoCodingType=8 error=29", payload["rawStageReport"])
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §5.2.
+        """
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
 
-        self.assertIn("thermalParamSummary", helper)
-        self.assertIn("USB_SET_THERMAL_STREAM_PARAM=failed_nonfatal", helper)
-        self.assertIn("official_continue_after_thermal_param_result", helper)
-        self.assertIn("thermalCtrlSummary", helper)
-        self.assertIn("USB_SET_THERMAL_STREAM_CTRL=failed_nonfatal", helper)
-        self.assertNotIn('lastFailureReason = "USB_SetThermalStreamParam failed error=$error"', helper)
-        self.assertNotIn('stopCurrentChannelAfterStartFailure("thermal_param_failed")', helper)
+        start_candidate = function_slice(helper, "fun startStreamPreview(\n        fStreamCallBack: FStreamCallBack", "    @Synchronized\n    fun stopStreamPreview")
+        self.assertLess(start_candidate.index("USB_SetVideoParam"), start_candidate.index("USB_StartStreamCallback(callbackParam)"))
+        self.assertLess(start_candidate.index("USB_StartStreamCallback(callbackParam)"), start_candidate.index("USB_SetThermalStreamParam"))
+        self.assertLess(start_candidate.index("USB_SetThermalStreamParam"), start_candidate.index("Thread.sleep(100)"))
+        self.assertLess(start_candidate.index("Thread.sleep(100)"), start_candidate.index("USB_SetThermalStreamCtrl"))
+        self.assertNotIn("USB_SET_VIDEO_PARAM=failed_nonfatal", helper)
+        self.assertNotIn("USB_SET_THERMAL_STREAM_PARAM=failed_nonfatal", helper)
+        self.assertNotIn("diagnostic_fallback_format_ladder", helper)
         self.assertIn("thermal_stream_param_nonfatal_waiting_for_frame", adapter)
-        self.assertLess(
-            adapter.index("thermal_stream_param_nonfatal_waiting_for_frame"),
-            adapter.index("thermal_stream_param_failed_error29_after_callback_ok"),
-        )
+        self.assertLess(adapter.index("thermal_stream_param_nonfatal_waiting_for_frame"), adapter.index("thermal_stream_param_failed_error29_after_callback_ok"))
+
 
     def test_mini2_f2_context_enum_keeps_native_count_warmup_before_login(self):
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        error4 = json.loads(Path("error4.txt").read_text(encoding="utf-8"))
-        earlier_login_ok = json.loads(Path("error.txt").read_text(encoding="utf-8"))
+        """Replaces missing error4/error.txt replay logs with the current source contract."""
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        open_slice = function_slice(helper, "fun openUsbDevice(\n        context: Context", "    @Synchronized\n    fun openUsbDevice(context: Context)")
 
-        self.assertIn("nativeEnum=not_run_official_context_route", error4["rawStageReport"])
-        self.assertIn("USB_Login=failed error=13", error4["rawStageReport"])
-        self.assertIn("nativeEnum=count=0", earlier_login_ok["rawStageReport"])
-        self.assertIn("USB_Login(deviceInfoList[0])=ok", earlier_login_ok["rawStageReport"])
-
-        open_slice = helper.split("fun openUsbDevice(", 1)[1].split("val selected = selectDevice", 1)[0]
-        self.assertIn("val nativeEnumCount = runCatching { javaInterface.USB_GetDeviceCount() }.getOrDefault(-1)", open_slice)
-        self.assertIn("nativeEnum=count=$nativeEnumCount", helper)
+        self.assertLess(open_slice.index("USB_GetDeviceCount(context)"), open_slice.index("USB_EnumDevices(count"))
+        self.assertLess(open_slice.index("USB_EnumDevices"), open_slice.index("selectOfficialContextEnumeratedDeviceInfo()"))
+        self.assertLess(open_slice.index("cleanupPreviousOfficialF2Login"), open_slice.index("USB_Login(loginInfo"))
+        self.assertIn("enumerationInventory=", open_slice)
+        self.assertIn("officialSelection=deviceInfoList[0]", open_slice)
+        self.assertIn("USB_Login(deviceInfoList[0])=ok", open_slice)
         self.assertNotIn("nativeEnum=not_run_official_context_route", helper)
 
+
     def test_mini2_f2_login_inputs_match_official_helper_without_serial_selector(self):
-        decompiled = Path(".omx/analysis/hikmicro_viewer_xapk/deep_callbacks_helpers_methods.txt").read_text(encoding="utf-8")
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
+        """Login must use selected device index/VID/PID/fd, not a serial-number selector.
 
-        official_login = decompiled.split(
-            "## METHOD USB_Login (Lcom/hcusbsdk/Interface/USB_DEVICE_INFO;)Lkotlin/Pair;",
-            1,
-        )[1].split("## METHOD USB_Logout", 1)[0]
-        for token in [
-            "USB_USER_LOGIN_INFO",
-            "->dwDevIndex I",
-            "->dwVID I",
-            "->dwPID I",
-            "->byLoginMode B",
-            "->dwFd I",
-        ]:
-            self.assertIn(token, official_login)
-        self.assertNotIn("->szSerialNumber", official_login)
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §4.2.
+        """
+        analysis = read(TECH_ANALYSIS)
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        login_info = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/USB_USER_LOGIN_INFO.kt")
 
-        open_slice = helper.split("fun openUsbDevice(", 1)[1].split("val reg = USB_DEVICE_REG_RES", 1)[0]
+        self.assertIn("공식 로그인 구조체", analysis)
+        self.assertIn("dwFd", analysis)
+        open_slice = function_slice(helper, "val loginInfo = USB_USER_LOGIN_INFO().apply", "        val reg = USB_DEVICE_REG_RES")
         for token in [
             "dwDevIndex = selected.dwIndex",
             "dwVID = selected.dwVID",
@@ -706,92 +779,81 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         ]:
             self.assertIn(token, open_slice)
         self.assertNotIn("szSerialNumber = selected.szSerialNumber", open_slice)
+        self.assertIn("var dwFd: Int", login_info)
 
-    def test_mini2_f2_primary_entry_matches_decompiled_start_stream_preview_and_callback_holder(self):
-        decompiled = Path(".omx/analysis/hikmicro_viewer_xapk/deep_callbacks_helpers_methods.txt").read_text(encoding="utf-8")
-        api = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt").read_text(encoding="utf-8")
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        callback_holder = (ANDROID_ROOT / "app/src/main/java/com/hik/viewercommon/data/device/api/callback/F2ModuleStreamCallback.kt").read_text(encoding="utf-8")
-        preview_manager = (ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.kt").read_text(encoding="utf-8")
 
-        official_jna = decompiled.split("## METHOD startStreamPreviewJNA (", 1)[1].split("## METHOD stopStreamPreview", 1)[0]
-        for token in [
-            "USB_SetVideoParam",
-            "USB_StartStreamCallbackJNA",
-            "USB_SetThermalStreamParam",
-            "Thread;->sleep",
-            "USB_SetThermalStreamCtrl",
-        ]:
-            self.assertIn(token, official_jna)
+    def test_mini2_f2_primary_entry_matches_current_start_stream_preview_and_callback_holder(self):
+        """Primary route uses stream type 103 with no diagnostic format ladder.
 
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §5.2.
+        """
+        api = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt")
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        callback_holder = read(ANDROID_ROOT / "app/src/main/java/com/hik/viewercommon/data/device/api/callback/F2ModuleStreamCallback.kt")
+        preview_manager = read(ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java")
+
+        g3_sources = "".join(read(path) for path in sorted((ANDROID_ROOT / "app/src/main/java/g3").glob("*.java")))
         self.assertIn("F2ModuleStreamCallback", api + callback_holder)
         self.assertIn("getFStreamCallBack()", api + callback_holder)
         self.assertIn("helper.startStreamPreview(", api)
-        self.assertIn("PreviewManagerII.INSTANCE.createF2ModuleStreamCallback", api)
-        self.assertIn("fun startStreamPreviewJNA(", helper)
-        self.assertIn("FStreamCallBack_JNA", callback_holder + preview_manager + helper)
-        self.assertIn("officialF2AllowedPacketSizes", preview_manager)
-        self.assertIn("101_320", preview_manager)
-        self.assertIn("98_304", preview_manager)
-        self.assertIn("183_496", preview_manager)
-        self.assertIn("400_584", preview_manager)
-        self.assertIn("41_160", preview_manager)
+        self.assertIn("PreviewManagerIIAppBinding.manager()", api)
+        self.assertIn("PreviewManagerIIAppBinding.bind(previewManager, callback)", api)
+        self.assertIn("new g3.d(streamInfoDeal)", g3_sources)
+        self.assertIn("new g3.e(streamInfoDeal)", g3_sources)
+        self.assertIn("processor.d(packet)", preview_manager)
+        known_packet_sizes = function_slice(preview_manager, "officialProcessedF2PacketDimensions", "    void onOfficialSurfaceCreated")
+        self.assertEqual(
+            {"41160", "61384", "101320", "183496", "193480", "203720", "400584"},
+            set(re.findall(r"case (\d+)", known_packet_sizes)),
+        )
+        for unproven_size in ["98304", "221184"]:
+            self.assertNotIn(f"case {unproven_size}", known_packet_sizes)
 
-        official_entry = helper.split("fun startStreamPreviewJNA(", 1)[1].split("fun startStreamPreview(", 1)[0]
-        self.assertIn("official_f2_startStreamPreviewJNA_behavior_clone", official_entry)
-        self.assertIn("JnaUSB_STREAM_CALLBACK_PARAM", official_entry)
-        self.assertIn("official startStreamPreviewJNA$1 compatibility callback slot", official_entry)
-        self.assertIn("officialPrimaryJnaCandidate.copy", official_entry)
-        self.assertIn("videoFormat = streamType", official_entry)
-        self.assertIn("callbackStreamType = streamType", official_entry)
-        self.assertIn("startStreamPreviewCandidate", official_entry)
-        self.assertNotIn("diagnostic_fallback_format_ladder", official_entry)
-
-        interface_entry = helper.split("fun startStreamPreview(", 1)[1].split("fun stopStreamPreview", 1)[0]
-        self.assertIn("USB_STREAM_CALLBACK_PARAM", interface_entry)
-        self.assertIn("official_f2_startStreamPreview_behavior_clone", interface_entry)
-        self.assertIn("startStreamPreviewCandidate", interface_entry)
+        interface_entry = function_slice(helper, "fun startStreamPreview(\n        fStreamCallBack: FStreamCallBack", "    @Synchronized\n    fun stopStreamPreview")
+        self.assertIn("dwStreamType = streamType", interface_entry)
+        self.assertIn("USB_StartStreamCallback(callbackParam)", interface_entry)
+        self.assertNotIn("startStreamPreviewCandidate", interface_entry)
+        self.assertNotIn("diagnostic_fallback_format_ladder", interface_entry)
 
     def test_mini2_error84_recovery_uses_official_primary_without_ladder(self):
         helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        java_interface = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt").read_text(encoding="utf-8")
+        api = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt").read_text(encoding="utf-8")
         stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
         bridge = (JAVA_ROOT / "AndroidBridge.kt").read_text(encoding="utf-8")
         activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
+        combined = helper + api + stream + bridge + activity + adapter
 
-        self.assertIn("USB_StartStreamCallbackJNA", helper)
-        self.assertIn("USB_StartStreamCallbackJNA", java_interface)
-        self.assertIn("USB_StartStreamCallback_jna", java_interface)
-        self.assertIn("HCUSBSDK.getInstance().USB_StartStreamCallback", java_interface)
-        self.assertIn("Pointer.NULL", java_interface)
-        self.assertIn("dwSize = nativeParam.size()", java_interface)
+        self.assertIn("PreviewManagerIIAppBinding.manager()", api)
+        self.assertIn("PreviewManagerIIAppBinding.bind(previewManager, callback)", api)
+        self.assertIn("helper.startStreamPreview(", api)
+        self.assertIn("USB_StartStreamCallback(callbackParam)", helper)
+        self.assertIn("OFFICIAL_PRIMARY stopped after official F2 startStreamPreview failure", stream)
+        for forbidden in [
+            "F2StreamStartMode",
+            "F2ResetMode",
+            "HIKMICRO_PRIMARY_VIDEO_FORMAT_CANDIDATES",
+            "HIKMICRO_VERBOSE_VIDEO_FORMAT_CANDIDATES",
+            "diagnostic_fallback_format_ladder",
+            "MANUAL_DIAGNOSTIC",
+            "startMini2DiagnosticProbe",
+            "runManualDiagnosticFormatLadder",
+        ]:
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, combined)
 
-        self.assertIn("F2StreamStartMode.OFFICIAL_JNA", helper)
-        self.assertIn("official_primary_f2_lifecycle_jna", helper)
-        self.assertIn("next=official_primary_error_report", helper)
-        self.assertNotIn("F2StreamStartMode.OFFICIAL_JNI", helper)
-        self.assertNotIn("official_primary_f2_lifecycle_jni_compare", helper)
-        self.assertNotIn("HIKMICRO_PRIMARY_VIDEO_FORMAT_CANDIDATES", helper)
-        self.assertNotIn("HIKMICRO_VERBOSE_VIDEO_FORMAT_CANDIDATES", helper)
-        self.assertNotIn("diagnostic_fallback_format_ladder", helper + stream + bridge + activity + adapter)
-        self.assertNotIn("MANUAL_DIAGNOSTIC", helper + stream + bridge + activity + adapter)
-        self.assertNotIn("startMini2DiagnosticProbe", bridge + activity + adapter)
-
-        official_entry = stream.split("fun ensureStreaming(", 1)[1].split("private fun waitingForFrameStatus", 1)[0]
-        self.assertIn("OFFICIAL_PRIMARY stopped after official F2 startStreamPreview failure", official_entry)
-        self.assertNotIn("runManualDiagnosticFormatLadder", official_entry)
 
     def test_mini2_error84_lifecycle_and_diagnostics_are_structured(self):
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        status_model = (JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt").read_text(encoding="utf-8")
-        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
-        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
 
-        self.assertIn("lightweight_start_retry_no_fd_close", helper)
-        self.assertIn("full_reset_stop_channel_logout_close_selected_connection", helper)
-        self.assertLess(helper.index("USB_StopChannel"), helper.index("USB_Logout"))
-        self.assertLess(helper.index("USB_Logout"), helper.index("closeConnection"))
+        self.assertIn("official_login_reset", helper)
+        self.assertIn("USB_StopChannel", helper)
+        cleanup_slice = function_slice(helper, "private fun cleanupPreviousOfficialF2Login", "    private fun setThermalStreamCtrl")
+        self.assertLess(cleanup_slice.index("USB_StopChannel"), cleanup_slice.index("USB_Logout"))
+        self.assertLess(cleanup_slice.index("USB_Logout"), cleanup_slice.index("closeConnection"))
 
         for token in [
             "stream_diagnostics",
@@ -813,8 +875,11 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("MAX_PREVIEW_PIXELS", stream)
         self.assertIn("HIKMICRO_THERMAL_IMAGE_WIDTH", stream)
         self.assertIn("HIKMICRO_THERMAL_IMAGE_HEIGHT", stream)
-        self.assertIn("availableRows", stream)
         self.assertIn("pixelCount > MAX_PREVIEW_PIXELS", stream)
+        self.assertIn("unsupported_no_matrix", stream)
+        preview_manager = read(ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java")
+        self.assertIn("officialProcessedF2PacketDimensions", preview_manager)
+        self.assertIn("PreviewManagerIIAppBinding.afterOfficialG", preview_manager)
         for token in ["fd", "userId", "user_id", "channel"]:
             with self.subTest(native_field=token):
                 self.assertIn(token, status_model + stream)
@@ -826,8 +891,8 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
 
-        self.assertIn("official_primary_f2_lifecycle", helper)
-        self.assertIn("formatAttempts=", helper)
+        self.assertIn("USB_StartStreamCallback(callbackParam)", helper)
+        self.assertIn("F2UsbModuleApi", stream)
         self.assertIn("enum class Mini2OfficialRuntimeMode", stream + activity)
         self.assertIn("OFFICIAL_PRIMARY", stream + activity + adapter)
         self.assertNotIn("MANUAL_DIAGNOSTIC", stream + activity + adapter)
@@ -836,29 +901,18 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertNotIn("runManualDiagnosticFormatLadder", helper + stream)
         self.assertNotIn("diagnostic_fallback_format_ladder", helper + stream + bridge + activity + adapter)
 
-    def test_mini2_asdf_error84_replay_preserves_f2_last_stream_attempt(self):
-        fixture = Path("asdf.txt")
-        self.assertTrue(fixture.is_file(), "asdf.txt must stay available as the live error84 replay fixture")
-        payload = json.loads(fixture.read_text(encoding="utf-8"))
-        raw_stream = payload["mini2"]["raw_stream"]
-        stage_report = raw_stream["stage_report"]
 
-        self.assertEqual(payload["classification"], "callback_start_failed_error84_after_video_ok")
-        self.assertEqual(payload["lastError"], 84)
-        self.assertEqual(payload["setVideoStatus"], "ok")
-        self.assertEqual(payload["startStatus"], "failed")
-        self.assertIn("official_apk_vid_pid_route 11231:258 -> F2 HCUSBSDK", raw_stream["device_route"])
-        self.assertIn("USB_Login(deviceInfoList[0])=ok userId=181 dwFd=181", stage_report)
-        self.assertIn("USB_SET_VIDEO_PARAM=ok videoFormat=103 size=256x392 fps=25", stage_report)
-        self.assertIn("startStream=failed error=84", stage_report)
-        self.assertEqual(payload["mini2"]["last_usb_event"], "android.hardware.usb.action.USB_DEVICE_DETACHED")
-        self.assertEqual(payload["mini2"]["mini2_route_reason"], "device_not_found")
-
-        status_model = (JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt").read_text(encoding="utf-8")
-        probe = (JAVA_ROOT / "Mini2UsbProbe.kt").read_text(encoding="utf-8")
-        activity = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
-        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
+    def test_mini2_error84_secondhand_evidence_preserves_f2_last_stream_attempt_fields(self):
+        """asdf.txt is historical and missing; retain reconstructable source/analysis assertions only."""
+        analysis = read(TECH_ANALYSIS)
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        probe = read(JAVA_ROOT / "Mini2UsbProbe.kt")
+        activity = read(JAVA_ROOT / "MainActivity.kt")
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
         combined = status_model + probe + activity + adapter
+
+        self.assertIn("asdf.txt", analysis)
+        self.assertIn("원문은 현재 작업공간과 git 이력에서 사라졌", analysis)
         for token in [
             "current_usb_presence",
             "last_stream_attempt",
@@ -871,10 +925,150 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, combined)
 
-    def test_mini2_error84_screenshot_clusters_are_classified_and_visible_summary_is_bounded(self):
+    def test_android_webview_g004_diagnostics_separate_presence_attempt_profile_packet_converter(self):
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
-        index = (WEBSITE_ROOT / "index.html").read_text(encoding="utf-8")
-        status_model = (JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt").read_text(encoding="utf-8")
+        diagnostic_fn = adapter[
+            adapter.index("function buildMini2DiagnosticExport"):
+            adapter.index("  function updateMini2DiagnosticExport")
+        ]
+
+        for token in [
+            "explicitLastStreamAttempt",
+            "hasExplicitLastStreamAttempt",
+            "const lastAttempt = hasExplicitLastStreamAttempt ? explicitLastStreamAttempt : rawStream",
+            "const currentPresence = isAndroidPlainObject(mini2.current_usb_presence)",
+            "lastAttemptRoute",
+            "currentPresenceRoute",
+            "currentUsbPresence",
+            "lastStreamAttempt",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, diagnostic_fn)
+
+        for token in [
+            "selectedProfile",
+            "packetClassification",
+            "packetStatus",
+            "converterValidation",
+            "converterProfileStatus",
+            "celsiusPublishState",
+            "validationEvidence",
+            "androidRegexValue(stageReport, /selectedProfile=",
+            "androidRegexValue(lastAttempt.reason || rawStream.reason || live.mini2_reason || stageReport, /packet_classification=",
+        ]:
+            with self.subTest(diagnostic_field=token):
+                self.assertIn(token, diagnostic_fn)
+
+    def test_android_webview_g004_sanitizes_unavailable_celsius_and_unproven_thermal_roi(self):
+        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
+        sanitize_fn = adapter[
+            adapter.index("function hasProvenAndroidRawMatrix"):
+            adapter.index("  function classifyMini2StageReport")
+        ]
+        apply_fn = adapter[
+            adapter.index("function applyBridgePayload"):
+            adapter.index("  function replaceButtonHandler")
+        ]
+
+        for token in [
+            "function sanitizeAndroidBridgePayload",
+            "function hasProvenAndroidRawMatrix",
+            "raw_matrix_present === true",
+            "raw_matrix_status === 'available'",
+            "live.thermal_roi_ready = false",
+            "roi.thermal_roi_ready = false",
+            "delete roi.thermal_roi",
+            "['avg_c', 'min_c', 'max_c', 'delta_c'].forEach",
+            "live[`temperature_${suffix}`] = null",
+        ]:
+            with self.subTest(token=token):
+                self.assertIn(token, sanitize_fn)
+
+        self.assertIn("payload = sanitizeAndroidBridgePayload(payload);", apply_fn)
+        self.assertLess(
+            apply_fn.index("payload = sanitizeAndroidBridgePayload(payload);"),
+            apply_fn.index("applyLiveMetadata(payload.live)"),
+        )
+        self.assertNotIn("temperature_avg_c || 0", adapter)
+        self.assertNotIn("Number(live.temperature_avg_c", adapter)
+        self.assertNotIn("0.0°C", adapter)
+        self.assertNotIn("0.0℃", adapter)
+
+    def test_android_webview_g004_maps_only_valid_device_global_summary_celsius(self):
+        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
+        sanitize_fn = adapter[
+            adapter.index("function isAndroidPlainObject"):
+            adapter.index("  function classifyMini2StageReport")
+        ]
+        script = f"""
+const assert = require('assert');
+{sanitize_fn}
+const validZero = sanitizeAndroidBridgePayload({{
+  live: {{ celsius_allowed: false, raw_avg: 8192 }},
+  mini2: {{
+    raw_stream: {{
+      raw_stream_status: 'raw_streaming_unverified',
+      frame_counter: 7,
+      frame_width: 256,
+      frame_height: 192,
+      raw_avg: 8192,
+      celsius_allowed: true,
+      temperature_avg_c: 0,
+      temperature_min_c: -0.25,
+      temperature_max_c: 0.25,
+      temperature_provenance: 'device_global_summary',
+      temperature_scope: 'device_global_summary',
+      full_matrix_celsius_allowed: false,
+    }},
+  }},
+}});
+assert.strictEqual(validZero.live.temperature_avg_c, 0);
+assert.strictEqual(validZero.live.temperature_delta_c, 0.5);
+assert.strictEqual(validZero.live.temperature_source, 'device_global_summary');
+assert.strictEqual(validZero.live.full_matrix_celsius_allowed, false);
+
+const fabricatedZero = sanitizeAndroidBridgePayload({{
+  live: {{
+    celsius_allowed: true,
+    temperature_avg_c: 0,
+    temperature_min_c: 0,
+    temperature_max_c: 0,
+    raw_avg: 8192,
+  }},
+  mini2: {{
+    raw_stream: {{
+      celsius_allowed: true,
+      temperature_avg_c: 0,
+      temperature_min_c: 0,
+      temperature_max_c: 0,
+      temperature_provenance: 'roi_matrix',
+      temperature_scope: 'roi_matrix',
+      full_matrix_celsius_allowed: false,
+    }},
+  }},
+}});
+assert.strictEqual(fabricatedZero.live.temperature_avg_c, null);
+assert.strictEqual(fabricatedZero.live.celsius_allowed, false);
+
+const blocked = sanitizeAndroidBridgePayload({{
+  live: {{
+    celsius_allowed: false,
+    temperature_avg_c: 0,
+    converter_profile_status: 'blocked_no_fake_celsius',
+  }},
+  mini2: {{ raw_stream: {{ celsius_allowed: false }} }},
+}});
+assert.strictEqual(blocked.live.temperature_avg_c, null);
+assert.strictEqual(blocked.live.celsius_allowed, false);
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+
+    def test_mini2_error84_screenshot_clusters_are_classified_and_visible_summary_is_bounded(self):
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        index = read(WEBSITE_ROOT / "index.html")
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        preview_manager = read(ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java")
 
         self.assertIn("function classifyMini2StageReport", adapter)
         self.assertIn("function buildMini2DiagnosticExport", adapter)
@@ -894,6 +1088,7 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             with self.subTest(classifier=classifier):
                 self.assertIn(classifier, adapter)
 
+        diagnostic_fn = function_slice(adapter, "function buildMini2DiagnosticExport", "  function updateMini2DiagnosticExport")
         for field in [
             "route",
             "vid",
@@ -907,29 +1102,35 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             "setVideoStatus",
             "startStatus",
             "lastError",
-            "converterStatus",
+            "selectedProfile",
+            "packetClassification",
+            "packetStatus",
             "rawStageReport",
         ]:
             with self.subTest(field=field):
-                self.assertIn(field, adapter)
+                self.assertIn(field, diagnostic_fn)
 
         self.assertIn("mini2CopyDiagnosticButton", index + adapter)
         self.assertIn("mini2FullDiagnosticText", index + adapter)
         self.assertIn("navigator.clipboard.writeText", adapter)
         self.assertIn("raw_streaming_unverified", adapter + status_model)
-        self.assertNotIn("temperature_avg_c", adapter + status_model)
+        self.assertIn("temperature_avg_c", status_model, "explicit null Celsius keys are allowed for schema honesty")
+        self.assertIn("officialProcessedF2PacketDimensions", preview_manager)
+        self.assertIn("PreviewManagerIIAppBinding.afterOfficialG", preview_manager)
+
 
     def test_mini2_error6_thermal_param_failure_is_classified_and_cleans_session(self):
-        payload = json.loads(Path("error6.txt").read_text(encoding="utf-8"))
-        stage_report = payload["rawStageReport"]
-        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
-        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
+        """Missing error6.txt is replaced by the classifier/source contract it originally protected."""
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
 
-        self.assertIn("USB_StartStreamCallback=ok channel=0", stage_report)
-        self.assertIn("USB_SET_THERMAL_STREAM_PARAM=failed command=2039", stage_report)
-        self.assertIn("error=29", stage_report)
-        self.assertIn("thermal_stream_param_failed_error29_after_callback_ok", adapter)
-        self.assertIn("USB_SET_THERMAL_STREAM_PARAM=failed.*error=29", adapter)
+        classifier = function_slice(adapter, "function classifyMini2StageReport", "  function buildMini2DiagnosticExport")
+        self.assertIn("thermal_stream_param_failed_error29_after_callback_ok", classifier)
+        self.assertIn("USB_SET_THERMAL_STREAM_PARAM=failed.*error=29", classifier)
+        self.assertIn("thermal_stream_param_nonfatal_waiting_for_frame", classifier)
+        self.assertIn("USB_SetThermalStreamParam(videoCodingType)", helper)
+        self.assertNotIn("USB_SET_THERMAL_STREAM_PARAM=failed_nonfatal", helper)
         self.assertIn("full_session_reset_after_start_failure", stream)
         self.assertIn("closeSessionAfterStartFailure", stream)
         self.assertLess(
@@ -962,38 +1163,35 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             adapter.index("readBridgeJson('probeMini2')"),
         )
 
-    def test_mini2_official_jna_wrapper_and_bounded_error84_start_order_are_explicit(self):
+    def test_mini2_official_primary_interface_route_and_bounded_start_order_are_explicit(self):
         helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
-        java_interface = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt").read_text(encoding="utf-8")
+        api = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt").read_text(encoding="utf-8")
+        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
 
-        self.assertIn("fun USB_StartStreamCallbackJNA", java_interface)
-        self.assertIn("JnaUSB_STREAM_CALLBACK_PARAM", java_interface)
-        self.assertIn("HCUSBSDKByJNA.USB_StartStreamCallback", java_interface)
-        self.assertIn("official_jna_wrapper", helper)
-        self.assertNotIn("repo_keepalive_safety_deviation", java_interface + helper)
+        self.assertIn("streamCallback.getFStreamCallBack()", api)
+        self.assertIn("helper.startStreamPreview(", api)
+        self.assertIn("USB_StartStreamCallback(callbackParam)", helper)
+        self.assertIn("HIKMICRO_OFFICIAL_PRIMARY_STREAM_TYPE: Int = 103", helper)
+        self.assertNotIn("repo_keepalive_safety_deviation", api + helper)
 
-        self.assertIn("enum class F2StreamStartMode", helper)
-        self.assertIn("OFFICIAL_JNA", helper)
-        for label in [
-            "official_jna_primary_103_103",
-            "official_f2_startStreamPreviewJNA_behavior_clone",
-            "next=official_primary_error_report",
+        for forbidden in [
+            "enum class F2StreamStartMode",
+            "OFFICIAL_JNA",
+            "OFFICIAL_JNI",
+            "official_jna_low_format_101_103",
+            "official_jna_low_format_102_103",
+            "official_jna_low_format_104_103",
+            "appendVerboseOnlyDiagnostics",
+            "diagnostic_fallback_format_ladder",
         ]:
-            with self.subTest(label=label):
-                self.assertIn(label, helper)
-
-        self.assertNotIn("OFFICIAL_JNI", helper)
-        self.assertNotIn("official_jni_comparison_103_103", helper)
-        self.assertNotIn("official_jna_low_format_101_103", helper)
-        self.assertNotIn("official_jna_low_format_102_103", helper)
-        self.assertNotIn("official_jna_low_format_104_103", helper)
-        self.assertNotIn("appendVerboseOnlyDiagnostics", helper)
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, helper + api + stream)
         for structured_field in ["val fd: Int", "val userId: Int", '.put("fd", fd)', '.put("user_id", userId)']:
             with self.subTest(structured_field=structured_field):
-                self.assertIn(structured_field, helper + (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8"))
+                self.assertIn(structured_field, helper + stream)
 
-        official_entry = helper.split("fun startStreamPreviewJNA(", 1)[1].split("fun startStreamPreview(", 1)[0]
-        self.assertIn("official_jna_primary_103_103", helper)
+        official_entry = function_slice(helper, "fun startStreamPreview(\n        fStreamCallBack: FStreamCallBack", "    @Synchronized\n    fun stopStreamPreview")
+        self.assertLess(official_entry.index("USB_SetVideoParam"), official_entry.index("USB_StartStreamCallback(callbackParam)"))
         self.assertNotIn("101", official_entry)
         self.assertNotIn("102", official_entry)
         self.assertNotIn("104", official_entry)
@@ -1006,25 +1204,21 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         probe = (JAVA_ROOT / "Mini2UsbProbe.kt").read_text(encoding="utf-8")
 
         compact_helper = re.sub(r"\s+", " ", helper)
-        self.assertRegex(compact_helper, r"private fun USB_StartStreamCallbackJNA\([^)]*\): Boolean")
-        self.assertIn("val callbackStarted = USB_StartStreamCallbackJNA", helper)
-        self.assertIn("if (callbackStarted) channel else -1", helper)
-        self.assertIn("callbackSlots[currentUserId] = struStreamCBParam.fnStreamCallBack", helper)
-        self.assertIn("HCUSBSDK.getInstance().USB_StartStreamCallback(currentUserId, nativeParam.pointer)", helper)
+        self.assertRegex(compact_helper, r"private fun USB_StartStreamCallback\([^)]*\): Boolean")
+        self.assertIn("val callbackStarted = USB_StartStreamCallback(callbackParam)", helper)
         self.assertIn("channel = rawChannel", helper)
-        self.assertRegex(java_interface, r"fun USB_StartStreamCallbackJNA\([\s\S]*?\): Int")
+        self.assertIn("return rawChannel != -1", helper)
+        self.assertIn("fun USB_StartStreamCallback(userId: Int", java_interface)
+        self.assertIn("USB_StartStreamCallback_jni(userId, param)", java_interface)
 
+        self.assertNotIn("official_wrapper_parity_ok", status_model)
         for token in [
-            "official_wrapper_parity",
-            "official_wrapper_parity_ok",
-            "route_selection_f2",
-            "context_enum_login",
-            "stop_before_start",
-            "startStreamPreviewJNA",
-            "callback_slot_keepalive",
-            "channel_storage_semantics",
-            "structure_field_order",
-            "native_library_path_load_order",
+            "java_interface_callback_entry_count",
+            "java_interface_callback_entry_detail",
+            "invalid_packet_size_timeout",
+            "channel",
+            "fd",
+            "user_id",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, status_model + adapter)
@@ -1035,9 +1229,11 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("if (attemptRawStream)", probe)
         self.assertIn('result.put("last_stream_attempt", JSONObject.NULL)', probe)
 
-    def test_mini2_jna_structure_field_order_is_locked_against_androguard(self):
-        jna = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/jna/HCUSBSDKByJNA.kt").read_text(encoding="utf-8")
-        androguard = Path(".omx/analysis/hikmicro_viewer_xapk/error84_parallel/task3_jna_structs_constants_error84.md").read_text(encoding="utf-8")
+
+    def test_mini2_jna_structure_field_order_is_locked_against_source_and_current_analysis(self):
+        """Old .omx/analysis markdown is ephemeral; source plus final analysis are durable here."""
+        jna = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/jna/HCUSBSDKByJNA.kt")
+        analysis = read(TECH_ANALYSIS)
 
         expected_orders = [
             '@Structure.FieldOrder(\n    "dwSize",\n    "dwIndex",\n    "dwVID",\n    "dwPID",\n    "szManufacturer",\n    "szDeviceName",\n    "szSerialNumber",\n    "byHaveAudio",\n    "byRes",\n)',
@@ -1057,14 +1253,14 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             "USB_STREAM_CALLBACK_PARAM",
             "USB_VIDEO_PARAM",
             "USB_FRAME_INFO",
-            "Matches current",
         ]:
             with self.subTest(evidence=evidence):
-                self.assertIn(evidence, androguard)
+                self.assertIn(evidence, jna + analysis)
 
-    def test_mini2_lifecycle_reset_labels_and_fd_invariants_are_locked(self):
+    def test_mini2_lifecycle_teardown_invariants_do_not_reintroduce_reset_enums(self):
         helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
         java_interface = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt").read_text(encoding="utf-8")
+        preview_manager = (ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
 
         for token in [
             "enum class F2ResetMode",
@@ -1073,17 +1269,19 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             "lightweight_retry_no_fd_close",
             "full_session_reset_before_candidate",
         ]:
-            with self.subTest(token=token):
-                self.assertIn(token, helper)
+            with self.subTest(removed_reset_token=token):
+                self.assertNotIn(token, helper)
 
-        self.assertIn("JnaUSB_FRAME_INFO(this).apply { read() }", (ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.kt").read_text(encoding="utf-8"))
+        self.assertIn("PreviewManagerII$d implements FStreamCallBack", read(ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII$d.java"))
+        self.assertIn("rememberFrame", preview_manager)
         self.assertIn("lastStageReport", helper)
         self.assertIn("lastFailureReason", helper)
 
-        self.assertLess(helper.index("USB_StopChannel(currentUserId"), helper.index("USB_Logout(currentUserId"))
-        self.assertLess(helper.index("USB_Logout(currentUserId"), helper.index("selectedDeviceInfo?.closeConnection()"))
+        cleanup_slice = function_slice(helper, "private fun cleanupPreviousOfficialF2Login", "    private fun setThermalStreamCtrl")
+        self.assertLess(cleanup_slice.index("USB_StopChannel(currentUserId"), cleanup_slice.index("USB_Logout(currentUserId"))
+        self.assertLess(cleanup_slice.index("USB_Logout(currentUserId"), cleanup_slice.index("selectedDeviceInfo?.closeConnection()"))
         self.assertIn("clearCallbackSlot(userId)", java_interface)
-        self.assertLess(java_interface.index("clearCallbackSlot(userId)"), java_interface.index("nativeBridge.USB_StopChannel"))
+        self.assertIn("USB_StopChannel(userId: Int, channel: Int)", java_interface)
 
     def test_mini2_login_failure_cleanup_and_stage_report_evidence(self):
         helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
@@ -1093,30 +1291,42 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("sdkInited = false", helper)
         self.assertIn("USB_Login=failed", helper)
         self.assertIn("stageReport", helper + stream)
-        for token in ["selectedFd=", "selectedIndex=", "targetVid=", "targetPid=", "userId", "channel", "official_primary_f2_lifecycle"]:
+        for token in ["selectedFd=", "selectedIndex=", "targetVid=", "targetPid=", "userId", "channel", "F2UsbModuleApi"]:
             self.assertIn(token, helper + stream)
+        self.assertNotIn("official_primary_f2_lifecycle", helper + stream)
+
 
     def test_mini2_f2_no_fake_celsius_success(self):
-        status_model = (JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt").read_text(encoding="utf-8")
-        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
-        helper = (ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").read_text(encoding="utf-8")
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
+        helper = read(ANDROID_ROOT / "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt")
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
 
-        self.assertIn("Celsius still blocked", stream)
-        self.assertIn("raw_unverified", stream)
-        self.assertNotIn("temperature_avg_c", status_model + stream + helper)
+        self.assertIn("device-reported Celsius summary is allowed only when provenance=device_global_summary", stream)
+        self.assertIn("raw_streaming_unverified", status_model)
+        self.assertIn("official_g3_preview_stream_info", stream)
+        self.assertIn('put("temperature_avg_c", summary?.avgC ?: JSONObject.NULL)', status_model)
+        self.assertIn("live[`temperature_${suffix}`] = null", adapter)
         self.assertNotIn("temperatureCelsius = raw", status_model + stream + helper)
+        self.assertNotIn("temperature_avg_c || 0", adapter)
+        self.assertNotIn("0.0°C", adapter)
+        self.assertNotIn("0.0℃", adapter)
 
-    def test_mini2_error9_preview_uses_top_256x192_matrix_and_raw_fallback_stats(self):
-        payload_text = Path("error9.txt").read_text(encoding="utf-8")
-        payload, _ = json.JSONDecoder().raw_decode(payload_text)
-        raw_stream = payload["mini2"]["raw_stream"]
-        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
-        status_model = (JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt").read_text(encoding="utf-8")
-        main = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
 
-        self.assertEqual(raw_stream["frame_width"], 256)
-        self.assertEqual(raw_stream["frame_height"], 344)
-        self.assertEqual(raw_stream["raw_stream_status"], "raw_streaming_unverified")
+    def test_mini2_current_raw_packet_status_rejects_unknown_packets_without_offset0_matrix(self):
+        """error9.txt is gone; assert the current Mini2 packet contract instead.
+
+        Durable evidence: _workspace/hikmicro-analysis-20260714/final-technical-analysis.md §7-§8.
+        """
+        analysis = read(TECH_ANALYSIS)
+        preview_manager = read(ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII.java")
+        official_processor = read(ANDROID_ROOT / "app/src/main/java/g3/d.java") + read(ANDROID_ROOT / "app/src/main/java/g3/e.java")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        main = read(JAVA_ROOT / "MainActivity.kt")
+
+        self.assertIn("패킷 0번 바이트부터 16비트 raw 온도 행렬", analysis)
+        self.assertIn("공식 처리 구조와 다르", analysis)
         self.assertIn("HIKMICRO_THERMAL_IMAGE_HEIGHT = 192", stream)
         self.assertIn("transport_frame_height", status_model)
         self.assertIn("raw_avg", status_model)
@@ -1125,6 +1335,11 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn('live.put("raw_avg"', main)
         self.assertIn('live.put("raw_min"', main)
         self.assertIn('live.put("raw_max"', main)
+        self.assertIn("officialProcessedF2PacketDimensions", preview_manager)
+        self.assertIn("processor.d(packet)", preview_manager)
+        self.assertIn("PreviewInfoDataBean", official_processor)
+        self.assertIn("frameInfoData.length", official_processor)
+        self.assertNotIn("bytes[0]", official_processor, "official processor must not build raw matrices from packet byte zero")
 
     def test_android_mini2_thermal_frame_uses_dynamic_aspect_and_refreshes_roi_on_load(self):
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
@@ -1137,13 +1352,14 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("thermal.onload", adapter)
         self.assertIn("refreshRoiOverlays", adapter)
 
+
     def test_mini2_thermal_preview_rotation_is_correctable_from_android_ui(self):
-        index = (WEBSITE_ROOT / "index.html").read_text(encoding="utf-8")
-        adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
-        bridge = (JAVA_ROOT / "AndroidBridge.kt").read_text(encoding="utf-8")
-        main = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
-        status_model = (JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt").read_text(encoding="utf-8")
-        stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
+        index = read(WEBSITE_ROOT / "index.html")
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        bridge = read(JAVA_ROOT / "AndroidBridge.kt")
+        main = read(JAVA_ROOT / "MainActivity.kt")
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        stream = read(JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt")
 
         self.assertIn("mini2RotateButton", index + adapter)
         self.assertIn("rotateThermalPreview", bridge)
@@ -1152,8 +1368,9 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("rotatePreviewClockwise", stream)
         self.assertIn("rotateThermalPixels", stream)
         self.assertIn("preview_rotation_degrees", status_model + stream + main)
-        self.assertIn('readBridgeJson(\'rotateThermalPreview\')', adapter)
-        self.assertIn("Mini2 화면 회전", adapter)
+        self.assertIn("readBridgeJson('rotateThermalPreview')", adapter)
+        self.assertIn("적외선 180° 회전", index)
+        self.assertIn("적외선 회전", adapter)
 
     def test_android_visible_roi_can_be_updated_from_webview_bridge(self):
         main = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
@@ -1171,3 +1388,41 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestHikmicroG002ParityContracts(unittest.TestCase):
+    def test_g002_thermal_stream_ctrl_get_uses_2110_set_uses_2111(self):
+        java_interface = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt")
+        get_bridge_index = java_interface.rindex("override fun USB_GetThermalStreamCtrl")
+        set_bridge_index = java_interface.rindex("override fun USB_SetThermalStreamCtrl")
+        get_slice = java_interface[get_bridge_index:set_bridge_index]
+        set_slice = java_interface[set_bridge_index:java_interface.index("        override fun USB_StopChannel", set_bridge_index)]
+
+        self.assertIn("private const val USB_GET_THERMAL_STREAM_CTRL = 2110", java_interface)
+        self.assertIn("private const val USB_SET_THERMAL_STREAM_CTRL = 2111", java_interface)
+        self.assertIn("getDeviceConfig(userId, USB_GET_THERMAL_STREAM_CTRL, nativeParam)", get_slice)
+        self.assertIn("setDeviceConfig(userId, USB_SET_THERMAL_STREAM_CTRL, nativeParam)", set_slice)
+        self.assertLess(get_slice.index("param.byEnable = nativeParam.byEnable"), len(get_slice))
+
+    def test_g002_f2_load_plan_only_attempts_hcusbsdk_and_defers_inventory(self):
+        backend = read(ANDROID_ROOT / "app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroNativeBackend.kt")
+        probe = read(ANDROID_ROOT / "app/src/main/java/kr/auto/titration/mobile/Mini2UsbProbe.kt")
+
+        self.assertIn('HikmicroMini2ModuleType.F2 -> setOf("libHCUSBSDK.so")', backend)
+        self.assertIn('HikmicroMini2ModuleType.F1 -> setOf("lib_thermal_module.so")', backend)
+        self.assertIn('"libuvc.so", "libusb1.0.so"', backend)
+        self.assertIn('"packaged_dt_needed_dependency_deferred"', backend)
+        self.assertIn('"packaged_deferred_not_attempted"', backend)
+        self.assertIn("moduleType = moduleType", probe)
+        self.assertNotIn('setOf("libHCUSBSDK.so",\n                "libMTlib.so"', backend)
+
+    def test_g002_hcusbsdk_jni_load_site_is_not_reached_by_passive_probe(self):
+        jni = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/jni/HCUSBSDKByJNI.kt")
+        java_interface = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/JavaInterface.kt")
+        probe = read(ANDROID_ROOT / "app/src/main/java/kr/auto/titration/mobile/Mini2UsbProbe.kt")
+
+        self.assertIn('System.loadLibrary("HCUSBSDK")', jni)
+        self.assertIn("USB_StartStreamCallback_jni", java_interface)
+        self.assertIn("com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance()", java_interface)
+        passive_slice = function_slice(probe, "private fun passiveRawStreamStatus", "    private fun safePassiveRawStreamStatus")
+        self.assertNotIn("ensureLibrariesLoaded", passive_slice)
+        self.assertNotIn("HCUSBSDKByJNI", passive_slice)
