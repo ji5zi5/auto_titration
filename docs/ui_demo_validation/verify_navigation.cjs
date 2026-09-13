@@ -60,6 +60,8 @@ const summary = [];
       assert.equal(await page.locator('#standardConcentrationInput').inputValue(), '0.100');
       assert.equal(await page.locator('#roiAutoSetupButton').evaluate(el => el.parentElement.classList.contains('roi-record-controls')), true);
       assert.equal(await page.locator('.settings-drawer #roiAutoSetupButton').count(), 0);
+      assert.equal(await page.locator('#csvCollectionControls .download-button').count(), 0, 'CSV download belongs only in results');
+      assert.equal(await page.locator('.roi-record-controls > :last-child').getAttribute('id'), 'roiAutoSetupButton');
       assert.equal(await page.evaluate(() => remoteControlMode), true);
       await page.evaluate(() => syncRemoteSettings());
       for (const id of ['visiblePreview', 'thermalPreview']) {
@@ -113,6 +115,7 @@ const summary = [];
       assert.equal(await page.locator('#calcSampleConcentrationValue').textContent(), '0.09800');
       await page.locator('#concentrationCalculationModeButton').click();
       assert.equal(await page.locator('#resultsView').isVisible(), true);
+      assert.equal(await page.locator('#calcCsvDownloadLink').isVisible(), true);
       assert.equal(await page.locator('.demo-stage').isVisible(), false, 'results retained redundant live status');
       await page.screenshot({ path: path.join(output, `${width}-full-result-fixture.png`), fullPage: true });
       const motion = requests.filter(r => r.method !== 'GET' && r.path !== '/api/chemistry/constants/lookup');

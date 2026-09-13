@@ -11,3 +11,5 @@ Verification:16 Python website/navigation tests,12 Node suites,3 targeted collec
 This note supersedes earlier default chemistry, standalone STOP, top-level auto ROI and result-stage presentation notes. Browser summary controlCommands refers to navigation; the explicit user-click ROI reset is separately tested with intercepted requests.
 
 Latest placement correction: automatic ROI now sits beside manual ROI selection, deletion and locking, not inside settings. All pump actions remain in the second group. Four-width browser checks and16Python tests pass. A regression also prevents a late ROI setup callback from enabling deletion after recording has started. Windows3asset hashes refreshed.
+
+Latest user placement: automatic ROI moved to the last slot of the first row; collection toolbar CSV download removed, result CSV download retained. Legacy optional link lookup stays null-safe. Python16 and mocked Chromium4-width checks pass, including no download in controls and visible download in results. Windows index/styles copied and hash verified.

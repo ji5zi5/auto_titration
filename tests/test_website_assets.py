@@ -54,7 +54,6 @@ class WebsiteAssetTests(unittest.TestCase):
             "csvPanel",
             "csvRowCount",
             "csvRowsPerSecondValue",
-            "csvDownloadLink",
             "csvStartButton",
             "csvStopButton",
             "serialPumpRetractButton",
@@ -936,7 +935,8 @@ assert.strictEqual(hasTrustedCelsiusTemperature({{
         self.assertNotIn("kickstartSingleRoiCandidate", js)
         self.assertIn('id="roiAutoSetupButton" class="csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>', html)
         self.assertLess(html.index('id="roiSetupButton"'), html.index('id="roiAutoSetupButton"'))
-        self.assertLess(html.index('id="roiAutoSetupButton"'), html.index('id="roiResetButton"'))
+        self.assertLess(html.index('id="csvStopButton"'), html.index('id="roiAutoSetupButton"'))
+        self.assertNotIn('id="csvDownloadLink"', html)
         self.assertLess(html.index('id="roiAutoSetupButton"'), html.index('<details class="settings-drawer'))
         self.assertIn('id="roiResetButton"', html)
         self.assertIn("postRoiAction('/api/roi-auto-candidate'", js)
