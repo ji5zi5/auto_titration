@@ -11,3 +11,6 @@ class ViewNavigationTests(unittest.TestCase):
 
     def test_full_remote_view_keeps_server_settings_and_stop_priority(self):
         subprocess.run(["node", "tests/js/test_full_remote_control.js"], check=True)
+
+    def test_roi_reset_requires_collector_confirmation_and_idle_capture(self):
+        subprocess.run(["node", "tests/js/test_roi_reset.js"], check=True)

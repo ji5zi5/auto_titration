@@ -69,6 +69,7 @@ body.remote-control-mode #viewCompactLink { background: white; color: var(--blue
 .stage-facts small { margin-left: .35rem; color: #bdbdc5; font-size: .85rem; }
 .stage-facts strong { font-size: clamp(2.2rem, 4vw, 3.5rem); font-weight: 550; line-height: 1.1; letter-spacing: -.045em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .results-view[hidden], #sensorGrid[hidden] { display: none; }
+body:not(.remote-control-mode)[data-app-mode="calculator"] .demo-stage { display: none; }
 
 .trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; margin-bottom: .85rem; }
 .trend-card, .final-results { min-width: 0; padding: clamp(1rem, 2vw, 1.4rem); background: var(--card); border: 1px solid var(--line); border-radius: 24px; }
@@ -118,8 +119,11 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 .action-title { min-width: 0; display: grid; gap: .55rem; }
 .action-title p:last-of-type { margin: 0; color: var(--muted); font-size: .95rem; font-weight: 500; line-height: 1.45; }
 .main-actions {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .45rem;
+  display: grid; grid-template-columns: 1fr; gap: .65rem;
 }
+.control-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .45rem; }
+.pump-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.main-actions [hidden] { display: none; }
 .main-actions button, .download-button {
   min-height: 2.75rem; border-radius: 10px; border: 1px solid var(--line); padding: .6rem .8rem;
   background: #f9fafb; color: var(--ink); font-weight: 650; cursor: pointer; text-decoration: none;
@@ -290,8 +294,9 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
   .demo-stage { min-height: 0; padding: 1.1rem; gap: 1.1rem; }
   .stage-facts div { padding-left: 0; border-left: 0; }
   .stage-facts strong { font-size: 2.5rem; }
-  .main-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  #serialPumpStopButton { grid-column: 1 / -1; }
+  .main-actions { grid-template-columns: 1fr; }
+  .roi-record-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pump-controls button { padding: .6rem .3rem; font-size: .9rem; }
   .stage-value { font-size: 1.15rem; }
   .stage-facts { grid-template-columns: 1fr 1fr; }
   .trend-canvas { height: 12rem; }
@@ -326,6 +331,7 @@ body.remote-control-mode .final-results,
 body.remote-control-mode #sensorGrid,
 body.remote-control-mode .mode-switcher,
 body.remote-control-mode #roiSetupButton,
+body.remote-control-mode #roiResetButton,
 body.remote-control-mode #roiAutoSetupButton,
 body.remote-control-mode #roiLockButton,
 body.remote-control-mode #csvDownloadLink { display:none !important; }
@@ -337,7 +343,9 @@ body.remote-control-mode #resultsView { order:3; }
 body.remote-control-mode .console-header { align-items:flex-start; flex-direction:column; }
 body.remote-control-mode .view-navigation { width:100%; }
 body.remote-control-mode .view-navigation a { flex:1; }
-body.remote-control-mode .main-actions { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); }
+body.remote-control-mode .main-actions { display:grid !important; grid-template-columns:1fr; }
+body.remote-control-mode .roi-record-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
+body.remote-control-mode .pump-controls button { padding:.6rem .3rem; font-size:.9rem; }
 body.remote-control-mode .main-actions button { min-height:64px; font-size:1rem; }
 body.remote-control-mode #csvStatusStrip > * { display:none; }
 body.remote-control-mode #csvStatusStrip > #previewStatus,

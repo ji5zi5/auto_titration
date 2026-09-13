@@ -914,7 +914,7 @@ function setAppMode(mode) {
 
   document.querySelectorAll('.csv-mode-only').forEach((element) => {
     element.classList.toggle('mode-hidden', calculatorMode);
-    if ('hidden' in element) element.hidden = calculatorMode;
+    if ('hidden' in element) element.hidden = calculatorMode || (element.id === 'roiResetButton' && isAndroidWebViewBridge());
   });
   const calculatorPanel = $('concentrationCalculatorControls');
   if (calculatorPanel) calculatorPanel.hidden = !calculatorMode;
@@ -1903,7 +1903,7 @@ function updateRoiButtons(data = latestLiveMetadata) {
   if (autoSetupButton) autoSetupButton.disabled = recording || locked;
   if (lockButton) lockButton.disabled = recording || locked || !complete;
   if (unlockButton) unlockButton.disabled = recording || !locked;
-  if (resetButton) resetButton.disabled = recording;
+  if (resetButton) resetButton.disabled = recording || autoRoiRequestInFlight || Number(data.pending_auto_candidate_requests || 0) > 0;
   if (startButton) startButton.disabled = recording || !recordable || !complete;
 }
 
@@ -1944,6 +1944,7 @@ async function requestAutoRoiCandidate() {
     return;
   }
   autoRoiRequestInFlight = true;
+  updateRoiButtons();
   setText('roiSettingsStatus', '자동 ROI 찾는 중');
   try {
     const visibleWasReady = Boolean(latestLiveMetadata.visible_roi_ready);
@@ -1990,7 +1991,10 @@ async function requestAutoRoiCandidate() {
     setText('roiSettingsStatus', '수동 ROI를 사용하세요');
     showVisibleCandidateNotice('error', '자동 ROI 실패', error.message);
   } finally {
-    if (requestBackendRevision === backendRevision) autoRoiRequestInFlight = false;
+    if (requestBackendRevision === backendRevision) {
+      autoRoiRequestInFlight = false;
+      updateRoiButtons();
+    }
   }
 }
 
@@ -2021,9 +2025,14 @@ async function enterRoiSetupMode({ reset = false } = {}) {
     setText('previewStatus', '녹화 중 ROI 변경 불가');
     return false;
   }
+  if (reset && (autoRoiRequestInFlight || Number(latestLiveMetadata.pending_auto_candidate_requests || 0) > 0)) {
+    setText('roiSettingsStatus', '자동 ROI 요청 완료 후 삭제할 수 있습니다');
+    return false;
+  }
+  if (reset) stopAutoRoiSetup();
   roiSetupMode = true;
   const state = latestLiveMetadata.roi_state || 'setup';
-  const needsServerUnlock = state !== 'setup' || latestRoiLocked;
+  const needsServerUnlock = reset || state !== 'setup' || latestRoiLocked;
   if (needsServerUnlock) {
     try {
       await postRoiAction('/api/roi-unlock', { reset }, reset ? 'ROI 재설정' : 'ROI 선택');
@@ -2689,6 +2698,7 @@ function addRoiSetupHandlers() {
     });
   }
   if (resetButton) {
+    resetButton.hidden = false;
     resetButton.addEventListener('click', async () => {
       await enterRoiSetupMode({ reset: true });
     });

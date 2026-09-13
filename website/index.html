@@ -30,25 +30,30 @@
         </div>
 
         <div id="csvCollectionControls" class="main-actions" aria-label="ROI와 녹화 조작">
-          <button id="roiSetupButton" class="csv-mode-only" type="button">ROI 선택</button>
-          <button id="roiAutoSetupButton" class="csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>
-          <button id="roiLockButton" class="csv-mode-only" type="button">ROI 고정</button>
-          <button id="csvStartButton" class="record-button start-button" type="button">녹화 시작</button>
-          <button id="csvStopButton" class="record-button stop-button" type="button">녹화 종료</button>
-          <button id="serialPumpDispenseButton" class="pump-button" type="button">펌프 주입</button>
-          <button id="serialPumpRetractButton" class="pump-button" type="button">펌프 되감기</button>
-          <button id="serialPumpStopButton" class="pump-button pump-stop-button" type="button">STOP · 펌프 정지</button>
-          <a id="csvDownloadLink" class="download-button csv-mode-only" href="#" download="auto-titration-ml-training.csv">CSV 다운로드</a>
+          <div class="control-row roi-record-controls" aria-label="ROI와 기록">
+            <button id="roiSetupButton" class="csv-mode-only" type="button">ROI 선택</button>
+            <button id="roiResetButton" class="csv-mode-only" type="button" hidden title="카메라와 열화상 ROI 모두 삭제">ROI 삭제</button>
+            <button id="roiLockButton" class="csv-mode-only" type="button">ROI 고정</button>
+            <button id="csvStartButton" class="record-button start-button" type="button">녹화 시작</button>
+            <button id="csvStopButton" class="record-button stop-button" type="button">녹화 종료</button>
+            <a id="csvDownloadLink" class="download-button csv-mode-only" href="#" download="auto-titration-ml-training.csv">CSV 다운로드</a>
+          </div>
+          <div class="control-row pump-controls" aria-label="펌프 조작">
+            <button id="serialPumpDispenseButton" class="pump-button" type="button">펌프 주입</button>
+            <button id="serialPumpRetractButton" class="pump-button" type="button">펌프 되감기</button>
+            <button id="serialPumpStopButton" class="pump-button pump-stop-button" type="button">펌프 정지</button>
+          </div>
         </div>
 
         <details class="settings-drawer csv-mode-only">
           <summary>실험 설정</summary>
+          <button id="roiAutoSetupButton" class="inline-utility-button csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>
           <form id="pumpTimelineForm" class="pump-settings" aria-label="펌프 설정">
             <label>
               <span>유량(mL/s)</span>
               <input id="pumpRateInput" type="number" inputmode="decimal" min="0" step="0.01" value="0.99" />
             </label>
-            <input id="theoryEquivalenceInput" type="hidden" value="10.00" />
+            <input id="theoryEquivalenceInput" type="hidden" value="20.00" />
             <input id="equivalenceWindowInput" type="hidden" value="0.05" />
             <label class="checkbox-setting">
               <span>자동 정지</span>
@@ -79,8 +84,8 @@
             <label>
               <span>적정 종류</span>
               <select id="titrationTypeSelect">
-                <option value="strong_acid_strong_base">강산-강염기</option>
-                <option value="weak_acid_strong_base" selected>약산-강염기</option>
+                <option value="strong_acid_strong_base" selected>강산-강염기</option>
+                <option value="weak_acid_strong_base">약산-강염기</option>
                 <option value="strong_acid_weak_base">강산-약염기</option>
                 <option value="weak_acid_weak_base">약산-약염기</option>
               </select>
@@ -88,8 +93,8 @@
             <label>
               <span>시료</span>
               <select id="sampleSubstanceInput">
-                <option value="acetic acid" selected>아세트산</option>
-                <option value="hydrochloric acid">염산</option>
+                <option value="acetic acid">아세트산</option>
+                <option value="hydrochloric acid" selected>염산</option>
                 <option value="sodium hydroxide">수산화나트륨</option>
                 <option value="ammonia">암모니아</option>
               </select>
@@ -100,7 +105,7 @@
             </label>
             <label>
               <span>시료 부피(mL)</span>
-              <input id="sampleVolumeInput" type="number" inputmode="decimal" min="0.000001" step="0.01" value="10.00" />
+              <input id="sampleVolumeInput" type="number" inputmode="decimal" min="0.000001" step="0.01" value="20.00" />
             </label>
             <label>
               <span>표준용액</span>

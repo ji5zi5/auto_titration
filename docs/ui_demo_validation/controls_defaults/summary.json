@@ -1,0 +1,38 @@
+{
+  "fixtureOnly": true,
+  "noRealNetwork": true,
+  "summary": [
+    {
+      "width": 375,
+      "status": "PASS",
+      "screenshots": 3,
+      "apiRequests": 18,
+      "controlCommands": 0,
+      "runtimeErrors": []
+    },
+    {
+      "width": 768,
+      "status": "PASS",
+      "screenshots": 3,
+      "apiRequests": 18,
+      "controlCommands": 0,
+      "runtimeErrors": []
+    },
+    {
+      "width": 1024,
+      "status": "PASS",
+      "screenshots": 3,
+      "apiRequests": 18,
+      "controlCommands": 0,
+      "runtimeErrors": []
+    },
+    {
+      "width": 1440,
+      "status": "PASS",
+      "screenshots": 3,
+      "apiRequests": 18,
+      "controlCommands": 0,
+      "runtimeErrors": []
+    }
+  ]
+}

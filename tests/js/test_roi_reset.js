@@ -1,0 +1,32 @@
+const fs = require('node:fs');
+const harness = fs.readFileSync('tests/js/test_web_request_lifecycle.js', 'utf8')
+  .split('(async () => {\n  await testPumpLifecycle();')[0];
+eval(harness + `
+(async () => {
+  requests.length = 0;
+  vm.runInContext("latestLiveMetadata={roi_state:'setup',visible_roi:'1,2,3,4',thermal_roi:'5,6,7,8'}; latestRoiLocked=false;",context);
+  const reset = context.enterRoiSetupMode({reset:true});
+  assert(requests[0].url.endsWith('/api/roi-unlock'), 'setup-state deletion never reached collector');
+  assert(JSON.parse(requests[0].options.body).reset === true, 'reset flag missing');
+  requests[0].resolve({ok:true,roi:{roi_state:'setup',roi_locked:false,roi_complete:false,visible_roi:'',thermal_roi:''}});
+  for(let i=0;i<12 && requests.length<2;i++) await settle();
+  assert(requests.length===2,'missing auto tracking OFF request');
+  requests[1].resolve({ok:true,settings:{roi_auto_detect:'off'}});
+  assert(await reset, 'reset failed');
+  assert(vm.runInContext("latestLiveMetadata.visible_roi === '' && latestLiveMetadata.thermal_roi === ''",context),'ROI not cleared');
+  requests.length=0;
+  vm.runInContext("latestLiveMetadata.roi_state='recording'",context);
+  assert(await context.enterRoiSetupMode({reset:true}) === false,'recording ROI deletion allowed');
+  assert(requests.length===0,'recording deletion sent a request');
+  vm.runInContext("latestLiveMetadata.roi_state='setup'; autoRoiRequestInFlight=true",context);
+  assert(await context.enterRoiSetupMode({reset:true}) === false,'delete raced with auto ROI');
+  assert(requests.length===0,'busy auto ROI deletion sent a request');
+  vm.runInContext("autoRoiRequestInFlight=false; latestLiveMetadata.visible_roi='1,2,3,4'; latestLiveMetadata.thermal_roi='5,6,7,8';",context);
+  const rejected = context.enterRoiSetupMode({reset:true});
+  requests[0].resolve({ok:false,error:'collector rejected reset'}, {ok:false,status:409});
+  assert(await rejected === false,'rejected reset reported success');
+  assert(vm.runInContext("latestLiveMetadata.visible_roi === '1,2,3,4' && latestLiveMetadata.thermal_roi === '5,6,7,8'",context),'rejected reset erased local ROI');
+  assert(requests.length===1,'rejected reset triggered another command');
+  console.log('ROI reset: collector reset in setup, both regions cleared, recording/auto guards OK');
+})().catch(e=>{console.error(e);process.exitCode=1});
+`);

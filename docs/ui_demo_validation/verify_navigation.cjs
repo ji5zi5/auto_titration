@@ -23,6 +23,7 @@ const summary = [];
         const url = new URL(request.url());
         if (url.pathname.startsWith('/api/')) {
           requests.push({ method: request.method(), path: url.pathname, body: request.postData() });
+          if (url.pathname === '/api/roi-unlock') return route.fulfill({ json: { ok: true, roi: { roi_state: 'setup', roi_locked: false, roi_complete: false, visible_roi: '', thermal_roi: '' } } });
           return route.fulfill({ json: { ok: true, config: null, csv: { state: 'idle', recording: false } } });
         }
         if (url.hostname !== 'ui-demo.test') return route.fulfill({ status: 204 });
@@ -52,6 +53,11 @@ const summary = [];
       await page.goto(`https://ui-demo.test/dashboard?remote=${width === 375 ? '0' : '1'}&backend=%2Fproxy&tag=a&tag=b#roi`);
       await page.waitForFunction(() => document.getElementById('viewFullLink')?.href.includes('backend='));
       await page.evaluate(() => document.fonts.ready);
+      assert.equal(await page.locator('#titrationTypeSelect').inputValue(), 'strong_acid_strong_base');
+      assert.equal(await page.locator('#sampleSubstanceInput').inputValue(), 'hydrochloric acid');
+      assert.equal(await page.locator('#sampleVolumeInput').inputValue(), '20.00');
+      assert.equal(await page.locator('#sampleConcentrationInput').inputValue(), '0.100');
+      assert.equal(await page.locator('#standardConcentrationInput').inputValue(), '0.100');
       assert.equal(await page.evaluate(() => remoteControlMode), true);
       await page.evaluate(() => syncRemoteSettings());
       for (const id of ['visiblePreview', 'thermalPreview']) {
@@ -71,6 +77,12 @@ const summary = [];
         assert.equal(await page.locator('#viewFullLink').isVisible(), true);
         assert.equal(await page.locator('#viewCompactLink').isVisible(), true);
         assert.equal(await page.locator('#serialPumpStopButton').isVisible(), true);
+        const rows = await page.evaluate(() => ({
+          first: document.querySelector('.roi-record-controls').getBoundingClientRect().bottom,
+          pump: document.querySelector('.pump-controls').getBoundingClientRect().top,
+          positions: ['serialPumpDispenseButton','serialPumpRetractButton','serialPumpStopButton'].map(id => document.getElementById(id).getBoundingClientRect().top),
+        }));
+        assert(rows.pump >= rows.first && rows.positions.every(y => Math.abs(y - rows.positions[0]) < 1), 'pump controls must form their own second row');
         if (remote) {
           const stop = await page.locator('#serialPumpStopButton').boundingBox();
           assert(stop.x >= 0 && stop.x + stop.width <= width && stop.y >= 0 && stop.y + stop.height <= 900, `${width}: STOP below initial viewport`);
@@ -99,9 +111,20 @@ const summary = [];
       assert.equal(await page.locator('#calcSampleConcentrationValue').textContent(), '0.09800');
       await page.locator('#concentrationCalculationModeButton').click();
       assert.equal(await page.locator('#resultsView').isVisible(), true);
+      assert.equal(await page.locator('.demo-stage').isVisible(), false, 'results retained redundant live status');
       await page.screenshot({ path: path.join(output, `${width}-full-result-fixture.png`), fullPage: true });
       const motion = requests.filter(r => r.method !== 'GET' && r.path !== '/api/chemistry/constants/lookup');
       assert.deepEqual(motion, [], 'navigation issued control commands');
+      // Explicit ROI deletion, distinct from side-effect-free navigation above.
+      await page.locator('#csvCollectionModeButton').click();
+      await page.evaluate(() => applyRoiStatus({ roi_state: 'setup', roi_locked: false, roi_complete: true, visible_roi: '1,2,3,4', thermal_roi: '5,6,7,8' }));
+      const beforeReset = requests.length;
+      await page.locator('#roiResetButton').click();
+      await page.waitForFunction(() => latestLiveMetadata.visible_roi === '' && latestLiveMetadata.thermal_roi === '');
+      assert(requests.slice(beforeReset).some(r => r.path === '/api/roi-unlock' && JSON.parse(r.body).reset === true));
+      assert(requests.slice(beforeReset).every(r => !r.path.startsWith('/api/pump/') && !r.path.startsWith('/api/csv/')), 'ROI deletion triggered pump/recording');
+      await page.evaluate(() => applyRoiStatus({ roi_state: 'recording', roi_locked: true }));
+      assert.equal(await page.locator('#roiResetButton').isDisabled(), true);
       // Exercise the actual shared navigation/CSS with a native bridge marker.
       // Native device operations are outside this browser-only regression.
       await page.route('**/android-webview.js', route => route.fulfill({ contentType: 'text/javascript', body: '' }));
@@ -111,6 +134,7 @@ const summary = [];
         assert.equal(await page.locator('#' + id).evaluate(el => el.hidden), true);
         assert.equal(await page.locator('#' + id).isVisible(), false, 'native view link remained clickable');
       }
+      assert.equal(await page.locator('#roiResetButton').isVisible(), false, 'unsupported native ROI deletion exposed');
       assert.deepEqual(errors, [], 'browser runtime errors');
       summary.push({ width, status: 'PASS', screenshots: 3, apiRequests: requests.length, controlCommands: motion.length, runtimeErrors: errors });
       await context.close();

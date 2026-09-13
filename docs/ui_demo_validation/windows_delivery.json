@@ -1,5 +1,5 @@
 {
-  "delivered_at_utc": "2026-09-13T11:42:17.999991+00:00",
+  "delivered_at_utc": "2026-09-13T12:04:55.069187+00:00",
   "source_root": "/home/jio/code/auto_titration",
   "destination_root": "/mnt/c/Users/Jio/Downloads/auto_titration/website",
   "files": [
@@ -8,8 +8,8 @@
       "source": "/home/jio/code/auto_titration/website/index.html",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/index.html",
       "destination_before_sha256": "d680b4b83e7d9b83507d7ba9770de29a471e5d205668d711c44e439b39b2532c",
-      "source_sha256": "d680b4b83e7d9b83507d7ba9770de29a471e5d205668d711c44e439b39b2532c",
-      "destination_sha256": "d680b4b83e7d9b83507d7ba9770de29a471e5d205668d711c44e439b39b2532c",
+      "source_sha256": "b2a0d6936170d0153955c4198991606b1e685be950d8df36c2ef3f58dd02be9c",
+      "destination_sha256": "b2a0d6936170d0153955c4198991606b1e685be950d8df36c2ef3f58dd02be9c",
       "verified_equal": true
     },
     {
@@ -17,8 +17,8 @@
       "source": "/home/jio/code/auto_titration/website/styles.css",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/styles.css",
       "destination_before_sha256": "ff78ff8f8f2a2871f3698eb5fdc2d02fbd140f938126c12c1850c9b043c448c6",
-      "source_sha256": "ed79466b3564971c424654d73493cfe1a4e8dde2fcad374b44b2ad5c0f8d3dd8",
-      "destination_sha256": "ed79466b3564971c424654d73493cfe1a4e8dde2fcad374b44b2ad5c0f8d3dd8",
+      "source_sha256": "307f69ea0b2ee849de461bbf1e974179e5cf729133455593bcc87d5cbecf12bd",
+      "destination_sha256": "307f69ea0b2ee849de461bbf1e974179e5cf729133455593bcc87d5cbecf12bd",
       "verified_equal": true
     },
     {
@@ -26,8 +26,8 @@
       "source": "/home/jio/code/auto_titration/website/app.js",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/app.js",
       "destination_before_sha256": "7b06c820477fb7a0d0c13386efd7683e7f1867838f631d7bb5d41365970fd780",
-      "source_sha256": "45405cd18db4a21641847bd0861c1639f20c886c03b0707d543c9ef9cc4a2a33",
-      "destination_sha256": "45405cd18db4a21641847bd0861c1639f20c886c03b0707d543c9ef9cc4a2a33",
+      "source_sha256": "ab367b480bac6fbfc4b02e733355d950e07a335155236f57d162ab496e084bfd",
+      "destination_sha256": "ab367b480bac6fbfc4b02e733355d950e07a335155236f57d162ab496e084bfd",
       "verified_equal": true
     }
   ],
@@ -38,5 +38,5 @@
   "caveat": "Only loose website assets updated. APK/EXE embedded assets were not rebuilt; currently running services were not restarted.",
   "verification": "Exact three existing loose web assets verified after final solo fixes; no APK/EXE rebuild or service restart.",
   "source_identity": "Per-file SHA256 below identifies the delivered assets; final source commit is in repository history.",
-  "latest_update": "Compact STOP moved into the existing pump button grid at normal button size; only styles.css copied."
+  "latest_update": "ROI deletion and grouped pump second row; strong-acid/strong-base 0.100M and20mL defaults; hide redundant live status in results. Only three loose web assets copied."
 }

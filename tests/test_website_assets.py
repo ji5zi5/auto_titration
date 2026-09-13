@@ -20,6 +20,10 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn('width: 100%; aspect-ratio: 4 / 3', css)
         self.assertNotIn('height: clamp(200px, 30vh, 320px)', css)
         self.assertIn('object-fit: contain', css)
+        self.assertIn('<option value="strong_acid_strong_base" selected>', html)
+        self.assertIn('<option value="hydrochloric acid" selected>', html)
+        self.assertRegex(html, r'id="sampleVolumeInput"[^>]*value="20.00"')
+        self.assertRegex(html, r'id="standardConcentrationInput"[^>]*value="0.100"')
 
     def test_static_website_is_camera_temperature_live_view_not_explainer_dashboard(self):
         html = Path("website/index.html").read_text(encoding="utf-8")
@@ -59,7 +63,7 @@ class WebsiteAssetTests(unittest.TestCase):
             "csvStateLabel",
             "pumpRateInput",
             "theoryEquivalenceInput",
-            'value="10.00"',
+            'value="20.00"',
             "equivalenceWindowInput",
             "autoStopEnabledInput",
             "autoStopStatus",
@@ -160,7 +164,6 @@ class WebsiteAssetTests(unittest.TestCase):
             "roiSettingsForm",
             "autoModeSelect",
             "roiUnlockButton",
-            "roiResetButton",
             "roiSourceLabel",
             "roiCandidateButton",
             "ROI 자동추적",
@@ -554,7 +557,8 @@ assert.strictEqual(elements.indicatorSelect.value, 'methyl_orange');
         self.assertRegex(html, r'id="theoryEquivalenceInput" type="hidden"')
         self.assertRegex(html, r'id="equivalenceWindowInput" type="hidden"')
         self.assertGreater(html.index('class="demo-stage"'), html.index('id="csvPanel"'))
-        self.assertIn('serialPumpStopButton', html[html.index('id="csvCollectionControls"'):html.index('</div>', html.index('id="csvCollectionControls"'))])
+        self.assertIn('serialPumpStopButton', html[html.index('id="csvCollectionControls"'):html.index('<details class="settings-drawer')])
+        self.assertIn('class="control-row pump-controls"', html)
         self.assertNotIn('class="main-actions csv-mode-only"', html)
         self.assertLess(html.index('id="resultsView"'), html.index('class="trend-grid"'))
         self.assertLess(html.index('class="final-results"'), html.index('class="trend-grid"'))
@@ -930,7 +934,9 @@ assert.strictEqual(hasTrustedCelsiusTemperature({{
         self.assertIn("let roiSetupMode = true", js)
         self.assertNotIn("kickstartRoiAutoTracking", js)
         self.assertNotIn("kickstartSingleRoiCandidate", js)
-        self.assertIn('id="roiAutoSetupButton" class="csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>', html)
+        self.assertIn('id="roiAutoSetupButton" class="inline-utility-button csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>', html)
+        self.assertGreater(html.index('id="roiAutoSetupButton"'), html.index('<details class="settings-drawer'))
+        self.assertIn('id="roiResetButton"', html)
         self.assertIn("postRoiAction('/api/roi-auto-candidate'", js)
         self.assertIn("autoSetupButton.addEventListener('click', toggleAutoRoiSetup)", js)
         self.assertIn("if (latestRoiLocked || data.roi_state === 'recording') stopAutoRoiSetup();", js)
