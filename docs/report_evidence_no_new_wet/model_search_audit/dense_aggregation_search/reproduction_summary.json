@@ -1,0 +1,402 @@
+{
+  "schema_version": "dense_type_conditioned_sensor_reproduction_v1",
+  "model_variant": "type_conditioned_sensor_union_dense_aggregation_ranker",
+  "claim_scope": "post_hoc_configuration_selection_on_the_same_12_development_runs; not nested model-selection validation and not independent external validation",
+  "run_count": 12,
+  "reference_mape_percent": 0.359791,
+  "metrics": {
+    "mae_ml": 0.07754258333333297,
+    "rmse_ml": 0.09077263817592095,
+    "mape_percent": 0.2950000694444432,
+    "max_absolute_error_ml": 0.15612700000000146
+  },
+  "improvement_percentage_points": 0.06479093055555685,
+  "per_type_metrics": {
+    "strong_acid_strong_base": {
+      "mae_ml": 0.06814999999999809,
+      "rmse_ml": 0.07251010918485629,
+      "mape_percent": 0.24859749999999375,
+      "max_absolute_error_ml": 0.10173599999999894
+    },
+    "strong_acid_weak_base": {
+      "mae_ml": 0.0797936666666672,
+      "rmse_ml": 0.08411216670018702,
+      "mape_percent": 0.3156827777777791,
+      "max_absolute_error_ml": 0.11408899999999988
+    },
+    "weak_acid_strong_base": {
+      "mae_ml": 0.04916133333333169,
+      "rmse_ml": 0.07092671391419876,
+      "mape_percent": 0.16275555555555007,
+      "max_absolute_error_ml": 0.12115999999999971
+    },
+    "weak_acid_weak_base": {
+      "mae_ml": 0.1130653333333349,
+      "rmse_ml": 0.12488200870421737,
+      "mape_percent": 0.45296444444444955,
+      "max_absolute_error_ml": 0.15612700000000146
+    }
+  },
+  "per_seed_metrics": [
+    {
+      "seed": 42,
+      "mae_ml": 0.07754258333333297,
+      "rmse_ml": 0.09077263817592095,
+      "mape_percent": 0.2950000694444432,
+      "max_absolute_error_ml": 0.15612700000000146
+    },
+    {
+      "seed": 1729,
+      "mae_ml": 0.07754258333333297,
+      "rmse_ml": 0.09077263817592095,
+      "mape_percent": 0.2950000694444432,
+      "max_absolute_error_ml": 0.15612700000000146
+    },
+    {
+      "seed": 20260728,
+      "mae_ml": 0.07754258333333297,
+      "rmse_ml": 0.09077263817592095,
+      "mape_percent": 0.2950000694444432,
+      "max_absolute_error_ml": 0.15612700000000146
+    }
+  ],
+  "deterministic_repeat": {
+    "seeds": [
+      42,
+      1729,
+      20260728
+    ],
+    "identical_predictions": true,
+    "interpretation": "deterministic repeat check only; the fitted estimators do not consume these seed values, so this is not seed-robustness evidence",
+    "metric_std": {
+      "mae_ml": 0.0,
+      "rmse_ml": 0.0,
+      "mape_percent": 0.0
+    }
+  },
+  "method": {
+    "known_inference_context": [
+      "titration_type"
+    ],
+    "sensor_columns": [
+      "visible_H_mean",
+      "visible_S_mean",
+      "visible_V_mean",
+      "thermal_raw_roi_p50",
+      "thermal_raw_roi_p95"
+    ],
+    "forbidden_inference_inputs": [
+      "sample_concentration_M",
+      "injected_volume_ml",
+      "theoretical_equivalence_volume_ml",
+      "time_s",
+      "progress_fraction",
+      "indicator"
+    ],
+    "configs": {
+      "strong_acid_strong_base": {
+        "spec": {
+          "family": "pls",
+          "subset": "state",
+          "transform": "signed_log1p",
+          "parameter": "exp_rank@2"
+        },
+        "normalization": "zscore",
+        "global_weight": 1.0,
+        "same_type_weight": 0.0,
+        "top_k": "all",
+        "temperature": 1.0,
+        "top_blend": 0.0
+      },
+      "weak_acid_strong_base": {
+        "spec": {
+          "family": "lda",
+          "subset": "shift_terminal",
+          "transform": "raw",
+          "parameter": "5@svd"
+        },
+        "normalization": "rank",
+        "global_weight": 0.64,
+        "same_type_weight": 0.36,
+        "top_k": 26,
+        "temperature": 0.2,
+        "top_blend": 0.0
+      },
+      "strong_acid_weak_base": {
+        "spec": {
+          "family": "kernel_ridge_rbf",
+          "subset": "shift_terminal",
+          "transform": "signed_log1p",
+          "parameter": "rank@1,0.05"
+        },
+        "normalization": "rank",
+        "global_weight": 1.0,
+        "same_type_weight": 0.0,
+        "top_k": "all",
+        "temperature": 0.1,
+        "top_blend": 0.0
+      },
+      "weak_acid_weak_base": {
+        "spec": {
+          "family": "qda",
+          "subset": "shift_terminal",
+          "transform": "raw",
+          "parameter": "5@0.9"
+        },
+        "normalization": "zscore",
+        "global_weight": 1.0,
+        "same_type_weight": 0.0,
+        "top_k": 5,
+        "temperature": 0.1,
+        "top_blend": 0.0
+      }
+    },
+    "search_note": "The prior type-conditioned ranker families were retained. A dense post-hoc aggregation search adjusted weak_acid_strong_base from global_weight=0.75/top_k=20/temperature=1.0 to 0.64/26/0.2; the other frozen settings were unchanged."
+  },
+  "configuration_search": {
+    "initial_combinations_compared": 1006020,
+    "dense_typewise_aggregation_combinations_compared": 1024350,
+    "total_combinations_compared": 2030370,
+    "selection_data": "same 12 development runs, separately by titration type",
+    "outer_test_truth_excluded_from_configuration_selection": false
+  },
+  "leakage_audit": {
+    "passed": true,
+    "outer_test_excluded_from_every_scaler_and_model_fit": true,
+    "active_feature_names": [
+      "candidate_consensus",
+      "color_orthogonal_state",
+      "color_shift_w12",
+      "color_shift_w16",
+      "color_shift_w2",
+      "color_shift_w3",
+      "color_shift_w5",
+      "color_shift_w8",
+      "color_source_consensus",
+      "color_state_w12",
+      "color_state_w16",
+      "color_state_w2",
+      "color_state_w3",
+      "color_state_w5",
+      "color_state_w8",
+      "color_terminal_change",
+      "color_terminal_coordinate",
+      "thermal_availability",
+      "thermal_orthogonal_state",
+      "thermal_shift_w12",
+      "thermal_shift_w16",
+      "thermal_shift_w2",
+      "thermal_shift_w3",
+      "thermal_shift_w5",
+      "thermal_shift_w8",
+      "thermal_source_consensus",
+      "thermal_state_w12",
+      "thermal_state_w16",
+      "thermal_state_w2",
+      "thermal_state_w3",
+      "thermal_state_w5",
+      "thermal_state_w8",
+      "thermal_terminal_change",
+      "thermal_terminal_coordinate"
+    ],
+    "forbidden_feature_names": [],
+    "forbidden_metadata_candidate_invariance": {
+      "auto-titration-live-20260601-201548-session-4.csv": true,
+      "auto-titration-live-20260601-202035-session-5.csv": true,
+      "auto-titration-live-20260601-202744-session-6.csv": true,
+      "auto-titration-live-20260601-203711-session-7.csv": true,
+      "auto-titration-live-20260601-204506-session-8.csv": true,
+      "auto-titration-live-20260601-205048-session-9.csv": true,
+      "auto-titration-live-20260601-213431-session-11.csv": true,
+      "auto-titration-live-20260601-213925-session-12.csv": true,
+      "auto-titration-live-20260601-214538-session-13.csv": true,
+      "auto-titration-live-20260601-215437-session-14.csv": true,
+      "auto-titration-live-20260601-220325-session-15.csv": true,
+      "auto-titration-live-20260601-220652-session-16.csv": true
+    },
+    "training_label_only": [
+      "candidate boundary -> injected_volume_ml",
+      "theoretical_equivalence_volume_ml"
+    ],
+    "test_volume_and_truth_access": "after sensor-only frame selection, audit/output mapping only"
+  },
+  "predictions": [
+    {
+      "run_name": "auto-titration-live-20260601-201548-session-4.csv",
+      "titration_type": "strong_acid_strong_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 39.957241,
+      "signed_error_ml": -0.04275899999999666,
+      "absolute_error_ml": 0.04275899999999666,
+      "ape_percent": 0.10689749999999165,
+      "selected_frame_audit_only": 185,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-202035-session-5.csv",
+      "titration_type": "strong_acid_strong_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 20.059955,
+      "signed_error_ml": 0.05995499999999865,
+      "absolute_error_ml": 0.05995499999999865,
+      "ape_percent": 0.29977499999999324,
+      "selected_frame_audit_only": 91,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-202744-session-6.csv",
+      "titration_type": "strong_acid_strong_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 29.898264,
+      "signed_error_ml": -0.10173599999999894,
+      "absolute_error_ml": 0.10173599999999894,
+      "ape_percent": 0.3391199999999964,
+      "selected_frame_audit_only": 131,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-203711-session-7.csv",
+      "titration_type": "weak_acid_strong_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 20.007436,
+      "signed_error_ml": 0.007435999999998444,
+      "absolute_error_ml": 0.007435999999998444,
+      "ape_percent": 0.03717999999999222,
+      "selected_frame_audit_only": 84,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\"]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-204506-session-8.csv",
+      "titration_type": "weak_acid_strong_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 30.12116,
+      "signed_error_ml": 0.12115999999999971,
+      "absolute_error_ml": 0.12115999999999971,
+      "ape_percent": 0.40386666666666576,
+      "selected_frame_audit_only": 120,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\"]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-205048-session-9.csv",
+      "titration_type": "weak_acid_strong_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 40.018888,
+      "signed_error_ml": 0.018887999999996907,
+      "absolute_error_ml": 0.018887999999996907,
+      "ape_percent": 0.04721999999999227,
+      "selected_frame_audit_only": 157,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\"]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-213431-session-11.csv",
+      "titration_type": "strong_acid_weak_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 20.114089,
+      "signed_error_ml": 0.11408899999999988,
+      "absolute_error_ml": 0.11408899999999988,
+      "ape_percent": 0.5704449999999994,
+      "selected_frame_audit_only": 69,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-213925-session-12.csv",
+      "titration_type": "strong_acid_weak_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 29.923952,
+      "signed_error_ml": -0.07604800000000012,
+      "absolute_error_ml": 0.07604800000000012,
+      "ape_percent": 0.25349333333333374,
+      "selected_frame_audit_only": 101,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-214538-session-13.csv",
+      "titration_type": "strong_acid_weak_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 40.049244,
+      "signed_error_ml": 0.04924400000000162,
+      "absolute_error_ml": 0.04924400000000162,
+      "ape_percent": 0.12311000000000405,
+      "selected_frame_audit_only": 133,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-215437-session-14.csv",
+      "titration_type": "weak_acid_weak_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 20.156127,
+      "signed_error_ml": 0.15612700000000146,
+      "absolute_error_ml": 0.15612700000000146,
+      "ape_percent": 0.7806350000000073,
+      "selected_frame_audit_only": 64,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-220325-session-15.csv",
+      "titration_type": "weak_acid_weak_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 30.144703,
+      "signed_error_ml": 0.1447029999999998,
+      "absolute_error_ml": 0.1447029999999998,
+      "ape_percent": 0.4823433333333326,
+      "selected_frame_audit_only": 94,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv\"]",
+      "type_fit_paths": "[]"
+    },
+    {
+      "run_name": "auto-titration-live-20260601-220652-session-16.csv",
+      "titration_type": "weak_acid_weak_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 40.038366,
+      "signed_error_ml": 0.03836600000000345,
+      "absolute_error_ml": 0.03836600000000345,
+      "ape_percent": 0.09591500000000863,
+      "selected_frame_audit_only": 125,
+      "global_fit_paths": "[\"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv\", \"/home/jio/code/auto_titration/머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv\"]",
+      "type_fit_paths": "[]"
+    }
+  ],
+  "versions": {
+    "python": "3.12.3",
+    "numpy": "2.4.6",
+    "scikit_learn": "1.8.0"
+  },
+  "provenance": {
+    "input_csv_sha256": {
+      "auto-titration-live-20260601-201548-session-4.csv": "721ce618f994da5bec95ca4bd3a1691c1d8915f219db05d0215d3ac1b805af9c",
+      "auto-titration-live-20260601-202035-session-5.csv": "c097d13ab48ee7e8ad38d0e8b1fbeb45871b2d8e09f993389e6a83a7d91044c9",
+      "auto-titration-live-20260601-202744-session-6.csv": "b2df25825d8bb01bf4f2084c1cc6ecb041a2bd528bfc2b1c19866b666e7f174e",
+      "auto-titration-live-20260601-203711-session-7.csv": "7555f75f12b79811997cf79a44d032df8ab49fcdc743211ba3dc259bb5969651",
+      "auto-titration-live-20260601-204506-session-8.csv": "87b6dc7c29c75eaa456f8c784b1e391d7b500a23fc65d21add86b7084b7dd9a0",
+      "auto-titration-live-20260601-205048-session-9.csv": "141915790cc9f52241e0cea041cae0acf39407d9c69735dbc8a4c88f174680f5",
+      "auto-titration-live-20260601-213431-session-11.csv": "85e25400df4b823023ff6798a38d5e8d01ebcdbbc25eba8d5edd73872ef377e7",
+      "auto-titration-live-20260601-213925-session-12.csv": "4da0c5b0a7e36d464f7b18ab56a97f9e14af33e84fe6dc82f9e3ceeb8e11203a",
+      "auto-titration-live-20260601-214538-session-13.csv": "4787a277fa641e322684166ffd7ad311d125561292b0c1437d2bfb5f8a249e6e",
+      "auto-titration-live-20260601-215437-session-14.csv": "5f380695bb25c69f069ee31d45d104cb327471a0c3e79425302fdaf61ccc6bba",
+      "auto-titration-live-20260601-220325-session-15.csv": "52fcdb7e864e2e0c6924ee9e18b87a85bd4d850d592a8280889e076fb41f313f",
+      "auto-titration-live-20260601-220652-session-16.csv": "0ba2d187f94926319d326d856ca9f76003d54b49d3046b85bfd656304e390deb"
+    },
+    "script_sha256": {
+      "tools/sensor_transition_candidate_union.py": "51c7f3399827cf5f80049ca1ae42d1a924d15a00da25b877ea4438e83fe42efa",
+      "tools/search_advanced_type_conditioned_sensor_rankers.py": "b7fe5450cab2654aac82b6cf6b9dd0c11a2fe51486211577d8b6af9dd993ea3a",
+      "tools/search_dense_type_conditioned_aggregation.py": "380d75f35940bce6ae6267206e5426da129bfc3674d6aac0b8b87c38a1f8e021",
+      "tools/reproduce_dense_type_conditioned_sensor_rankers.py": "f54dc685b27c987a97d4abe0f4388dd2dd03bad7ed4c967dc2ac8b4338edec5f",
+      "tools/type_conditioned_sensor_sequence_search.py": "9d6fc24061d98596e3768fb0175fea305d1f0365ae5dac3a0359e3f058b4e92c"
+    }
+  },
+  "artifacts_sha256": {
+    "exact_predictions.csv": "f37058dae2e8dd9379c39720043ddd0551067d2af4666864d9c75bbe3013bc04",
+    "predictions_by_seed.csv": "22ea12ca4610fbc883edcf4562779f105825c56c566e70540a548e956bb462c4",
+    "per_seed_metrics.csv": "6778a459697935b4ae84d8925777059f549ebfa82f3714c6e0f0ab37f4fb9d31"
+  }
+}

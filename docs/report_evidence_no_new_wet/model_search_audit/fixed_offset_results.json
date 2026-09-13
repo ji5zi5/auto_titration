@@ -1,0 +1,219 @@
+{
+  "global_grid": [
+    {
+      "offset": -2,
+      "mape_percent": 2.2663060416666667
+    },
+    {
+      "offset": -1,
+      "mape_percent": 1.4247589583333327
+    },
+    {
+      "offset": 0,
+      "mape_percent": 0.7751246527777783
+    },
+    {
+      "offset": 1,
+      "mape_percent": 0.7985704166666672
+    },
+    {
+      "offset": 2,
+      "mape_percent": 1.6989567361111104
+    }
+  ],
+  "best_global": {
+    "offset": 0,
+    "mape_percent": 0.7751246527777783
+  },
+  "per_type_development_grid": [
+    {
+      "type": "strong_acid_strong_base",
+      "grid": [
+        {
+          "offset": -2,
+          "mape_percent": 1.8368238888888875
+        },
+        {
+          "offset": -1,
+          "mape_percent": 1.1414758333333315
+        },
+        {
+          "offset": 0,
+          "mape_percent": 0.4619063888888854
+        },
+        {
+          "offset": 1,
+          "mape_percent": 0.8485791666666702
+        },
+        {
+          "offset": 2,
+          "mape_percent": 1.429325277777779
+        }
+      ],
+      "selected": {
+        "offset": 0,
+        "mape_percent": 0.4619063888888854
+      }
+    },
+    {
+      "type": "strong_acid_weak_base",
+      "grid": [
+        {
+          "offset": -2,
+          "mape_percent": 2.3620166666666638
+        },
+        {
+          "offset": -1,
+          "mape_percent": 1.4241380555555574
+        },
+        {
+          "offset": 0,
+          "mape_percent": 0.7559313888888871
+        },
+        {
+          "offset": 1,
+          "mape_percent": 1.0225477777777807
+        },
+        {
+          "offset": 2,
+          "mape_percent": 2.0100177777777777
+        }
+      ],
+      "selected": {
+        "offset": 0,
+        "mape_percent": 0.7559313888888871
+      }
+    },
+    {
+      "type": "weak_acid_strong_base",
+      "grid": [
+        {
+          "offset": -2,
+          "mape_percent": 1.895256666666669
+        },
+        {
+          "offset": -1,
+          "mape_percent": 1.3073005555555521
+        },
+        {
+          "offset": 0,
+          "mape_percent": 1.0186758333333341
+        },
+        {
+          "offset": 1,
+          "mape_percent": 0.6584477777777723
+        },
+        {
+          "offset": 2,
+          "mape_percent": 1.694035833333331
+        }
+      ],
+      "selected": {
+        "offset": 1,
+        "mape_percent": 0.6584477777777723
+      }
+    },
+    {
+      "type": "weak_acid_weak_base",
+      "grid": [
+        {
+          "offset": -2,
+          "mape_percent": 2.9711269444444475
+        },
+        {
+          "offset": -1,
+          "mape_percent": 1.8261213888888903
+        },
+        {
+          "offset": 0,
+          "mape_percent": 0.8639850000000058
+        },
+        {
+          "offset": 1,
+          "mape_percent": 0.6647069444444457
+        },
+        {
+          "offset": 2,
+          "mape_percent": 1.6624480555555543
+        }
+      ],
+      "selected": {
+        "offset": 1,
+        "mape_percent": 0.6647069444444457
+      }
+    }
+  ],
+  "best_typewise": {
+    "offsets": {
+      "strong_acid_strong_base": 0,
+      "strong_acid_weak_base": 0,
+      "weak_acid_strong_base": 1,
+      "weak_acid_weak_base": 1
+    },
+    "mape_percent": 0.6352481249999976
+  },
+  "global_offset_loo_stability": [
+    {
+      "run": "auto-titration-live-20260601-201548-session-4.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 0.10689749999999165
+    },
+    {
+      "run": "auto-titration-live-20260601-202035-session-5.csv",
+      "chosen_offset": 1,
+      "held_out_ape": 1.8253600000000072
+    },
+    {
+      "run": "auto-titration-live-20260601-202744-session-6.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 0.9790466666666713
+    },
+    {
+      "run": "auto-titration-live-20260601-203711-session-7.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 0.9440050000000079
+    },
+    {
+      "run": "auto-titration-live-20260601-204506-session-8.csv",
+      "chosen_offset": 1,
+      "held_out_ape": 1.8909433333333325
+    },
+    {
+      "run": "auto-titration-live-20260601-205048-session-9.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 0.9306624999999967
+    },
+    {
+      "run": "auto-titration-live-20260601-213431-session-11.csv",
+      "chosen_offset": 1,
+      "held_out_ape": 2.6910400000000045
+    },
+    {
+      "run": "auto-titration-live-20260601-213925-session-12.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 1.1388066666666674
+    },
+    {
+      "run": "auto-titration-live-20260601-214538-session-13.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 0.5585424999999944
+    },
+    {
+      "run": "auto-titration-live-20260601-215437-session-14.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 1.362590000000008
+    },
+    {
+      "run": "auto-titration-live-20260601-220325-session-15.csv",
+      "chosen_offset": 0,
+      "held_out_ape": 1.133450000000001
+    },
+    {
+      "run": "auto-titration-live-20260601-220652-session-16.csv",
+      "chosen_offset": 1,
+      "held_out_ape": 0.7311424999999971
+    }
+  ],
+  "global_offset_loo_mape_percent": 1.1910405555555568,
+  "warning": "Offsets were discovered on the same 12 development runs. The LOO stability audit reuses fixed outer predictions and is not a strict nested ranker refit."
+}

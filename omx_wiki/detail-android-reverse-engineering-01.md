@@ -1,0 +1,159 @@
+---
+title: "detail-android-reverse-engineering-01"
+tags: ["전람회", "상세기록"]
+created: 2026-09-10T11:10:16.134Z
+updated: 2026-09-10T11:10:16.134Z
+sources: []
+links: ["detail-android-reverse-engineering-01.md", "detailed-library.md", "evidence-conflicts-and-current-status.md"]
+category: reference
+confidence: medium
+schemaVersion: 1
+---
+
+# detail-android-reverse-engineering-01
+
+## 문서의 역할과 해석
+공식 APK 정적 분석 이력. 라이브러리 존재와 실제 전화기 변환 성공은 별개.
+
+원문: [docs/hikmicro_apk_androguard_summary.txt](../docs/hikmicro_apk_androguard_summary.txt)
+이하 내용은 2026-09-10 현재 파일에 있는 원문 발췌를 순서대로 보존한 것이다. 새 검증·새 실험을 주장하지 않는다. 원문 내부 상대경로는 원본 문서 위치 기준이다. 수치가 다른 문서와 충돌하면 [[evidence-conflicts-and-current-status]]를 먼저 읽는다.
+
+목차: [[detailed-library]] / [[detail-android-reverse-engineering-01]]
+
+<!-- BEGIN SOURCE EXCERPT -->
+HIKMICRO Viewer APK/XAPK 분석 요약
+
+1. 분석 대상
+- 파일: HIKMICRO Viewer_2.6.0_APKPure.xapk
+- base APK: com.hikvision.thermalGoogle.apk
+- 패키지명: com.hikvision.thermalGoogle
+- 버전: 2.6.0
+
+2. APK 내부 구조
+- AndroidManifest.xml
+- classes.dex
+- classes2.dex
+- classes3.dex
+- classes4.dex
+- lib/arm64-v8a/*.so
+
+즉, 자바/코틀린 코드만 있는 앱이 아니라,
+열화상 카메라 처리를 대부분 native .so 라이브러리로 하는 구조였음.
+
+3. 중요한 native 라이브러리
+
+- libHCUSBSDK.so
+  USB 카메라 연결/스트리밍 담당으로 보임.
+  HC_USBCamera_Init, Open, StartPreview, Capture 같은 심볼이 있음.
+  USB_StartStreamCallback, JNI_GetJpegpicWithAppendData도 있음.
+
+- lib_thermal_module.so
+  실시간 열화상 스트림/온도 설정 쪽.
+  thermal_init_thermal_module,
+  thermal_function_stream_realtime_init,
+  thermal_function_get_msg,
+  thermal_function_set_msg 등이 있음.
+
+- libMTlib.so
+  gray/raw 값을 온도로 바꾸는 핵심 후보.
+  MT_Gray2Temp,
+  MT_GetGray2TempTable,
+  MT_GetGray2TempTableU16 등이 있음.
+
+- libMicroJITA_Release_v8a.so
+  JPEG/열화상 이미지 처리 쪽.
+  createFromJPEG, grayToTemperature, temperatureToGray, measure,
+  getThermalImage 계열 심볼이 있었음.
+
+- libMicroTA_Release_v8a.so
+  온도 행렬/분석 쪽 후보.
+  TempMatrix, TempAnalyzer, temperatureTable, calculate 계열 구조가 보임.
+
+- libusbCam_host.so, libuvc.so, libusb*.so
+  Android에서 USB/UVC 장치와 통신하는 하위 계층.
+
+4. 중요한 Java/JNA 구조
+
+- com.hcusbsdk.jna.HCUSBSDKByJNA
+- com.hik.f1module.hcusbcamerasdk.jna.HCUSBCameraSDKByJNA
+
+이쪽이 native .so를 Java에서 부르는 JNA wrapper 역할로 보임.
+
+특히 HCUSBCameraSDKByJNA에는:
+- thermal_init_thermal_module
+- thermal_function_stream_realtime_init
+- thermal_function_get_msg
+- thermal_function_set_msg
+- USB_SET_THERMAL_STREAM_PARAM
+- USB_SET_THERMAL_STREAM_CTRL
+- USB_FRAME_INFO
+같은 실시간 열화상 스트림 관련 구조가 있었음.
+
+5. 앱이 Mini2를 다루는 추정 흐름
+
+대충 이런 구조로 보임:
+
+Android USB Host
+→ libusb / libuvc / libusbCam_host
+→ libHCUSBSDK
+→ JNA wrapper
+→ USB_StartStreamCallback
+→ USB_FRAME_INFO 콜백
+→ raw/thermal frame 수신
+→ lib_thermal_module 또는 MicroSDK/MTlib로 온도/이미지 처리
+
+6. 우리가 현재 앱에 반영한 것
+
+현재 우리 Android 앱도 이 분석 결과를 바탕으로:
+
+- arm64-v8a native .so들을 app/src/main/jniLibs/arm64-v8a/에 넣음
+- JNA 의존성 추가
+- HikmicroNativeBackend.kt에서 라이브러리 로드 시도
+- HikmicroJnaMini2Stream.kt에서
+  USB_Init → USB_Login → USB_SetVideoParam → USB_StartStreamCallback
+  → USB_SetThermalStreamParam → USB_SetThermalStreamCtrl
+  흐름을 재현하려고 함
+
+7. 중요한 한계
+
+APK에서 구조와 심볼은 찾았지만,
+그게 곧바로 “온도 ℃ 실시간 추출 완성”이라는 뜻은 아님.
+
+확실한 것:
+- 공식 앱 안에 Android용 native 라이브러리와 USB/thermal stream API가 있음.
+- 그래서 폰 단독 Mini2 접근은 기술적으로 가능성이 있음.
+
+아직 불확실한 것:
+- 정확한 콜백 frame 구조
+- raw frame에서 온도 행렬까지 가는 정확한 Android 경로
+- libMTlib / MicroTA / thermal_module 중 어떤 조합이 실시간 ℃ 변환에 필요한지
+- 추출한 .so를 우리 APK에 넣어 배포해도 되는 라이선스 문제
+
+8. 결론
+
+androguard로 뜯어본 결과,
+HIKMICRO Viewer 앱은 단순 카메라 앱이 아니라:
+
+USB Host/UVC 계층
++ HIKMICRO USB SDK
++ thermal stream callback
++ raw/gray → temperature 변환 native 라이브러리
++ Java/JNA wrapper
+
+가 묶인 구조였음.
+
+그래서 우리 모바일 앱에서 Mini2를 직접 쓰는 방향은 완전히 헛소리는 아니고,
+실제 공식 앱도 비슷하게 native 라이브러리로 USB 열화상 스트림을 처리하는 구조임.
+
+다만 지금 repo 기준으로는
+“라이브러리 로드와 스트림 시도 구조”까지 구현되어 있고,
+“검증된 실시간 ℃ 온도행렬 완성”은 아직 확정 증거가 부족함.
+
+근거 파일:
+- .omx/analysis/hikmicro_viewer_xapk/README.md
+- .omx/analysis/hikmicro_viewer_xapk/androguard_hikmicro_viewer_report.json
+- .omx/drafts/mini2-native-symbol-discovery.md
+- mobile/android/app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroNativeBackend.kt
+- mobile/android/app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt
+<!-- END SOURCE EXCERPT -->
+

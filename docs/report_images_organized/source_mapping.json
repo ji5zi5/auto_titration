@@ -1,0 +1,200 @@
+[
+  {
+    "docx_media": "image1.png",
+    "organized_file": "01_system_experiment/01_system_overview_three_views.png",
+    "provenance": "직접 촬영 사진 합성",
+    "docx_figure": "그림 1·2·17",
+    "status": "본문 핵심",
+    "description": "실제 적정 장치의 주입·일반 촬영·열화상 촬영을 한 장에 정리",
+    "note": "DOCX에서 세 번 재사용됨. 본문에서는 한 번만 크게 사용하고 이후에는 참조 권장"
+  },
+  {
+    "docx_media": "image2.png",
+    "organized_file": "02_hardware_design/02_syringe_pump_parts_overview.png",
+    "provenance": "부품 이미지 합성",
+    "docx_figure": "그림 5",
+    "status": "교체 권장",
+    "description": "시린지 펌프 제작 부품 목록",
+    "note": "제품 사진 출처가 불명확할 수 있어 직접 촬영한 부품 사진이나 단순 아이콘 도식으로 교체 권장"
+  },
+  {
+    "docx_media": "image3.png",
+    "organized_file": "02_hardware_design/03_pump_3d_models_overview.png",
+    "provenance": "직접 제작 3D 모델 합성",
+    "docx_figure": "그림 6",
+    "status": "본문 핵심",
+    "description": "푸셔 블록·모터 홀더/가이드·주사기 고정대 3D 모델",
+    "note": "세부 모델 그림 4~6을 묶는 대표 설계 그림"
+  },
+  {
+    "docx_media": "image4.png",
+    "organized_file": "02_hardware_design/04_pusher_block_3d_model.png",
+    "provenance": "직접 제작 3D 모델",
+    "docx_figure": "그림 7",
+    "status": "부록/세부",
+    "description": "푸셔 블록 3D 모델",
+    "note": "그림 3과 일부 중복. 제작 과정 설명에서만 사용"
+  },
+  {
+    "docx_media": "image5.png",
+    "organized_file": "02_hardware_design/05_motor_holder_rail_3d_model.png",
+    "provenance": "직접 제작 3D 모델",
+    "docx_figure": "그림 8",
+    "status": "부록/세부",
+    "description": "스텝모터 홀더와 가이드 레일 3D 모델",
+    "note": "그림 3과 일부 중복. 제작 과정 설명에서만 사용"
+  },
+  {
+    "docx_media": "image6.png",
+    "organized_file": "02_hardware_design/06_syringe_holder_3d_model.png",
+    "provenance": "직접 제작 3D 모델",
+    "docx_figure": "그림 9",
+    "status": "부록/세부",
+    "description": "주사기 고정대 3D 모델",
+    "note": "세로로 좁은 이미지. 본문에서는 그림 3에 통합 가능"
+  },
+  {
+    "docx_media": "image7.png",
+    "organized_file": "02_hardware_design/07_arduino_a4988_stepper_circuit.png",
+    "provenance": "직접 제작 회로도",
+    "docx_figure": "그림 10",
+    "status": "본문 핵심",
+    "description": "Arduino Uno·A4988·스텝모터 회로",
+    "note": "배선과 전원 연결 설명에 사용"
+  },
+  {
+    "docx_media": "image8.png",
+    "organized_file": "01_system_experiment/08_completed_syringe_pump.png",
+    "provenance": "직접 촬영 사진",
+    "docx_figure": "그림 11",
+    "status": "본문 핵심",
+    "description": "조립 완료한 100 mL 시린지 펌프",
+    "note": "프로젝트 원본 docs/report_assets/syringe_pump_completed.jpg와 동일 장면의 고해상도 PNG"
+  },
+  {
+    "docx_media": "image9.png",
+    "organized_file": "03_software_ui/09_windows_dashboard_full.png",
+    "provenance": "직접 개발 화면 캡처",
+    "docx_figure": "그림 13",
+    "status": "본문 선택",
+    "description": "Windows 통합 앱 전체 화면",
+    "note": "얼굴이 포함되어 있으므로 공개 보고서 사용 전 초상 노출 확인 또는 카메라 영역 크롭 권장"
+  },
+  {
+    "docx_media": "image10.png",
+    "organized_file": "03_software_ui/10_windows_android_comparison.png",
+    "provenance": "직접 개발 화면 합성",
+    "docx_figure": "그림 15·30",
+    "status": "본문 핵심",
+    "description": "Windows·Android 일반/열화상 화면 비교",
+    "note": "DOCX에서 두 번 재사용됨. 한 번만 사용하고 다른 위치에서는 참조. 얼굴 노출 확인 권장"
+  },
+  {
+    "docx_media": "image11.png",
+    "organized_file": "01_system_experiment/11_four_reagent_solutions.png",
+    "provenance": "직접 촬영 사진 합성",
+    "docx_figure": "그림 16",
+    "status": "본문 핵심",
+    "description": "염산·아세트산·수산화나트륨·암모니아수 용액",
+    "note": "시약 제조와 실험 조건 설명에 사용"
+  },
+  {
+    "docx_media": "image12.png",
+    "organized_file": "01_system_experiment/12_phenolphthalein_titration_setup.png",
+    "provenance": "직접 촬영 사진",
+    "docx_figure": "그림 18",
+    "status": "본문 핵심",
+    "description": "페놀프탈레인 적정 실험 장치",
+    "note": "프로젝트 원본 docs/report_assets/wet_titration_setup.jpg와 동일 장면"
+  },
+  {
+    "docx_media": "image13.png",
+    "organized_file": "01_system_experiment/13_btb_color_change_setup.png",
+    "provenance": "직접 촬영 사진",
+    "docx_figure": "그림 19",
+    "status": "부록/탐색",
+    "description": "BTB 색 변화 확인 실험",
+    "note": "최종 12회 실험의 핵심 지시약 표와 혼동될 수 있어 탐색 실험 또는 부록으로 명시"
+  },
+  {
+    "docx_media": "image14.png",
+    "organized_file": "04_results_charts/14_manual_reference_vs_endpoint.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 20",
+    "status": "본문 핵심",
+    "description": "수동 적정 기준 당량점과 관찰 종말점 비교",
+    "note": "수동 적정 12회 결과"
+  },
+  {
+    "docx_media": "image15.png",
+    "organized_file": "04_results_charts/15_manual_signed_error.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 21",
+    "status": "본문 핵심",
+    "description": "수동 적정 조건별 부호 오차",
+    "note": "오차 방향과 편향 확인"
+  },
+  {
+    "docx_media": "image16.png",
+    "organized_file": "04_results_charts/16_manual_vs_smart_mae_rmse.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 22",
+    "status": "본문 핵심",
+    "description": "수동 적정과 스마트 적정기의 MAE·RMSE 비교",
+    "note": "수동 1.22%와 ML 융합 1.52% 해석 문단에 사용"
+  },
+  {
+    "docx_media": "image17.png",
+    "organized_file": "04_results_charts/17_endpoint_method_mape.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 23·25",
+    "status": "본문 핵심",
+    "description": "비ML 두 방식과 ML 세 입력군의 MAPE 비교",
+    "note": "DOCX에서 같은 그림을 두 번 사용함. 최종 보고서에서는 한 번만 배치"
+  },
+  {
+    "docx_media": "image18.png",
+    "organized_file": "04_results_charts/18_fusion_actual_vs_predicted.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 26",
+    "status": "본문 핵심",
+    "description": "이론 당량점과 색상·열화상 융합 모델 추정값 비교",
+    "note": "최종 센서 융합 모델 MAPE 1.52% 결과"
+  },
+  {
+    "docx_media": "image19.png",
+    "organized_file": "04_results_charts/19_ml_modality_overall.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 27",
+    "status": "본문 핵심",
+    "description": "색상·열화상·융합 모델 전체 성능",
+    "note": "현재 주입량을 제외한 세 모델 비교"
+  },
+  {
+    "docx_media": "image20.png",
+    "organized_file": "04_results_charts/20_fusion_mape_by_titration_type.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 28",
+    "status": "본문 핵심",
+    "description": "적정 종류별 융합 모델 MAPE",
+    "note": "약산-강염기 성능 저하를 보여주는 핵심 결과"
+  },
+  {
+    "docx_media": "image21.png",
+    "organized_file": "04_results_charts/21_repeatability_three_runs.png",
+    "provenance": "직접 생성 데이터 그래프",
+    "docx_figure": "그림 29",
+    "status": "본문 핵심",
+    "description": "동일 용액 3회 반복 측정 환산 농도",
+    "note": "평균 0.0855 M, 변동계수 3.85%"
+  },
+  {
+    "docx_media": "image22.png",
+    "organized_file": "05_prior_research/22_prior_work_search_composite.png",
+    "provenance": "직접 캡처 화면 합성",
+    "docx_figure": "그림 31",
+    "status": "본문 선택",
+    "description": "과학전람회 DB와 RISS 유사작품 검색",
+    "note": "원본 캡처 두 장을 별도로 보관. 검색일과 URL/검색어를 본문에 함께 기록 권장"
+  }
+]

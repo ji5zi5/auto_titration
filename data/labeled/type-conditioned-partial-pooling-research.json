@@ -1,0 +1,359 @@
+{
+  "schema_version": "strict_nested_partial_pooling_endpoint_v1",
+  "run_count": 12,
+  "candidate_spec_count": 8,
+  "candidate_specs": [
+    {
+      "sampling": "native",
+      "pooling": "global",
+      "subset": "state",
+      "target": "rank",
+      "alpha": 10.0
+    },
+    {
+      "sampling": "native",
+      "pooling": "global",
+      "subset": "full_sensor",
+      "target": "exp_rank",
+      "alpha": 10.0
+    },
+    {
+      "sampling": "native",
+      "pooling": "partial",
+      "subset": "state",
+      "target": "rank",
+      "alpha": 100.0
+    },
+    {
+      "sampling": "native",
+      "pooling": "partial",
+      "subset": "full_sensor",
+      "target": "exp_rank",
+      "alpha": 100.0
+    },
+    {
+      "sampling": "volume_0p25ml",
+      "pooling": "global",
+      "subset": "state",
+      "target": "rank",
+      "alpha": 10.0
+    },
+    {
+      "sampling": "volume_0p25ml",
+      "pooling": "global",
+      "subset": "full_sensor",
+      "target": "exp_rank",
+      "alpha": 10.0
+    },
+    {
+      "sampling": "volume_0p25ml",
+      "pooling": "partial",
+      "subset": "state",
+      "target": "rank",
+      "alpha": 100.0
+    },
+    {
+      "sampling": "volume_0p25ml",
+      "pooling": "partial",
+      "subset": "full_sensor",
+      "target": "exp_rank",
+      "alpha": 100.0
+    }
+  ],
+  "split": "outer leave-one-run-out; every sampling/pooling/subset/target/alpha choice selected by inner leave-one-run-out on outer training runs only",
+  "model_inputs": "sensor candidate features and known titration type only; volume used only for labels and selected-frame conversion",
+  "metrics": {
+    "mae_ml": 5.4711022499999995,
+    "rmse_ml": 5.901732770715725,
+    "mape_percent": 20.353947638888886,
+    "max_abs_error_ml": 8.5,
+    "max_ape_percent": 41.25
+  },
+  "selection_counts": {
+    "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 6,
+    "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 6
+  },
+  "predictions": [
+    {
+      "run": "auto-titration-live-20260601-201548-session-4.csv",
+      "titration_type": "strong_acid_strong_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 48.5,
+      "selected_spec": {
+        "sampling": "volume_0p25ml",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.40621446969697,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 24.186205454545455,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.576111666666666,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 21.908686439393936,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.708333333333332,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 25.28409090909091,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.265151515151516,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 23.200757575757574
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-202035-session-5.csv",
+      "titration_type": "strong_acid_strong_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 26.572984,
+      "selected_spec": {
+        "sampling": "native",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.065677878787877,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 22.294352954545452,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.23376265151515,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 19.550718939393935,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.71969696969697,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 23.08712121212121,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 19.94318181818182,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 19.96212121212121
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-202744-session-6.csv",
+      "titration_type": "strong_acid_strong_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 33.5,
+      "selected_spec": {
+        "sampling": "volume_0p25ml",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.55403393939394,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 22.03437484848485,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 17.596591212121208,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 20.558018636363634,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.348484848484848,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.950757575757574,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 17.367424242424242,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.00378787878788
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-203711-session-7.csv",
+      "titration_type": "weak_acid_strong_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 16.0,
+      "selected_spec": {
+        "sampling": "volume_0p25ml",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.331908106060606,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 23.3973253030303,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.829108257575754,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 20.178970757575755,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.329545454545453,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 23.80681818181818,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 17.803030303030305,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 20.56818181818182
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-204506-session-8.csv",
+      "titration_type": "weak_acid_strong_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 37.25,
+      "selected_spec": {
+        "sampling": "volume_0p25ml",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.804457575757574,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 22.22820371212121,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.569936363636362,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 20.32643227272727,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.234848484848484,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 22.632575757575758,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.390151515151516,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 20.776515151515152
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-205048-session-9.csv",
+      "titration_type": "weak_acid_strong_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 40.239177,
+      "selected_spec": {
+        "sampling": "native",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.94746568181818,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 24.24807166666666,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.771058257575756,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 22.3816703030303,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 23.143939393939394,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 24.696969696969695,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.856060606060606,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 22.859848484848484
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-213431-session-11.csv",
+      "titration_type": "strong_acid_weak_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 26.481941,
+      "selected_spec": {
+        "sampling": "native",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.04608590909091,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 23.24270325757575,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 17.88226303030303,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 19.43496962121212,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.098484848484848,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 22.74621212121212,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.901515151515152,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 19.375
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-213925-session-12.csv",
+      "titration_type": "strong_acid_weak_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 34.22239,
+      "selected_spec": {
+        "sampling": "native",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.783690151515152,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 23.09440462121212,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.00739340909091,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 21.282760454545453,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.386363636363637,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 24.791666666666668,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.700757575757574,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.666666666666668
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-214538-session-13.csv",
+      "titration_type": "strong_acid_weak_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 35.126257,
+      "selected_spec": {
+        "sampling": "native",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.253593712121212,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 23.06894439393939,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.05815553030303,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 21.27869962121212,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 21.91287878787879,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 23.238636363636363,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.66287878787879,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.609848484848484
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-215437-session-14.csv",
+      "titration_type": "weak_acid_weak_base",
+      "actual_ml": 20.0,
+      "predicted_ml": 28.25,
+      "selected_spec": {
+        "sampling": "volume_0p25ml",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 17.911064696969696,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 20.911501590909086,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 17.01550621212121,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 18.884364393939393,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.65530303030303,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.950757575757574,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 14.791666666666666,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 19.09090909090909
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-220325-session-15.csv",
+      "titration_type": "weak_acid_weak_base",
+      "actual_ml": 30.0,
+      "predicted_ml": 35.25,
+      "selected_spec": {
+        "sampling": "volume_0p25ml",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.987158409090906,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 22.888746136363633,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 19.10939765151515,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 21.074667727272725,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.09469696969697,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 24.602272727272727,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 18.106060606060606,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.382575757575758
+      }
+    },
+    {
+      "run": "auto-titration-live-20260601-220652-session-16.csv",
+      "titration_type": "weak_acid_weak_base",
+      "actual_ml": 40.0,
+      "predicted_ml": 46.512992,
+      "selected_spec": {
+        "sampling": "native",
+        "pooling": "partial",
+        "subset": "full_sensor",
+        "target": "exp_rank",
+        "alpha": 100.0
+      },
+      "inner_mape_by_spec": {
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 19.762591515151517,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 22.751006515151516,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 19.546737196969694,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"native\", \"subset\": \"state\", \"target\": \"rank\"}": 21.058213484848483,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 22.632575757575758,
+        "{\"alpha\": 10.0, \"pooling\": \"global\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 23.920454545454547,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"full_sensor\", \"target\": \"exp_rank\"}": 20.397727272727273,
+        "{\"alpha\": 100.0, \"pooling\": \"partial\", \"sampling\": \"volume_0p25ml\", \"subset\": \"state\", \"target\": \"rank\"}": 21.83712121212121
+      }
+    }
+  ],
+  "limitations": [
+    "Candidate generation was developed before this nested comparison.",
+    "Only 12 independent runs are available.",
+    "Theoretical nominal volumes are not independently standardized wet references."
+  ]
+}

@@ -1,0 +1,5 @@
+﻿pipeline_scope,algorithm,mape_percent,run_count
+initial_common_pipeline,Ridge Regression,63.408743,12
+initial_common_pipeline,KNN Regression,24.904472,12
+initial_common_pipeline,Random Forest Regression,10.367625,12
+initial_common_pipeline,Extra Trees Regression,8.81045,12

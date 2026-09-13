@@ -1,0 +1,156 @@
+[
+  {
+    "index": 1,
+    "source": "word/media/image1.png",
+    "file": "docs/report_images_organized/00_docx_original/image1.png",
+    "bytes": 1271323,
+    "sha256": "6a15df1dc24667e1ac6c5dd409eb7135251d894f41792fb624c19240fe7434eb"
+  },
+  {
+    "index": 2,
+    "source": "word/media/image2.png",
+    "file": "docs/report_images_organized/00_docx_original/image2.png",
+    "bytes": 359409,
+    "sha256": "081384bb96f45033ebc3be6ed80d4f27541ed2b3f25869dbb93bb45e9163a760"
+  },
+  {
+    "index": 3,
+    "source": "word/media/image3.png",
+    "file": "docs/report_images_organized/00_docx_original/image3.png",
+    "bytes": 381757,
+    "sha256": "8f537e73674da483b1a6e849ff6c6070434c5499e60d55f100cb3123d728769b"
+  },
+  {
+    "index": 4,
+    "source": "word/media/image4.png",
+    "file": "docs/report_images_organized/00_docx_original/image4.png",
+    "bytes": 251137,
+    "sha256": "d9f594bce71d7ffb2753af3b46dce2482530cd30b80af6af7542057012ce3109"
+  },
+  {
+    "index": 5,
+    "source": "word/media/image5.png",
+    "file": "docs/report_images_organized/00_docx_original/image5.png",
+    "bytes": 340201,
+    "sha256": "7c968d764d3f64d7877c569791266c33dc3e35b308f3e3f91c84beb14683ea45"
+  },
+  {
+    "index": 6,
+    "source": "word/media/image6.png",
+    "file": "docs/report_images_organized/00_docx_original/image6.png",
+    "bytes": 48223,
+    "sha256": "3e5c0e4b5b4974628189f79efcd13358cea8ebbd0da9a92a336a39db494b95f9"
+  },
+  {
+    "index": 7,
+    "source": "word/media/image7.png",
+    "file": "docs/report_images_organized/00_docx_original/image7.png",
+    "bytes": 174417,
+    "sha256": "d9b5116d3bdf907834ea1753d499b1f8c93a4a70c27387d6c82a42f811485949"
+  },
+  {
+    "index": 8,
+    "source": "word/media/image8.png",
+    "file": "docs/report_images_organized/00_docx_original/image8.png",
+    "bytes": 1768150,
+    "sha256": "6fb71c2cc8e987c4e10efe940eb675c7bd8bebe8bd112c9f0215e37affa45121"
+  },
+  {
+    "index": 9,
+    "source": "word/media/image9.png",
+    "file": "docs/report_images_organized/00_docx_original/image9.png",
+    "bytes": 443143,
+    "sha256": "d25482f6d9ba11d200eee2032161943663306192d0cd2c623123604d820c867a"
+  },
+  {
+    "index": 10,
+    "source": "word/media/image10.png",
+    "file": "docs/report_images_organized/00_docx_original/image10.png",
+    "bytes": 268937,
+    "sha256": "88b0bc2ff601668fce1f859df46c05b2ff314df59a01a75580c47a447505e747"
+  },
+  {
+    "index": 11,
+    "source": "word/media/image11.png",
+    "file": "docs/report_images_organized/00_docx_original/image11.png",
+    "bytes": 1034655,
+    "sha256": "668ea42b61494689fe80a6c85beafb08c33c1edca0aa2bcd8a5019f2e4689919"
+  },
+  {
+    "index": 12,
+    "source": "word/media/image12.png",
+    "file": "docs/report_images_organized/00_docx_original/image12.png",
+    "bytes": 1440896,
+    "sha256": "38893a71306d4f095f688f361b7729bf12fb0e454c886368aea5260c6f809aac"
+  },
+  {
+    "index": 13,
+    "source": "word/media/image13.png",
+    "file": "docs/report_images_organized/00_docx_original/image13.png",
+    "bytes": 1462513,
+    "sha256": "0ca281077d4d530ffd7d1130b557a22e24db70a0773c9f2d141988db3307b94c"
+  },
+  {
+    "index": 14,
+    "source": "word/media/image14.png",
+    "file": "docs/report_images_organized/00_docx_original/image14.png",
+    "bytes": 195314,
+    "sha256": "cd7b708ee364e1e457f0c99cb8a33381f948070d25ed5917daf13b8b398efb6d"
+  },
+  {
+    "index": 15,
+    "source": "word/media/image15.png",
+    "file": "docs/report_images_organized/00_docx_original/image15.png",
+    "bytes": 67242,
+    "sha256": "ead1847d0467a40dab21e4aeeed98db5d461416b2991de75aab6ab866fb4d11a"
+  },
+  {
+    "index": 16,
+    "source": "word/media/image16.png",
+    "file": "docs/report_images_organized/00_docx_original/image16.png",
+    "bytes": 60124,
+    "sha256": "f5ebf070d78c7b5a0f083fa93690ff5a28388fadce868b46e5ea2b0d60f8d312"
+  },
+  {
+    "index": 17,
+    "source": "word/media/image17.png",
+    "file": "docs/report_images_organized/00_docx_original/image17.png",
+    "bytes": 92759,
+    "sha256": "079e3395cd7b77c35a4e758be6190dc503f0a65c57df95d76b8e9dbbea17aeb4"
+  },
+  {
+    "index": 18,
+    "source": "word/media/image18.png",
+    "file": "docs/report_images_organized/00_docx_original/image18.png",
+    "bytes": 82782,
+    "sha256": "fe4832a7a4c25fd957ffe2a0ea125c468a01ebf0914a019e81aedd97823d13f6"
+  },
+  {
+    "index": 19,
+    "source": "word/media/image19.png",
+    "file": "docs/report_images_organized/00_docx_original/image19.png",
+    "bytes": 63920,
+    "sha256": "8cefdecb79102e69ed7cc691634012966886a5403eec275dd23652ef2a4d6eb5"
+  },
+  {
+    "index": 20,
+    "source": "word/media/image20.png",
+    "file": "docs/report_images_organized/00_docx_original/image20.png",
+    "bytes": 71781,
+    "sha256": "87443ee71552fa01161738048a7f11c631272ea6e0b40548c4773c6322d0d8ca"
+  },
+  {
+    "index": 21,
+    "source": "word/media/image21.png",
+    "file": "docs/report_images_organized/00_docx_original/image21.png",
+    "bytes": 86662,
+    "sha256": "43ae24d9e06dd0c01dcf41adeccd08b5d247084fd9edb440780bbf140febd3f6"
+  },
+  {
+    "index": 22,
+    "source": "word/media/image22.png",
+    "file": "docs/report_images_organized/00_docx_original/image22.png",
+    "bytes": 122435,
+    "sha256": "16576e2a48ace208512faa8b5b0bf57c1cc6c0a31bc6d266406c1d717295a83a"
+  }
+]

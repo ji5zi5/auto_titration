@@ -1,0 +1,133 @@
+{
+  "scope": "cross_environment_frozen_model_replay_not_wet_accuracy",
+  "runs": 12,
+  "all_predictions_equal_at_six_decimals": true,
+  "wsl_sklearn": "1.8.0",
+  "windows_sklearn": "1.9.0",
+  "compatibility_warning": "InconsistentVersionWarning emitted; same stored CSV parity does not guarantee cross-version behavior on every future input",
+  "model_sha256": "378a19b3aead649bfe783b42518792001c3de33aebcb51bcecd47d60067e3f90",
+  "wsl": [
+    {
+      "file": "auto-titration-live-20260601-201548-session-4.csv",
+      "volume": 39.751545,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-202035-session-5.csv",
+      "volume": 20.059955,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-202744-session-6.csv",
+      "volume": 29.706286,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-203711-session-7.csv",
+      "volume": 19.294277,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-204506-session-8.csv",
+      "volume": 29.452967,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-205048-session-9.csv",
+      "volume": 39.627735,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-213431-session-11.csv",
+      "volume": 19.870924,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-213925-session-12.csv",
+      "volume": 29.923952,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-214538-session-13.csv",
+      "volume": 39.559792,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-215437-session-14.csv",
+      "volume": 20.156127,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-220325-session-15.csv",
+      "volume": 29.527994,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-220652-session-16.csv",
+      "volume": 40.292457,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    }
+  ],
+  "windows": [
+    {
+      "file": "auto-titration-live-20260601-201548-session-4.csv",
+      "volume": 39.751545,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-202035-session-5.csv",
+      "volume": 20.059955,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-202744-session-6.csv",
+      "volume": 29.706286,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-203711-session-7.csv",
+      "volume": 19.294277,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-204506-session-8.csv",
+      "volume": 29.452967,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-205048-session-9.csv",
+      "volume": 39.627735,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-213431-session-11.csv",
+      "volume": 19.870924,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-213925-session-12.csv",
+      "volume": 29.923952,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-214538-session-13.csv",
+      "volume": 39.559792,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-215437-session-14.csv",
+      "volume": 20.156127,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-220325-session-15.csv",
+      "volume": 29.527994,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    },
+    {
+      "file": "auto-titration-live-20260601-220652-session-16.csv",
+      "volume": 40.292457,
+      "source": "type_conditioned_sensor_endpoint_ranker"
+    }
+  ]
+}

@@ -17,21 +17,25 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import io
 import importlib
 import json
+import math
 import os
 import pickle
 import queue
+import re
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlparse
 
 import numpy as np
@@ -41,13 +45,26 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from auto_titrator.camera import CameraConfig, UsbCamera  # noqa: E402
-from auto_titrator.chemistry import calculate_theoretical_titration_result  # noqa: E402
+from auto_titrator.auto_stop import (  # noqa: E402
+    ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+    ABSOLUTE_PUMP_MAX_VOLUME_ML,
+    AUTO_STOP_CONFIRMATION_SECONDS,
+    AUTO_STOP_MAX_VOLUME_ML,
+    AbsolutePumpSafetyGuard,
+    AutoStopDecision,
+    ColorChangeAutoStopController,
+)
+from auto_titrator.chemistry import SUPPORTED_TITRATION_TYPES, calculate_theoretical_titration_result  # noqa: E402
 from auto_titrator.chemical_constants import DEFAULT_IUPAC_CSV_PATH, lookup_iupac_pka  # noqa: E402
 from auto_titrator.color_analysis import ColorFeatureExtractor, Roi, prefix_features, rgb_to_hsv  # noqa: E402
 from auto_titrator.data_schema import DEFAULT_COLUMNS  # noqa: E402
 from auto_titrator.equivalence_analysis import estimate_equivalence_point  # noqa: E402
-from auto_titrator.ml_features import derive_ml_features  # noqa: E402
+from auto_titrator.ml_features import DERIVED_ML_COLUMNS, derive_ml_features, select_online_history_rows  # noqa: E402
 from auto_titrator.ml_predict import load_optional_model, predict_row  # noqa: E402
+from auto_titrator.type_conditioned_sensor_live_model import (  # noqa: E402
+    load_type_conditioned_sensor_model,
+    predict_type_conditioned_sensor_equivalence,
+)
 from auto_titrator.typewise_live_model import load_typewise_model, predict_typewise_equivalence  # noqa: E402
 from auto_titrator.feature_history import FeatureSample  # noqa: E402
 from auto_titrator.live_app import classify_status  # noqa: E402
@@ -66,6 +83,13 @@ from auto_titrator.mini2_live import (  # noqa: E402
     load_raw_to_celsius_converter,
 )
 from auto_titrator.official_hikmicro import DLL_DIR_DEFAULT  # noqa: E402
+from auto_titrator.pulse_control import (  # noqa: E402
+    ABC_FIRMWARE_MAX_PULSE_STEPS,
+    PulseControlConfig,
+    PulseController,
+    PulseObservation,
+    PulseState,
+)
 
 
 BACKEND_NAMES = {
@@ -133,12 +157,117 @@ CSV_START_METADATA_KEYS = frozenset(
         "equivalence_formula",
         "calculated_theoretical_equivalence_volume_ml",
         "sample_concentration_from_theoretical_equivalence_M",
+        "auto_stop_enabled",
+        "auto_stop_confirmation_delay_s",
+        "auto_stop_maximum_volume_ml",
+        "auto_stop_pulse_enabled",
+        "auto_stop_pulse_approach_score",
+        "auto_stop_pulse_steps",
+        "auto_stop_pulse_settle_time_s",
+        "auto_stop_slow_stage_enabled",
+        "auto_stop_slow_onset_score",
+        "auto_stop_slow_onset_duration_s",
+        "auto_stop_slow_rate_steps_per_s",
+        "maximum_pump_rate_ml_per_s",
+        "absolute_maximum_volume_ml",
+        "absolute_maximum_run_time_s",
+        "pulse_nominal_ml_per_step",
+        "pulse_ml_per_step_upper_bound",
     }
 )
 
 REJECTED_YOLO_VISIBLE_CLASSES = frozenset({"person", "face", "hand"})
 DEFAULT_LIVE_ML_MODEL = ""
+DEFAULT_ENDPOINT_ML_MODEL = ROOT / "data" / "labeled" / "type-conditioned-sensor-endpoint-ranker.pkl"
 DEFAULT_TYPEWISE_LIVE_ML_MODEL = ROOT / "data" / "labeled" / "typewise-current-volume-classifier.pkl"
+ARDUINO_FULL_STEPS_PER_SECOND = 100.0
+ENDPOINT_PULSE_DEFAULT_STEPS = 5
+ENDPOINT_PULSE_MAX_STEPS = ABC_FIRMWARE_MAX_PULSE_STEPS
+
+
+class CollectorInstanceLock:
+    """Process-wide file lock preventing two collectors from opening cameras/COM."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._handle = None
+
+    def acquire(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.path.open("a+b")
+        if self.path.stat().st_size == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, BlockingIOError) as exc:
+            handle.close()
+            raise RuntimeError(
+                "another Windows live collector is already running"
+            ) from exc
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()).encode("ascii"))
+        handle.flush()
+        self._handle = handle
+
+    def release(self) -> None:
+        handle = self._handle
+        self._handle = None
+        if handle is None:
+            return
+        try:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+ENDPOINT_PULSE_DEFAULT_SETTLE_S = 0.50
+ENDPOINT_PULSE_DEFAULT_APPROACH_SCORE = 0.20
+AUTO_STOP_BASELINE_START_TIMEOUT_S = 3.0
+PREDICTION_MIN_USABLE_OBSERVATIONS = 8
+PREDICTION_MIN_RECORDING_SPAN_S = 3.0
+PREDICTION_STATUS_PENDING = "pending"
+PREDICTION_STATUS_AVAILABLE = "available"
+PREDICTION_STATUS_WITHHELD = "withheld"
+PREDICTION_STATUS_UNAVAILABLE = "unavailable"
+FINAL_PREDICTION_FIELDS = (
+    "predicted_equivalence_volume_ml",
+    "sample_concentration_from_predicted_equivalence_M",
+    "predicted_sample_concentration_error_percent",
+    "predicted_equivalence_pH",
+    "predicted_equivalence_pH_model",
+    "predicted_equivalence_pH_warning",
+    "predicted_equivalence_confidence",
+    "predicted_equivalence_source",
+    "predicted_equivalence_evidence",
+    "predicted_equivalence_model_key",
+)
+
+# Eligibility is deliberately based only on recorded coordinates and sensor
+# observations. Typed/derived chemistry values (including theoretical volume
+# and unknown concentration) must not make an unusable run prediction-ready.
+PREDICTION_SENSOR_GROUPS = (
+    ("visible_R_mean", "visible_G_mean", "visible_B_mean"),
+    ("visible_H_mean", "visible_S_mean", "visible_V_mean"),
+    ("thermal_roi_avg", "thermal_roi_min", "thermal_roi_max"),
+    ("thermal_raw_roi_p50", "thermal_raw_roi_p95"),
+)
+PREDICTION_SENSOR_COLUMNS = tuple(dict.fromkeys(column for group in PREDICTION_SENSOR_GROUPS for column in group))
 
 # These columns are valid for CSV audit/diagnostics, but must never be inputs to
 # a live prediction model.  Several of them directly encode the user's typed
@@ -173,6 +302,87 @@ LIVE_ML_FORBIDDEN_FEATURE_COLUMNS = frozenset(
         "row_count",
     }
 )
+
+
+@dataclass(frozen=True)
+class PredictionReadiness:
+    """Engineering eligibility guard for attempting a post-run prediction."""
+
+    ready: bool
+    reason: str
+    usable_row_indices: tuple[int, ...]
+    usable_observation_count: int
+    time_span_s: float
+    volume_span_ml: float
+
+
+def evaluate_prediction_readiness(rows: list[dict[str, Any]]) -> PredictionReadiness:
+    """Check minimum recorded progression; this is not chemical endpoint proof."""
+
+    usable: list[tuple[int, float, float]] = []
+    for index, row in enumerate(rows):
+        time_s = _finite_float_or_none(row.get("time_s"))
+        volume_ml = _finite_float_or_none(row.get("injected_volume_ml"))
+        has_sensor_group = any(
+            all(
+                not isinstance(row.get(column), bool)
+                and _finite_float_or_none(row.get(column)) is not None
+                for column in group
+            )
+            for group in PREDICTION_SENSOR_GROUPS
+        )
+        if time_s is None or volume_ml is None or time_s < 0 or volume_ml < 0 or not has_sensor_group:
+            continue
+        usable.append((index, time_s, volume_ml))
+
+    indices = tuple(item[0] for item in usable)
+    times = [item[1] for item in usable]
+    volumes = [item[2] for item in usable]
+    time_span = max(times) - min(times) if times else 0.0
+    volume_span = max(volumes) - min(volumes) if volumes else 0.0
+    if len(usable) < PREDICTION_MIN_USABLE_OBSERVATIONS:
+        return PredictionReadiness(
+            False,
+            "insufficient_usable_sensor_time_volume_observations",
+            indices,
+            len(usable),
+            time_span,
+            volume_span,
+        )
+
+    if time_span < PREDICTION_MIN_RECORDING_SPAN_S or times[-1] <= times[0]:
+        reason = "insufficient_recording_time_span"
+    elif volume_span <= 0 or volumes[-1] <= volumes[0]:
+        reason = "insufficient_recorded_volume_progression"
+    else:
+        sensor_progression = False
+        for column in PREDICTION_SENSOR_COLUMNS:
+            values = [
+                value
+                for index in indices
+                if (value := _finite_float_or_none(rows[index].get(column))) is not None
+            ]
+            if len(values) >= 2 and max(values) - min(values) > 1e-12:
+                sensor_progression = True
+                break
+        if not sensor_progression:
+            return PredictionReadiness(
+                False,
+                "flat_recorded_sensor_signals",
+                indices,
+                len(usable),
+                time_span,
+                volume_span,
+            )
+        return PredictionReadiness(
+            True,
+            "minimum_recorded_progression_met",
+            indices,
+            len(usable),
+            time_span,
+            volume_span,
+        )
+    return PredictionReadiness(False, reason, indices, len(usable), time_span, volume_span)
 class Mini2PartsReader(Protocol):
     def read_frame_parts(self): ...
 
@@ -184,6 +394,7 @@ class CapturedMini2Frame:
     frame_id: int
     timestamp_s: float
     parts: Any
+    recording_session_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -883,6 +1094,50 @@ def _finite_float_or_none(value: Any) -> float | None:
     return parsed
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _strict_optional_bool(payload: Mapping[str, Any], key: str, *, default: bool) -> bool:
+    if key not in payload:
+        return default
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be boolean")
+    return value
+
+
+def _strict_optional_int(
+    payload: Mapping[str, Any], key: str, *, default: int, minimum: int, maximum: int
+) -> int:
+    if key not in payload:
+        return default
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{key} must be in {minimum}..{maximum}")
+    return value
+
+
+def _strict_optional_number(
+    payload: Mapping[str, Any], key: str, *, default: float
+) -> float:
+    if key not in payload:
+        return default
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{key} must be a number")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{key} must be finite")
+    return parsed
+
+
 def start_payload_experiment_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     """Return CSV-safe experiment/science metadata from a recording start payload."""
 
@@ -1130,6 +1385,9 @@ def build_pump_timeline_fields(
     theoretical_equivalence_volume_ml: float | None,
     equivalence_window_ml: float = 0.05,
     experiment_metadata: dict[str, Any] | None = None,
+    injected_volume_ml: float | None = None,
+    pump_mode: str | None = None,
+    pump_state: str = "running",
 ) -> dict[str, Any]:
     """Build per-frame pump/equivalence target fields from pump start time."""
 
@@ -1141,8 +1399,8 @@ def build_pump_timeline_fields(
     if window is None or window <= 0:
         window = 0.05
     fields: dict[str, Any] = {
-        "pump_mode": "timed_rate" if rate is not None and rate > 0 else "",
-        "pump_state": "running",
+        "pump_mode": str(pump_mode or ("timed_rate" if rate is not None and rate > 0 else "")),
+        "pump_state": str(pump_state or "stopped"),
         "pump_elapsed_s": round(elapsed, 6),
         "pump_run_rate_ml_per_s": "" if rate is None else round(rate, 6),
         "equivalence_window_ml": round(window, 6),
@@ -1160,7 +1418,8 @@ def build_pump_timeline_fields(
         )
         return fields
 
-    injected = elapsed * rate
+    injected_override = _finite_float_or_none(injected_volume_ml)
+    injected = elapsed * rate if injected_override is None else max(0.0, injected_override)
     fields["injected_volume_ml"] = round(injected, 6)
     calculated_concentration = _concentration_from_titrant_volume(
         titrant_volume_ml=injected,
@@ -1211,10 +1470,12 @@ class LiveCsvBuffer:
         *,
         output_path: str | Path,
         prediction_model: dict[str, Any] | None = None,
+        endpoint_prediction_model: dict[str, Any] | None = None,
         typewise_prediction_model: dict[str, Any] | None = None,
     ) -> None:
         self.output_path = Path(output_path)
         self._prediction_model = prediction_model
+        self._endpoint_prediction_model = endpoint_prediction_model
         self._typewise_prediction_model = typewise_prediction_model
         self._condition = threading.Condition()
         self._rows: list[dict[str, Any]] = []
@@ -1225,15 +1486,32 @@ class LiveCsvBuffer:
         self._stopped_epoch_s: float | None = None
         self._stopped_monotonic_s: float | None = None
         self._recording = False
+        self._finalizing = False
+        self._capture_session_required = False
         self._state = "idle"
         self._session_id = 0
         self._roi_session_id = 0
         self._pump_rate_ml_per_s: float | None = None
+        self._pump_current_rate_ml_per_s: float | None = None
+        self._pump_stage = "fast"
+        self._pump_rate_basis = "configured_calibrated_fast_rate"
+        self._pump_command_tracking_enabled = False
+        self._pump_continuous_started_monotonic_s: float | None = None
+        self._pump_active_elapsed_s = 0.0
+        self._pump_commanded_volume_ml = 0.0
+        self._pump_state = "running"
+        self._pump_pulse_count = 0
+        self._pump_pulse_steps_total = 0
+        self._pump_nominal_ml_per_step: float | None = None
+        self._pump_last_nominal_pulse_volume_ml: float | None = None
         self._theoretical_equivalence_volume_ml: float | None = None
         self._equivalence_window_ml = 0.05
         self._experiment_metadata: dict[str, Any] = {}
+        self._auto_stop_status: dict[str, Any] = {}
         self._csv_event_note = ""
         self._csv_mark_sequence = 0
+        self._predicted_equivalence_status = PREDICTION_STATUS_PENDING
+        self._predicted_equivalence_reason = "recording_not_finalized"
 
     def start_recording(
         self,
@@ -1246,8 +1524,11 @@ class LiveCsvBuffer:
         event_note: str | None = None,
         started_epoch_s: float | None = None,
         started_monotonic_s: float | None = None,
+        capture_session_required: bool = False,
     ) -> dict[str, Any]:
         with self._condition:
+            if self._state in {"recording", "finalizing"}:
+                raise RuntimeError(f"cannot start a new CSV session while state is {self._state}")
             self._session_id += 1
             if roi_session_id is not None:
                 self._roi_session_id = int(roi_session_id)
@@ -1260,9 +1541,26 @@ class LiveCsvBuffer:
             self._stopped_monotonic_s = None
             self._updated_epoch_s = now
             self._recording = True
+            self._finalizing = False
+            self._capture_session_required = bool(capture_session_required)
             self._state = "recording"
             self._pump_rate_ml_per_s = _finite_float_or_none(pump_rate_ml_per_s)
+            self._pump_current_rate_ml_per_s = self._pump_rate_ml_per_s
+            self._pump_stage = "fast"
+            self._pump_rate_basis = "configured_calibrated_fast_rate"
+            self._pump_command_tracking_enabled = False
+            self._pump_continuous_started_monotonic_s = None
+            self._pump_active_elapsed_s = 0.0
+            self._pump_commanded_volume_ml = 0.0
+            self._pump_state = "running"
+            self._pump_pulse_count = 0
+            self._pump_pulse_steps_total = 0
+            self._pump_nominal_ml_per_step = None
+            self._pump_last_nominal_pulse_volume_ml = None
             self._experiment_metadata = dict(experiment_metadata or {})
+            self._auto_stop_status = {
+                key: value for key, value in self._experiment_metadata.items() if str(key).startswith("auto_stop_")
+            }
             calculated_theory = _theoretical_equivalence_volume_from_metadata(self._experiment_metadata)
             for key, value in _theoretical_titration_fields_from_metadata(self._experiment_metadata).items():
                 self._experiment_metadata.setdefault(key, value)
@@ -1288,20 +1586,194 @@ class LiveCsvBuffer:
             self._equivalence_window_ml = 0.05 if parsed_window is None or parsed_window <= 0 else parsed_window
             self._csv_event_note = self._sanitize_note(event_note)
             self._csv_mark_sequence = 1 if self._csv_event_note else 0
+            self._predicted_equivalence_status = PREDICTION_STATUS_PENDING
+            self._predicted_equivalence_reason = "recording_not_finalized"
             self._condition.notify_all()
             return self._status_locked(now_monotonic_s=self._started_monotonic_s)
 
-    def stop_recording(self) -> dict[str, Any]:
+    def update_auto_stop_status(self, status: dict[str, Any]) -> None:
+        """Attach controller state to live status and the latest audit row."""
+
+        safe = {str(key): value for key, value in dict(status).items() if str(key).startswith("auto_stop_")}
+        if not safe:
+            return
+        with self._condition:
+            self._auto_stop_status.update(safe)
+            if self._rows:
+                self._rows[-1].update(safe)
+                self._refresh_fieldnames_locked()
+            self._updated_epoch_s = round(time.time(), 6)
+            self._condition.notify_all()
+
+    def begin_commanded_pump_timeline(
+        self,
+        *,
+        now_monotonic_s: float | None = None,
+        running: bool = True,
+    ) -> dict[str, Any]:
+        """Track commanded motor-active time instead of wall-clock recording time."""
+
+        with self._condition:
+            if not self._recording:
+                raise RuntimeError("cannot start commanded pump tracking outside a recording")
+            now = time.perf_counter() if now_monotonic_s is None else float(now_monotonic_s)
+            self._pump_command_tracking_enabled = True
+            self._pump_active_elapsed_s = 0.0
+            self._pump_commanded_volume_ml = 0.0
+            self._pump_pulse_count = 0
+            self._pump_pulse_steps_total = 0
+            self._pump_nominal_ml_per_step = None
+            self._pump_last_nominal_pulse_volume_ml = None
+            self._pump_continuous_started_monotonic_s = now if running else None
+            self._pump_state = "continuous" if running else "stopped"
+            self._condition.notify_all()
+            return self._status_locked(now_monotonic_s=now)
+
+    def pause_commanded_pump_timeline(
+        self,
+        *,
+        now_monotonic_s: float | None = None,
+        state: str = "stopped",
+    ) -> dict[str, Any]:
+        with self._condition:
+            now = time.perf_counter() if now_monotonic_s is None else float(now_monotonic_s)
+            self._close_continuous_segment_locked(now)
+            if self._pump_command_tracking_enabled:
+                self._pump_state = str(state or "stopped")
+            self._condition.notify_all()
+            return self._status_locked(now_monotonic_s=now)
+
+    def resume_commanded_pump_timeline(
+        self,
+        *,
+        now_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        with self._condition:
+            now = time.perf_counter() if now_monotonic_s is None else float(now_monotonic_s)
+            if not self._recording or not self._pump_command_tracking_enabled:
+                raise RuntimeError("commanded pump tracking is not active")
+            if self._pump_continuous_started_monotonic_s is None:
+                self._pump_continuous_started_monotonic_s = now
+            self._pump_state = "continuous"
+            self._condition.notify_all()
+            return self._status_locked(now_monotonic_s=now)
+
+    def start_commanded_continuous_segment(
+        self,
+        *,
+        rate_ml_per_s: float,
+        stage: str,
+        rate_basis: str,
+        now_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Close the prior segment and start a new active-rate segment."""
+
+        rate = _finite_float_or_none(rate_ml_per_s)
+        if rate is None or rate <= 0:
+            raise ValueError("rate_ml_per_s must be positive and finite")
+        with self._condition:
+            now = time.perf_counter() if now_monotonic_s is None else float(now_monotonic_s)
+            if not self._recording or not self._pump_command_tracking_enabled:
+                raise RuntimeError("commanded pump tracking is not active")
+            self._close_continuous_segment_locked(now)
+            self._pump_current_rate_ml_per_s = rate
+            self._pump_stage = str(stage or "continuous")
+            self._pump_rate_basis = str(rate_basis or "configured")
+            self._pump_continuous_started_monotonic_s = now
+            self._pump_state = "continuous"
+            self._condition.notify_all()
+            return self._status_locked(now_monotonic_s=now)
+
+    def record_commanded_pulse(
+        self,
+        *,
+        steps: int,
+        nominal_ml_per_step: float,
+        now_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        if isinstance(steps, bool) or not isinstance(steps, int) or not 0 < steps <= ENDPOINT_PULSE_MAX_STEPS:
+            raise ValueError(f"steps must be in 1..{ENDPOINT_PULSE_MAX_STEPS}")
+        ml_per_step = _finite_float_or_none(nominal_ml_per_step)
+        if ml_per_step is None or ml_per_step <= 0:
+            raise ValueError("nominal_ml_per_step must be positive and finite")
+        with self._condition:
+            now = time.perf_counter() if now_monotonic_s is None else float(now_monotonic_s)
+            if not self._pump_command_tracking_enabled:
+                raise RuntimeError("commanded pump tracking is not enabled")
+            self._close_continuous_segment_locked(now)
+            pulse_volume_ml = steps * ml_per_step
+            self._pump_commanded_volume_ml += pulse_volume_ml
+            # Firmware STEP remains fixed at 100 full steps/s regardless of a
+            # previously configured continuous RATE.
+            self._pump_active_elapsed_s += steps / ARDUINO_FULL_STEPS_PER_SECOND
+            self._pump_pulse_count += 1
+            self._pump_pulse_steps_total += steps
+            self._pump_nominal_ml_per_step = ml_per_step
+            self._pump_last_nominal_pulse_volume_ml = pulse_volume_ml
+            self._pump_state = "pulse_settling"
+            self._pump_stage = "step_pulse"
+            self._pump_current_rate_ml_per_s = None
+            self._pump_rate_basis = "nominal_calibrated_ml_per_step_at_fixed_100_steps_per_s"
+            self._condition.notify_all()
+            return self._status_locked(now_monotonic_s=now)
+
+    def _close_continuous_segment_locked(self, now_monotonic_s: float) -> None:
+        started = self._pump_continuous_started_monotonic_s
+        if not self._pump_command_tracking_enabled or started is None:
+            return
+        elapsed = max(0.0, float(now_monotonic_s) - started)
+        self._pump_active_elapsed_s += elapsed
+        if self._pump_current_rate_ml_per_s is not None and self._pump_current_rate_ml_per_s > 0:
+            self._pump_commanded_volume_ml += elapsed * self._pump_current_rate_ml_per_s
+        self._pump_continuous_started_monotonic_s = None
+
+    def _commanded_pump_snapshot_locked(self, now_monotonic_s: float) -> tuple[float, float]:
+        elapsed = self._pump_active_elapsed_s
+        volume = self._pump_commanded_volume_ml
+        started = self._pump_continuous_started_monotonic_s
+        if started is not None:
+            active_delta = max(0.0, float(now_monotonic_s) - started)
+            elapsed += active_delta
+            if self._pump_current_rate_ml_per_s is not None and self._pump_current_rate_ml_per_s > 0:
+                volume += active_delta * self._pump_current_rate_ml_per_s
+        return elapsed, volume
+
+    def request_stop(self) -> dict[str, Any]:
+        with self._condition:
+            if self._state == "finalizing":
+                # Stop is intentionally idempotent. A second browser click must
+                # not expose a partial CSV while the preserved FIFO is draining.
+                self._recording = False
+                self._finalizing = True
+                return self._status_locked()
+            now = round(time.time(), 6)
+            stopped_monotonic_s = time.perf_counter()
+            self._close_continuous_segment_locked(stopped_monotonic_s)
+            if self._pump_command_tracking_enabled:
+                self._pump_state = "stopped"
+            self._recording = False
+            self._finalizing = self._state == "recording"
+            self._state = "finalizing" if self._finalizing else self._state
+            self._stopped_epoch_s = now
+            self._stopped_monotonic_s = stopped_monotonic_s
+            self._updated_epoch_s = now
+            self._condition.notify_all()
+            return self._status_locked()
+
+    def complete_stop(self) -> dict[str, Any]:
         with self._condition:
             now = round(time.time(), 6)
             self._recording = False
-            self._state = "stopped" if self._state == "recording" else self._state
-            self._stopped_epoch_s = now
-            self._stopped_monotonic_s = time.perf_counter()
+            self._finalizing = False
+            self._state = "stopped" if self._state in {"recording", "finalizing"} else self._state
             self._finalize_predicted_equivalence_locked()
             self._updated_epoch_s = now
             self._condition.notify_all()
             return self._status_locked()
+
+    def stop_recording(self) -> dict[str, Any]:
+        self.request_stop()
+        return self.complete_stop()
 
     def _pump_timeline_configured_locked(self) -> bool:
         return self._pump_rate_ml_per_s is not None or self._theoretical_equivalence_volume_ml is not None
@@ -1332,8 +1804,8 @@ class LiveCsvBuffer:
     def _refresh_fieldnames_locked(self) -> None:
         self._fieldnames = csv_fieldnames_for_rows(self._rows) if self._rows else list(DEFAULT_COLUMNS)
 
-    def _apply_typewise_prediction_model_locked(self) -> bool:
-        if self._typewise_prediction_model is None or not self._rows:
+    def _apply_typewise_prediction_model_locked(self, prediction_rows: list[dict[str, Any]]) -> bool:
+        if self._typewise_prediction_model is None or not prediction_rows:
             return False
         titration_type = str(
             self._experiment_metadata.get("titration_type")
@@ -1341,7 +1813,7 @@ class LiveCsvBuffer:
             or "strong_acid_strong_base"
         )
         try:
-            predicted = predict_typewise_equivalence(self._typewise_prediction_model, self._rows, titration_type)
+            predicted = predict_typewise_equivalence(self._typewise_prediction_model, prediction_rows, titration_type)
         except (TypeError, ValueError, KeyError, AttributeError) as exc:
             print(f"Warning: typewise live ML prediction failed; using fallback. Reason: {exc}", flush=True)
             return False
@@ -1350,9 +1822,9 @@ class LiveCsvBuffer:
             return False
         candidate_index = predicted.pop("candidate_index", None)
         if candidate_index is None:
-            target = self._rows[-1]
+            target = prediction_rows[-1]
         else:
-            target = self._rows[max(0, min(int(candidate_index), len(self._rows) - 1))]
+            target = prediction_rows[max(0, min(int(candidate_index), len(prediction_rows) - 1))]
         target.update({key: value for key, value in predicted.items() if key != "model_key"})
         if predicted.get("model_key"):
             target["predicted_equivalence_model_key"] = predicted["model_key"]
@@ -1360,10 +1832,49 @@ class LiveCsvBuffer:
         self._refresh_fieldnames_locked()
         return True
 
-    def _apply_prediction_model_locked(self) -> bool:
-        if self._prediction_model is None or not self._rows:
+    def _apply_endpoint_prediction_model_locked(self, prediction_rows: list[dict[str, Any]]) -> bool:
+        if self._endpoint_prediction_model is None or not prediction_rows:
             return False
-        target = self._rows[-1]
+        titration_type = str(
+            self._experiment_metadata.get("titration_type")
+            or self._rows[-1].get("titration_type")
+            or ""
+        )
+        try:
+            predicted = predict_type_conditioned_sensor_equivalence(
+                self._endpoint_prediction_model,
+                prediction_rows,
+                titration_type,
+            )
+        except (TypeError, ValueError, KeyError, AttributeError, IndexError) as exc:
+            print(
+                "Warning: type-conditioned sensor endpoint prediction failed; "
+                f"using live classifier fallback. Reason: {exc}",
+                flush=True,
+            )
+            return False
+        predicted_volume = _finite_float_or_none(
+            predicted.get("predicted_equivalence_volume_ml")
+        )
+        if predicted_volume is None or predicted_volume <= 0:
+            return False
+        candidate_index = predicted.pop("candidate_index", None)
+        target = (
+            prediction_rows[-1]
+            if candidate_index is None
+            else prediction_rows[max(0, min(int(candidate_index), len(prediction_rows) - 1))]
+        )
+        target.update({key: value for key, value in predicted.items() if key != "model_key"})
+        if predicted.get("model_key"):
+            target["predicted_equivalence_model_key"] = predicted["model_key"]
+        target.update(_predicted_result_fields_from_row(target, self._experiment_metadata))
+        self._refresh_fieldnames_locked()
+        return True
+
+    def _apply_prediction_model_locked(self, prediction_rows: list[dict[str, Any]]) -> bool:
+        if self._prediction_model is None or not prediction_rows:
+            return False
+        target = prediction_rows[-1]
         try:
             predicted = predict_row(self._prediction_model, target)
         except (TypeError, ValueError, KeyError):
@@ -1378,19 +1889,49 @@ class LiveCsvBuffer:
         self._refresh_fieldnames_locked()
         return True
 
+    def _set_prediction_outcome_locked(self, status: str, reason: str) -> None:
+        self._predicted_equivalence_status = status
+        self._predicted_equivalence_reason = reason
+        if self._rows:
+            self._rows[-1]["predicted_equivalence_status"] = status
+            self._rows[-1]["predicted_equivalence_reason"] = reason
+            self._refresh_fieldnames_locked()
+
+    def _clear_final_prediction_fields_locked(self) -> None:
+        for row in self._rows:
+            for key in FINAL_PREDICTION_FIELDS:
+                row.pop(key, None)
+        self._refresh_fieldnames_locked()
+
     def _finalize_predicted_equivalence_locked(self) -> None:
-        if any(_finite_float_or_none(row.get("predicted_equivalence_volume_ml")) is not None for row in self._rows):
+        readiness = evaluate_prediction_readiness(self._rows)
+        if not readiness.ready:
+            self._clear_final_prediction_fields_locked()
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_WITHHELD, readiness.reason)
             return
-        if self._apply_typewise_prediction_model_locked():
+        prediction_rows = [self._rows[index] for index in readiness.usable_row_indices]
+        for row in reversed(self._rows):
+            if _finite_float_or_none(row.get("predicted_equivalence_volume_ml")) is None:
+                continue
+            row.update(_predicted_result_fields_from_row(row, self._experiment_metadata))
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_AVAILABLE, "prediction_already_recorded")
             return
-        if self._apply_prediction_model_locked():
+        if self._apply_endpoint_prediction_model_locked(prediction_rows):
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_AVAILABLE, "type_conditioned_sensor_model_succeeded")
+            return
+        if self._apply_typewise_prediction_model_locked(prediction_rows):
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_AVAILABLE, "typewise_model_succeeded")
+            return
+        if self._apply_prediction_model_locked(prediction_rows):
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_AVAILABLE, "json_regression_model_succeeded")
             return
         samples_with_rows: list[tuple[FeatureSample, dict[str, Any]]] = []
-        for row in self._rows:
+        for row in prediction_rows:
             sample = self._row_to_feature_sample(row)
             if sample is not None:
                 samples_with_rows.append((sample, row))
         if not samples_with_rows:
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_UNAVAILABLE, "no_prediction_path_succeeded")
             return
         try:
             result = estimate_equivalence_point(
@@ -1398,6 +1939,7 @@ class LiveCsvBuffer:
                 theoretical_equivalence_volume_ml=self._theoretical_equivalence_volume_ml,
             )
         except ValueError:
+            self._set_prediction_outcome_locked(PREDICTION_STATUS_UNAVAILABLE, "no_prediction_path_succeeded")
             return
         row_index = result.candidate_index if result.candidate_index is not None else len(samples_with_rows) - 1
         row_index = max(0, min(int(row_index), len(samples_with_rows) - 1))
@@ -1407,6 +1949,7 @@ class LiveCsvBuffer:
         target["predicted_equivalence_source"] = "live_feature_peak_estimator"
         target["predicted_equivalence_evidence"] = "; ".join(result.evidence)
         target.update(_predicted_result_fields_from_row(target, self._experiment_metadata))
+        self._set_prediction_outcome_locked(PREDICTION_STATUS_AVAILABLE, "peak_estimator_succeeded")
         self._refresh_fieldnames_locked()
 
     @staticmethod
@@ -1427,6 +1970,38 @@ class LiveCsvBuffer:
         if self._started_monotonic_s is None or not self._pump_timeline_configured_locked():
             return {}
         now = time.perf_counter() if now_monotonic_s is None else float(now_monotonic_s)
+        if self._pump_command_tracking_enabled:
+            elapsed, injected = self._commanded_pump_snapshot_locked(now)
+            reporting_rate = self._pump_current_rate_ml_per_s or self._pump_rate_ml_per_s
+            fields = build_pump_timeline_fields(
+                pump_elapsed_s=elapsed,
+                pump_rate_ml_per_s=reporting_rate,
+                theoretical_equivalence_volume_ml=self._theoretical_equivalence_volume_ml,
+                equivalence_window_ml=self._equivalence_window_ml,
+                experiment_metadata=self._experiment_metadata,
+                injected_volume_ml=injected,
+                pump_mode="commanded_continuous_then_step_pulse",
+                pump_state=self._pump_state,
+            )
+            fields.update(
+                {
+                    "pump_pulse_count": self._pump_pulse_count,
+                    "pump_pulse_steps_total": self._pump_pulse_steps_total,
+                    "pump_nominal_ml_per_step": ""
+                    if self._pump_nominal_ml_per_step is None
+                    else round(self._pump_nominal_ml_per_step, 9),
+                    "pump_nominal_pulse_volume_ml": ""
+                    if self._pump_last_nominal_pulse_volume_ml is None
+                    else round(self._pump_last_nominal_pulse_volume_ml, 9),
+                    "pump_volume_basis": "commanded_time_and_nominal_full_steps_not_direct_flow_measurement",
+                    "pump_dosing_stage": self._pump_stage,
+                    "pump_nominal_rate_ml_per_s": ""
+                    if self._pump_current_rate_ml_per_s is None
+                    else round(self._pump_current_rate_ml_per_s, 9),
+                    "pump_rate_basis": self._pump_rate_basis,
+                }
+            )
+            return fields
         return build_pump_timeline_fields(
             pump_elapsed_s=now - self._started_monotonic_s,
             pump_rate_ml_per_s=self._pump_rate_ml_per_s,
@@ -1443,14 +2018,17 @@ class LiveCsvBuffer:
 
     def add(self, row: dict[str, Any], *, now_monotonic_s: float | None = None) -> bool:
         with self._condition:
-            if not self._recording:
+            if not (self._recording or self._finalizing):
                 return False
             copied = dict(row)
+            capture_session_id = int(_finite_float_or_none(copied.get("capture_recording_session_id")) or 0)
+            if self._capture_session_required and capture_session_id != self._session_id:
+                return False
             for removed_key in ("manual_label", "predicted_manual_label", "predicted_manual_label_confidence"):
                 copied.pop(removed_key, None)
             copied.update(self._experiment_metadata)
+            copied.update(self._auto_stop_status)
             copied.update(self._pump_timeline_fields_locked(now_monotonic_s=now_monotonic_s))
-            copied.update(_predicted_result_fields_from_row(copied, self._experiment_metadata))
             copied.update(
                 {
                     "csv_session_id": self._session_id,
@@ -1461,7 +2039,15 @@ class LiveCsvBuffer:
                     "csv_event_note": self._csv_event_note,
                 }
             )
-            copied.update(derive_ml_features(self._rows, copied))
+            if not all(column in copied for column in DERIVED_ML_COLUMNS):
+                history = select_online_history_rows(self._rows, copied)
+                copied.update(derive_ml_features(history, copied))
+            # The main loop may have calculated temporal features before the
+            # recording-start metadata was merged. Always refresh the only
+            # metadata-dependent derived fields after that merge.
+            titration_type = str(copied.get("titration_type") or "").strip()
+            for name in SUPPORTED_TITRATION_TYPES:
+                copied[f"titration_is_{name}"] = 1.0 if titration_type == name else 0.0
             self._rows.append(copied)
             if not self._fieldnames:
                 self._fieldnames = csv_fieldnames_for_rows([copied])
@@ -1474,7 +2060,18 @@ class LiveCsvBuffer:
             self._condition.notify_all()
             return True
 
+    def latest_recorded_row(self, session_id: int) -> dict[str, Any] | None:
+        """Return the accepted CSV observation with its recording clock and metadata."""
+        with self._condition:
+            if self._session_id != session_id or not self._rows:
+                return None
+            if not self._recording:
+                return None
+            return dict(self._rows[-1])
+
     def _latest_predicted_result_fields_locked(self) -> dict[str, Any]:
+        if self._predicted_equivalence_status != PREDICTION_STATUS_AVAILABLE:
+            return {}
         keys = (
             "predicted_equivalence_volume_ml",
             "sample_concentration_from_predicted_equivalence_M",
@@ -1513,6 +2110,7 @@ class LiveCsvBuffer:
             "started_epoch_s": self._started_epoch_s,
             "stopped_epoch_s": self._stopped_epoch_s,
             "recording": self._recording,
+            "finalizing": self._finalizing,
             "state": self._state,
             "session_id": self._session_id,
             "roi_session_id": self._roi_session_id,
@@ -1520,12 +2118,21 @@ class LiveCsvBuffer:
             "recording_elapsed_s": recording_elapsed_s,
             "csv_event_note": self._csv_event_note,
             "csv_mark_sequence": self._csv_mark_sequence,
+            "predicted_equivalence_status": self._predicted_equivalence_status,
+            "predicted_equivalence_reason": self._predicted_equivalence_reason,
         }
         status.update(self._experiment_metadata)
+        status.update(self._auto_stop_status)
         status.update(self._latest_predicted_result_fields_locked())
         if self._pump_timeline_configured_locked():
             if self._recording:
                 status.update(self._pump_timeline_fields_locked(now_monotonic_s=now_monotonic_s))
+            elif self._pump_command_tracking_enabled:
+                status.update(
+                    self._pump_timeline_fields_locked(
+                        now_monotonic_s=self._stopped_monotonic_s
+                    )
+                )
             else:
                 status.update(
                     {
@@ -1557,6 +2164,428 @@ class LiveCsvBuffer:
         except (TypeError, ValueError, OSError):
             stamp = time.strftime("%Y%m%d-%H%M%S")
         return f"auto-titration-live-{stamp}-session-{session_id}.csv"
+
+
+class EndpointPulseRuntime:
+    """Translate live endpoint scores into bounded STEP pulses.
+
+    The recorded pulse volume is a nominal motor-step conversion, not a direct
+    flow measurement. Final endpoint confirmation remains the existing
+    model-confirmed persistent visible-color detector.
+    """
+
+    def __init__(
+        self,
+        *,
+        command_sender: Callable[[str], Any],
+        stop_continuous: Callable[[str], Any],
+        csv_buffer: LiveCsvBuffer,
+        on_safety_stop: Callable[[int, str, float | None, float], None],
+        start_slow_continuous: Callable[..., Any] | None = None,
+    ) -> None:
+        self._command_sender = command_sender
+        self._stop_continuous = stop_continuous
+        self._csv_buffer = csv_buffer
+        self._on_safety_stop = on_safety_stop
+        self._start_slow_continuous = start_slow_continuous
+        self._lock = threading.Lock()
+        self._controller: PulseController | None = None
+        self._controller_started = False
+        self._session_id = 0
+        self._enabled = False
+        self._state = "disabled"
+        self._reason = "default_off"
+        self._pulse_complete_at_s: float | None = None
+        self._pulse_count = 0
+        self._pulse_steps = ENDPOINT_PULSE_DEFAULT_STEPS
+        self._nominal_ml_per_step = 0.0
+        self._ml_per_step_upper_bound = 0.0
+        self._nominal_pulse_volume_ml = 0.0
+        self._maximum_pump_rate_ml_per_s = 0.0
+        self._conservative_volume_ml = 0.0
+        self._continuous_guard_active = False
+        self._settle_time_s = ENDPOINT_PULSE_DEFAULT_SETTLE_S
+        self._approach_score = ENDPOINT_PULSE_DEFAULT_APPROACH_SCORE
+        self._maximum_volume_ml = AUTO_STOP_MAX_VOLUME_ML
+        self._last_command = ""
+        self._error = ""
+        self._cancel_event = threading.Event()
+        self._slow_stage_enabled = False
+        self._slow_rate_steps_per_s = 100
+        self._slow_nominal_rate_ml_per_s = 0.0
+        self._absolute_maximum_run_time_s = ABSOLUTE_PUMP_MAX_RUN_TIME_S
+        self._absolute_deadline_monotonic_s: float | None = None
+
+    def arm(
+        self,
+        *,
+        session_id: int,
+        requested: bool,
+        pump_started: bool,
+        pump_rate_ml_per_s: float | None,
+        maximum_pump_rate_ml_per_s: float | None,
+        pulse_ml_per_step_upper_bound: float | None,
+        maximum_volume_ml: float,
+        pulse_nominal_ml_per_step: float | None = None,
+        dispense_direction: str = "b",
+        approach_score: float = ENDPOINT_PULSE_DEFAULT_APPROACH_SCORE,
+        pulse_steps: int = ENDPOINT_PULSE_DEFAULT_STEPS,
+        settle_time_s: float = ENDPOINT_PULSE_DEFAULT_SETTLE_S,
+        slow_stage_enabled: bool = False,
+        slow_onset_score: float = 0.0,
+        slow_onset_duration_s: float = 0.0,
+        slow_rate_steps_per_s: int = 100,
+        absolute_maximum_run_time_s: float = ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+        absolute_deadline_monotonic_s: float | None = None,
+    ) -> dict[str, Any]:
+        rate = _finite_float_or_none(pump_rate_ml_per_s)
+        maximum_rate = _finite_float_or_none(maximum_pump_rate_ml_per_s)
+        ml_per_step_upper_bound = _finite_float_or_none(pulse_ml_per_step_upper_bound)
+        nominal_ml_per_step = _finite_float_or_none(pulse_nominal_ml_per_step)
+        if nominal_ml_per_step is None:
+            nominal_ml_per_step = ml_per_step_upper_bound
+        maximum = _finite_float_or_none(maximum_volume_ml)
+        approach = _finite_float_or_none(approach_score)
+        settle = _finite_float_or_none(settle_time_s)
+        slow_onset = _finite_float_or_none(slow_onset_score)
+        slow_duration = _finite_float_or_none(slow_onset_duration_s)
+        absolute_time = _finite_float_or_none(absolute_maximum_run_time_s)
+        absolute_deadline = _finite_float_or_none(absolute_deadline_monotonic_s)
+        with self._lock:
+            self._cancel_event = threading.Event()
+            self._session_id = int(session_id)
+            self._controller = None
+            self._controller_started = False
+            self._enabled = bool(requested)
+            self._pulse_complete_at_s = None
+            self._pulse_count = 0
+            self._maximum_pump_rate_ml_per_s = 0.0
+            self._conservative_volume_ml = 0.0
+            self._continuous_guard_active = False
+            self._nominal_ml_per_step = 0.0
+            self._ml_per_step_upper_bound = 0.0
+            self._nominal_pulse_volume_ml = 0.0
+            self._last_command = ""
+            self._error = ""
+            self._slow_stage_enabled = bool(slow_stage_enabled)
+            self._slow_rate_steps_per_s = int(slow_rate_steps_per_s) if not isinstance(slow_rate_steps_per_s, bool) else 0
+            self._slow_nominal_rate_ml_per_s = 0.0
+            self._absolute_maximum_run_time_s = min(
+                absolute_time or ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+                ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+            )
+            self._absolute_deadline_monotonic_s = absolute_deadline
+            if not requested:
+                self._state = "disabled"
+                self._reason = "user_disabled"
+            elif not pump_started:
+                self._state = "unavailable"
+                self._reason = "pump_not_started"
+            elif str(dispense_direction) not in {"a", "b"}:
+                self._state = "unavailable"
+                self._reason = "pulse_direction_invalid"
+            elif (
+                rate is None
+                or rate <= 0
+                or maximum_rate is None
+                or maximum_rate <= 0
+                or maximum_rate < rate
+                or ml_per_step_upper_bound is None
+                or ml_per_step_upper_bound <= 0
+                or nominal_ml_per_step is None
+                or nominal_ml_per_step <= 0
+                or nominal_ml_per_step > ml_per_step_upper_bound
+                or maximum is None
+                or maximum <= 0
+                or approach is None
+                or not 0 < approach < 1
+                or settle is None
+                or settle < 0
+                or isinstance(pulse_steps, bool)
+                or not isinstance(pulse_steps, int)
+                or not 0 < pulse_steps <= ENDPOINT_PULSE_MAX_STEPS
+                or (
+                    self._slow_stage_enabled
+                    and (
+                        self._start_slow_continuous is None
+                        or slow_onset is None
+                        or not 0 <= slow_onset < approach
+                        or slow_duration is None
+                        or slow_duration < 0
+                        or not 1 <= self._slow_rate_steps_per_s <= 100
+                        or absolute_time is None
+                        or absolute_time <= 0
+                        or absolute_deadline is None
+                    )
+                )
+            ):
+                self._state = "unavailable"
+                self._reason = "invalid_pulse_settings"
+            else:
+                # This is deliberately supplied separately from the operating
+                # flow rate.  It must be the conservative upper bound obtained
+                # from water calibration, not a value inferred from 100 step/s.
+                try:
+                    self._controller = PulseController(
+                        PulseControlConfig(
+                            approach_score=approach,
+                            endpoint_score=1.0,
+                            confirmation_duration_s=0.0,
+                            pulse_steps=pulse_steps,
+                            settle_time_s=settle,
+                            max_volume_ml=min(maximum, ABSOLUTE_PUMP_MAX_VOLUME_ML),
+                            ml_per_step=ml_per_step_upper_bound,
+                            fast_rate_ml_per_s=rate,
+                            endpoint_confirmation_enabled=False,
+                            slow_stage_enabled=self._slow_stage_enabled,
+                            slow_onset_score=slow_onset or 0.0,
+                            slow_onset_duration_s=slow_duration or 0.0,
+                            slow_rate_steps_per_s=self._slow_rate_steps_per_s,
+                        )
+                    )
+                except ValueError as exc:
+                    self._controller = None
+                    self._state = "unavailable"
+                    self._reason = "invalid_pulse_settings"
+                    self._error = str(exc)
+                else:
+                    self._pulse_steps = pulse_steps
+                    self._maximum_pump_rate_ml_per_s = maximum_rate
+                    self._continuous_guard_active = True
+                    self._nominal_ml_per_step = nominal_ml_per_step
+                    self._ml_per_step_upper_bound = ml_per_step_upper_bound
+                    self._nominal_pulse_volume_ml = pulse_steps * nominal_ml_per_step
+                    self._settle_time_s = settle
+                    self._approach_score = approach
+                    self._maximum_volume_ml = min(maximum, ABSOLUTE_PUMP_MAX_VOLUME_ML)
+                    self._slow_nominal_rate_ml_per_s = (
+                        rate * self._slow_rate_steps_per_s / ARDUINO_FULL_STEPS_PER_SECOND
+                    )
+                    self._state = "armed_continuous"
+                    self._reason = "waiting_for_model_approach"
+            status = self._status_locked()
+        self._csv_buffer.update_auto_stop_status(status)
+        return status
+
+    def disarm(self, reason: str = "manual_stop") -> dict[str, Any]:
+        # Set before taking the runtime lock so an in-flight STOP/RATE/G
+        # sequence can observe cancellation before writing a new direction.
+        self._cancel_event.set()
+        with self._lock:
+            self._enabled = False
+            self._controller = None
+            self._controller_started = False
+            self._pulse_complete_at_s = None
+            if self._state not in {"stopped", "error"}:
+                self._state = "disabled"
+                self._reason = str(reason or "manual_stop")
+            status = self._status_locked()
+        self._csv_buffer.update_auto_stop_status(status)
+        return status
+
+    def handle_auto_stop_status(self, status: Mapping[str, Any]) -> None:
+        if str(status.get("auto_stop_state") or "") == "triggered":
+            return
+        session_id = int(_finite_float_or_none(status.get("auto_stop_session_id")) or 0)
+        now_s = _finite_float_or_none(status.get("auto_stop_observation_elapsed_s"))
+        volume_ml = _finite_float_or_none(status.get("auto_stop_observation_volume_ml"))
+        score = _finite_float_or_none(status.get("auto_stop_endpoint_score"))
+        baseline_ready = bool(status.get("auto_stop_baseline_ready"))
+        if now_s is None or volume_ml is None or score is None or not baseline_ready:
+            return
+        safety_stop: tuple[int, str, float | None, float] | None = None
+        with self._lock:
+            controller = self._controller
+            if not self._enabled or controller is None or session_id != self._session_id:
+                return
+            try:
+                # While the continuous firmware guard is active, account at
+                # the independently supplied maximum flow rate.  Once STOP
+                # retires that guard, freeze this continuous bound; the pulse
+                # controller then reserves every STEP at the separately
+                # calibrated per-step upper bound before transmission.
+                if self._continuous_guard_active:
+                    self._conservative_volume_ml = max(
+                        self._conservative_volume_ml,
+                        now_s * self._maximum_pump_rate_ml_per_s,
+                        volume_ml,
+                    )
+                else:
+                    self._conservative_volume_ml = max(
+                        self._conservative_volume_ml,
+                        volume_ml,
+                    )
+                if not self._controller_started:
+                    controller.start(
+                        now_s=now_s,
+                        injected_volume_ml=self._conservative_volume_ml,
+                    )
+                    self._controller_started = True
+                if controller.state is PulseState.PULSE_INJECT:
+                    complete_at = self._pulse_complete_at_s
+                    if complete_at is None or now_s < complete_at:
+                        return
+                    completed = controller.update(
+                        PulseObservation(
+                            now_s=now_s,
+                            score=max(0.0, min(1.0, score)),
+                            injected_volume_ml=self._conservative_volume_ml,
+                            pulse_complete=True,
+                        )
+                    )
+                    self._apply_transition_locked(completed, now_s=now_s)
+                    if completed.state is PulseState.STOPPED:
+                        safety_stop = (session_id, completed.reason, volume_ml, now_s)
+                if safety_stop is None and controller.state is not PulseState.STOPPED:
+                    transition = controller.update(
+                        PulseObservation(
+                            now_s=now_s,
+                            score=max(0.0, min(1.0, score)),
+                            injected_volume_ml=self._conservative_volume_ml,
+                        )
+                    )
+                    self._apply_transition_locked(transition, now_s=now_s)
+                    if transition.state is PulseState.STOPPED:
+                        safety_stop = (session_id, transition.reason, volume_ml, now_s)
+            except Exception as exc:  # noqa: BLE001 - a dosing failure must fail closed.
+                self._error = str(exc)
+                self._state = "error"
+                self._reason = "pulse_control_failed"
+                try:
+                    self._stop_continuous("pulse_control_failed")
+                except Exception:
+                    pass
+                safety_stop = (session_id, self._reason, volume_ml, now_s)
+            pulse_status = self._status_locked()
+        self._csv_buffer.update_auto_stop_status(pulse_status)
+        if safety_stop is not None:
+            self._on_safety_stop(*safety_stop)
+
+    def _apply_transition_locked(self, transition, *, now_s: float) -> None:  # type: ignore[no-untyped-def]
+        self._reason = transition.reason
+        if transition.state is PulseState.FAST_CONTINUOUS:
+            self._state = "continuous"
+        elif transition.state is PulseState.SLOW_CONTINUOUS:
+            self._state = "slow_continuous"
+        elif transition.state is PulseState.PULSE_WAIT:
+            self._state = "pulse_settling"
+        elif transition.state is PulseState.PULSE_INJECT:
+            self._state = "pulse_injecting"
+        else:
+            self._state = "stopped"
+        for intent in transition.intents:
+            command = intent.command
+            self._last_command = command
+            if command == "STOP":
+                self._stop_continuous(intent.reason)
+                confirmed_stop_elapsed = _finite_float_or_none(
+                    self._csv_buffer.status().get("recording_elapsed_s")
+                )
+                if confirmed_stop_elapsed is not None:
+                    self._conservative_volume_ml = max(
+                        self._conservative_volume_ml,
+                        confirmed_stop_elapsed * self._maximum_pump_rate_ml_per_s,
+                    )
+                self._continuous_guard_active = False
+                self._csv_buffer.pause_commanded_pump_timeline(
+                    state="pulse_settling",
+                )
+            elif command.startswith("RATE "):
+                # RATE is sent by the slow-rearm callback immediately before G;
+                # handling it here would split the required atomic sequence.
+                continue
+            elif command.startswith("RUN_RATE "):
+                if transition.state is not PulseState.SLOW_CONTINUOUS:
+                    continue
+                if self._start_slow_continuous is None or self._cancel_event.is_set():
+                    raise RuntimeError("slow-stage restart was cancelled after stop")
+                remaining_volume_ml = self._maximum_volume_ml - self._conservative_volume_ml
+                if remaining_volume_ml <= 0:
+                    raise RuntimeError("slow-stage absolute session budget is exhausted")
+                response = self._start_slow_continuous(
+                    rate_steps_per_s=self._slow_rate_steps_per_s,
+                    nominal_rate_ml_per_s=self._slow_nominal_rate_ml_per_s,
+                    maximum_rate_ml_per_s=self._maximum_pump_rate_ml_per_s,
+                    remaining_volume_ml=remaining_volume_ml,
+                    absolute_deadline_monotonic_s=self._absolute_deadline_monotonic_s,
+                    can_restart=lambda: not self._cancel_event.is_set(),
+                )
+                if self._cancel_event.is_set():
+                    raise RuntimeError("slow-stage restart was cancelled")
+                self._continuous_guard_active = True
+                self._csv_buffer.start_commanded_continuous_segment(
+                    rate_ml_per_s=self._slow_nominal_rate_ml_per_s,
+                    stage="slow_continuous",
+                    rate_basis="nominal_uncalibrated_fast_rate_times_steps_per_100",
+                    now_monotonic_s=_finite_float_or_none(
+                        response.get("direction_written_monotonic_s")
+                        if isinstance(response, Mapping)
+                        else None
+                    ),
+                )
+            elif command.startswith("STEP "):
+                steps = int(command.split(" ", 1)[1])
+                # Reserve the full conservative pulse before transmission.  If
+                # acknowledgement is lost, assuming the dose was delivered is
+                # the only fail-safe accounting choice.
+                self._conservative_volume_ml += steps * self._ml_per_step_upper_bound
+                response = self._command_sender(f"STEP {steps}\n")
+                expected_ack = f"STEP ACCEPTED {steps}"
+                acknowledgement = (
+                    str(response.get("firmware_ack") or "")
+                    if isinstance(response, Mapping)
+                    else str(response or "")
+                )
+                if acknowledgement != expected_ack:
+                    raise RuntimeError(
+                        "firmware did not confirm completed pulse command: "
+                        f"{acknowledgement or 'no acknowledgement'}"
+                    )
+                self._csv_buffer.record_commanded_pulse(
+                    steps=steps,
+                    nominal_ml_per_step=self._nominal_ml_per_step,
+                )
+                self._pulse_count += 1
+                # The serial bridge returns only after receiving the firmware's
+                # PUMP STOPPED PULSE_COMPLETE line, so no time-based completion
+                # guess is needed.  The next observation advances the state.
+                self._pulse_complete_at_s = now_s
+            elif command == "EMERGENCY_STOP":
+                self._stop_continuous(intent.reason)
+
+    def _status_locked(self) -> dict[str, Any]:
+        return {
+            "auto_stop_pulse_enabled": self._enabled,
+            "auto_stop_pulse_state": self._state,
+            "auto_stop_pulse_reason": self._reason,
+            "auto_stop_pulse_session_id": self._session_id,
+            "auto_stop_pulse_approach_score": round(self._approach_score, 6),
+            "auto_stop_pulse_steps": self._pulse_steps,
+            "auto_stop_pulse_settle_time_s": round(self._settle_time_s, 6),
+            "auto_stop_pulse_count": self._pulse_count,
+            "auto_stop_pulse_last_command": self._last_command,
+            "auto_stop_pulse_nominal_ml_per_step": round(self._nominal_ml_per_step, 9),
+            "auto_stop_pulse_configured_ml_per_step_upper_bound": round(
+                self._ml_per_step_upper_bound,
+                9,
+            ),
+            "auto_stop_pulse_nominal_volume_ml": round(self._nominal_pulse_volume_ml, 9),
+            "auto_stop_pulse_maximum_volume_ml": round(self._maximum_volume_ml, 6),
+            "auto_stop_pulse_maximum_pump_rate_ml_per_s": round(
+                self._maximum_pump_rate_ml_per_s,
+                6,
+            ),
+            "auto_stop_pulse_conservative_volume_ml": round(
+                self._conservative_volume_ml,
+                9,
+            ),
+            "auto_stop_pulse_volume_basis": "configured_conservative_upper_bound_not_direct_drop_measurement",
+            "auto_stop_pulse_error": self._error,
+            "auto_stop_slow_stage_enabled": self._slow_stage_enabled,
+            "auto_stop_slow_rate_steps_per_s": self._slow_rate_steps_per_s,
+            "auto_stop_slow_nominal_rate_ml_per_s": round(self._slow_nominal_rate_ml_per_s, 9),
+            "auto_stop_slow_rate_basis": "nominal_uncalibrated_fast_rate_times_steps_per_100",
+        }
 
 
 class LiveControlState:
@@ -1634,6 +2663,14 @@ class LiveControlState:
             self._updated_epoch_s = round(time.time(), 6)
         return self.snapshot()
 
+    def set_yolo_available(self, available: bool) -> dict[str, Any]:
+        """Publish optional setup-detector availability after lazy loading."""
+
+        with self._lock:
+            self._yolo_available = bool(available)
+            self._updated_epoch_s = round(time.time(), 6)
+        return self.snapshot()
+
 
 @dataclass(frozen=True)
 class LiveStreamServerHandle:
@@ -1644,10 +2681,145 @@ class LiveStreamServerHandle:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2.0)
+        absolute_guard = getattr(self.server, "absolute_pump_safety_guard", None)
+        if isinstance(absolute_guard, AbsolutePumpSafetyGuard):
+            absolute_guard.close()
+
+
+class PulseDeliveryUncertainError(RuntimeError):
+    """A STEP command may have moved the pump but was not fully acknowledged."""
+
+
+def _serial_response_line(serial_obj: Any) -> str:
+    readline = getattr(serial_obj, "readline", None)
+    if not callable(readline):
+        raise RuntimeError("pump serial transport cannot read firmware acknowledgement")
+    response = readline()
+    return (
+        response.decode("ascii", errors="replace").strip()
+        if isinstance(response, bytes)
+        else str(response or "").strip()
+    )
+
+
+def _best_effort_serial_stop(serial_obj: Any) -> None:
+    """Request the legacy immediate stop without masking the original error."""
+
+    try:
+        serial_obj.write(b"c")
+        flush = getattr(serial_obj, "flush", None)
+        if callable(flush):
+            flush()
+    except Exception:
+        pass
+
+
+def _wait_for_step_completion(serial_obj: Any, *, steps: int) -> str:
+    """Require both STEP acceptance and firmware-confirmed pulse completion.
+
+    Retrying a pulse after an acknowledgement loss could double-dose the
+    solution.  Therefore every failure after STEP transmission is reported as
+    delivery-uncertain and a best-effort immediate stop is sent.
+    """
+
+    expected_ack = f"STEP ACCEPTED {steps}"
+    try:
+        acknowledgement = _serial_response_line(serial_obj)
+        if acknowledgement != expected_ack:
+            raise RuntimeError(
+                f"firmware rejected or mismatched pulse command: {acknowledgement or 'no acknowledgement'}"
+            )
+        deadline_s = time.monotonic() + steps / ARDUINO_FULL_STEPS_PER_SECOND + 0.50
+        while time.monotonic() <= deadline_s:
+            line = _serial_response_line(serial_obj)
+            if line == "PUMP STOPPED PULSE_COMPLETE":
+                return acknowledgement
+            if line.startswith("PUMP STOPPED "):
+                raise RuntimeError(f"pulse ended for an unexpected reason: {line}")
+            if not line:
+                time.sleep(0.005)
+        raise RuntimeError("firmware pulse-completion acknowledgement timed out")
+    except Exception as exc:
+        _best_effort_serial_stop(serial_obj)
+        raise PulseDeliveryUncertainError(str(exc)) from exc
+
+
+def _wait_for_legacy_pump_ack(
+    serial_obj: Any,
+    *,
+    command: str,
+    expected_run_limit_ms: int | None = None,
+) -> str:
+    acknowledgement = _serial_response_line(serial_obj)
+    if command in {"a", "b"}:
+        match = re.fullmatch(r"PUMP RUNNING ([ab]) ([0-9]+)", acknowledgement)
+        if match is None or match.group(1) != command:
+            raise RuntimeError(
+                f"firmware did not confirm pump command {command}: "
+                f"{acknowledgement or 'no acknowledgement'}"
+            )
+        actual_limit_ms = int(match.group(2))
+        if expected_run_limit_ms is not None and actual_limit_ms != expected_run_limit_ms:
+            raise RuntimeError(
+                "firmware started with a different safety deadline: "
+                f"requested={expected_run_limit_ms}ms actual={actual_limit_ms}ms"
+            )
+        return acknowledgement
+    elif command == "c":
+        expected_prefix = "PUMP STOPPED "
+    else:  # pragma: no cover - guarded by callers.
+        raise ValueError(f"unsupported legacy pump command: {command}")
+    if not acknowledgement.startswith(expected_prefix):
+        raise RuntimeError(
+            f"firmware did not confirm pump command {command}: "
+            f"{acknowledgement or 'no acknowledgement'}"
+        )
+    return acknowledgement
+
+
+def start_guarded_continuous_at_rate(
+    *,
+    command_sender: Callable[[str], Any],
+    guard: AbsolutePumpSafetyGuard,
+    direction_command: str,
+    rate_steps_per_s: int,
+    maximum_rate_ml_per_s: float,
+    remaining_volume_ml: float,
+    absolute_deadline_monotonic_s: float,
+    can_restart: Callable[[], bool],
+) -> dict[str, Any]:
+    """On a stopped pump, configure RATE then rearm G and direction safely."""
+
+    if not can_restart():
+        raise RuntimeError("slow-stage restart cancelled before RATE")
+    expected_rate_ack = f"RATE ACCEPTED {rate_steps_per_s}"
+    rate_ack = command_sender(f"RATE {rate_steps_per_s}\n")
+    acknowledgement = (
+        str(rate_ack.get("firmware_ack") or "")
+        if isinstance(rate_ack, Mapping)
+        else str(rate_ack or "")
+    )
+    if acknowledgement != expected_rate_ack:
+        raise RuntimeError("firmware did not acknowledge the exact slow RATE")
+    if not can_restart():
+        guard.stop("slow_stage_restart_cancelled_after_rate")
+        raise RuntimeError("slow-stage restart cancelled after RATE")
+    status = guard.start(
+        direction_command=direction_command,
+        maximum_pump_rate_ml_per_s=maximum_rate_ml_per_s,
+        requested_maximum_volume_ml=remaining_volume_ml,
+        requested_maximum_run_time_s=ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+        can_start_direction=can_restart,
+        absolute_deadline_monotonic_s=absolute_deadline_monotonic_s,
+    )
+    if not status.get("absolute_guard_armed") or not can_restart():
+        guard.stop("slow_stage_restart_cancelled")
+        raise RuntimeError("slow-stage guarded restart was not confirmed")
+    return status
 
 
 class ArduinoAbcPumpSerialBridge:
-    """Lazy pyserial bridge for the working a/b/c Arduino pump sketch."""
+    """Lazy serial bridge for a/b/c plus acknowledged firmware guard arming."""
 
     def __init__(
         self,
@@ -1668,6 +2840,8 @@ class ArduinoAbcPumpSerialBridge:
         self._open_reset_delay_s = max(0.0, float(open_reset_delay_s))
         self._serial_obj = None
         self._lock = threading.Lock()
+        self._emergency_write_lock = threading.Lock()
+        self._armed_guard_timeout_ms: int | None = None
 
     def _open_locked(self):  # type: ignore[no-untyped-def]
         if self._serial_obj is not None:
@@ -1691,16 +2865,152 @@ class ArduinoAbcPumpSerialBridge:
         with self._lock:
             self._open_locked()
 
-    def send(self, command: str) -> dict[str, Any]:
-        if command not in {"a", "b", "c"}:
-            raise ValueError("pump command must be one of a, b, c")
+    def send(self, command: str) -> Any:
+        guard_command = command.startswith("G ") and command.endswith("\n")
+        step_command = _validated_step_serial_command(command)
+        rate_steps = _rate_steps_per_second(command)
+        if command not in {"a", "b", "c"} and not guard_command and not step_command and rate_steps is None:
+            raise ValueError(
+                "pump command must be one of a, b, c, G <milliseconds>\\n, RATE <1..100>\\n, or STEP <steps>\\n"
+            )
         with self._lock:
             serial_obj = self._open_locked()
-            serial_obj.write(command.encode("ascii"))
-            flush = getattr(serial_obj, "flush", None)
-            if callable(flush):
-                flush()
-        return {"port": self.port, "baud": self.baud}
+            if guard_command or step_command or rate_steps is not None or command in {"a", "b", "c"}:
+                reset_input = getattr(serial_obj, "reset_input_buffer", None)
+                if callable(reset_input):
+                    reset_input()
+            try:
+                with self._emergency_write_lock:
+                    serial_obj.write(command.encode("ascii"))
+                    flush = getattr(serial_obj, "flush", None)
+                    if callable(flush):
+                        flush()
+            except Exception as exc:
+                if step_command:
+                    _best_effort_serial_stop(serial_obj)
+                    raise PulseDeliveryUncertainError(str(exc)) from exc
+                raise
+            if guard_command or step_command or rate_steps is not None:
+                readline = getattr(serial_obj, "readline", None)
+                if not callable(readline):
+                    raise RuntimeError("pump serial transport cannot read firmware acknowledgement")
+                if step_command:
+                    steps = int(command[5:-1])
+                    return _wait_for_step_completion(serial_obj, steps=steps)
+                acknowledgement = _serial_response_line(serial_obj)
+                if not acknowledgement:
+                    raise RuntimeError("firmware acknowledgement timed out")
+                if rate_steps is not None:
+                    expected_rate_ack = f"RATE ACCEPTED {rate_steps}"
+                    if acknowledgement != expected_rate_ack:
+                        _best_effort_serial_stop(serial_obj)
+                        raise RuntimeError(
+                            "firmware did not acknowledge the exact requested rate: "
+                            f"{acknowledgement}"
+                        )
+                    return acknowledgement
+                requested_timeout_ms = int(command[2:-1])
+                expected_guard_ack = f"GUARD ARMED {requested_timeout_ms}"
+                if acknowledgement != expected_guard_ack:
+                    self._armed_guard_timeout_ms = None
+                    raise RuntimeError(
+                        "firmware did not acknowledge the exact requested guard deadline: "
+                        f"{acknowledgement}"
+                    )
+                self._armed_guard_timeout_ms = requested_timeout_ms
+                return acknowledgement
+            try:
+                acknowledgement = _wait_for_legacy_pump_ack(
+                    serial_obj,
+                    command=command,
+                    expected_run_limit_ms=(
+                        self._armed_guard_timeout_ms if command in {"a", "b"} else None
+                    ),
+                )
+            except Exception as exc:
+                if command in {"a", "b"}:
+                    _best_effort_serial_stop(serial_obj)
+                self._armed_guard_timeout_ms = None
+                raise
+            self._armed_guard_timeout_ms = None
+        return {"port": self.port, "baud": self.baud, "firmware_ack": acknowledgement}
+
+    def send_guarded_direction(
+        self,
+        command: str,
+        can_send: Callable[[], bool],
+    ) -> dict[str, Any]:
+        """Atomically arbitrate a/b against the lock-free emergency c write.
+
+        The generation predicate is evaluated while holding the same byte-write
+        lock used by :meth:`emergency_stop`.  Therefore either a/b reaches the
+        wire first and c follows it, or cancellation wins and a/b is never
+        written.  The lock is released before waiting for the firmware ACK so
+        emergency c can still pre-empt a blocked acknowledgement wait.
+        """
+
+        if command not in {"a", "b"}:
+            raise ValueError("guarded direction command must be a or b")
+        if not callable(can_send):
+            raise TypeError("can_send must be callable")
+        with self._lock:
+            serial_obj = self._open_locked()
+            if self._armed_guard_timeout_ms is None:
+                raise RuntimeError("firmware guard must be armed before a guarded direction")
+            armed_guard_timeout_ms = self._armed_guard_timeout_ms
+            reset_input = getattr(serial_obj, "reset_input_buffer", None)
+            if callable(reset_input):
+                reset_input()
+            direction_written = False
+            try:
+                with self._emergency_write_lock:
+                    if not can_send():
+                        return {
+                            "direction_cancelled": True,
+                            "direction_written": False,
+                        }
+                    direction_written_monotonic_s = time.perf_counter()
+                    serial_obj.write(command.encode("ascii"))
+                    flush = getattr(serial_obj, "flush", None)
+                    if callable(flush):
+                        flush()
+                    direction_written = True
+                acknowledgement = _wait_for_legacy_pump_ack(
+                    serial_obj,
+                    command=command,
+                    expected_run_limit_ms=armed_guard_timeout_ms,
+                )
+            except Exception:
+                if direction_written:
+                    with self._emergency_write_lock:
+                        _best_effort_serial_stop(serial_obj)
+                self._armed_guard_timeout_ms = None
+                raise
+            self._armed_guard_timeout_ms = None
+            return {
+                "port": self.port,
+                "baud": self.baud,
+                "firmware_ack": acknowledgement,
+                "direction_written": True,
+                "direction_written_monotonic_s": direction_written_monotonic_s,
+            }
+
+    def emergency_stop(self) -> dict[str, Any]:
+        """Preempt a blocking STEP acknowledgement wait with the legacy stop byte."""
+
+        serial_obj = self._serial_obj
+        if serial_obj is None:
+            return {"sent": False, "status": "not_connected", "error": "pump serial is not open"}
+        try:
+            with self._emergency_write_lock:
+                serial_obj.write(b"c")
+                flush = getattr(serial_obj, "flush", None)
+                if callable(flush):
+                    flush()
+        except Exception as exc:  # noqa: BLE001 - caller must see an unconfirmed emergency stop.
+            return {"sent": False, "status": "failed", "error": str(exc)}
+        self._armed_guard_timeout_ms = None
+        return {"sent": True, "status": "sent", "command": "c"}
 
     def close(self) -> None:
         with self._lock:
@@ -1740,6 +3050,28 @@ def resolve_pump_serial_port(requested: str | None) -> str:
     return next((candidate for candidate in candidates if candidate), "")
 
 
+def _validated_step_serial_command(command: str) -> bool:
+    if not command.startswith("STEP ") or not command.endswith("\n"):
+        return False
+    argument = command[5:-1]
+    if not argument.isdigit():
+        raise ValueError("STEP command requires a positive integer")
+    steps = int(argument)
+    if not 0 < steps <= ENDPOINT_PULSE_MAX_STEPS:
+        raise ValueError(f"STEP command must be in 1..{ENDPOINT_PULSE_MAX_STEPS}")
+    return True
+
+
+def _rate_steps_per_second(command: str) -> int | None:
+    match = re.fullmatch(r"RATE ([0-9]+)\n", str(command or ""))
+    if match is None:
+        return None
+    rate = int(match.group(1))
+    if not 1 <= rate <= 100:
+        raise ValueError("RATE steps per second must be in 1..100")
+    return rate
+
+
 
 
 def _pump_serial_error_likely_busy(error: object) -> bool:
@@ -1765,18 +3097,34 @@ def _pump_serial_user_message(*, status: str, requested: str, port: str, error: 
     if _pump_serial_error_likely_busy(error):
         target = port or requested or "Arduino COM 포트"
         return f"{target} 포트를 열 수 없습니다. Arduino IDE/Serial Monitor가 사용 중이면 닫으면 자동으로 다시 연결됩니다."
+    error_text = str(error or "")
+    acknowledgement_missing = (
+        "no acknowledgement" in error_text.lower()
+        or "acknowledgement timed out" in error_text.lower()
+    )
+    if acknowledgement_missing:
+        target = port or requested or "Arduino COM 포트"
+        return (
+            f"{target}에서 웹 제어용 펌웨어 응답이 없습니다. "
+            "auto_titrator/arduino_stepper/arduino_stepper.ino를 Arduino에 업로드하고 "
+            "Arduino IDE의 Serial Monitor를 닫은 뒤 USB를 다시 연결하세요. "
+            "original_working 스케치는 모터는 움직이지만 웹 확인 응답을 보내지 않습니다."
+        )
     if error:
         return f"아두이노 펌프 연결 실패: {error}"
     return "아두이노 펌프 상태 확인 중"
 
 
 class AutoReconnectArduinoAbcPumpSerialBridge:
-    """Auto-retrying pyserial bridge for the working a/b/c Arduino sketch.
+    """Auto-retrying bridge for acknowledged and original a/b/c firmware.
 
     The existing fixed bridge works only if a COM port is present when the
     collector starts.  This bridge keeps the pump path enabled in `auto` mode so
     connecting the Arduino after server startup can recover without restarting
-    the dashboard.
+    the dashboard.  ``protocol_mode=auto`` probes ``Q`` once after the Arduino
+    reset window.  A current firmware reply enables firmware guard/STEP support;
+    no reply selects the original byte-only firmware for manual web control with
+    the existing host watchdog as a clearly reported host-only guard.
     """
 
     def __init__(
@@ -1788,6 +3136,7 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
         resolver: Callable[[str | None], str] = resolve_pump_serial_port,
         retry_interval_s: float = 2.0,
         open_reset_delay_s: float = 2.0,
+        protocol_mode: str = "ack",
         start_background: bool = True,
     ) -> None:
         self.requested_port = str(requested_port or "auto").strip() or "auto"
@@ -1798,6 +3147,19 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
         self._resolver = resolver
         self._retry_interval_s = max(0.2, float(retry_interval_s))
         self._open_reset_delay_s = max(0.0, float(open_reset_delay_s))
+        requested_protocol = str(protocol_mode or "auto").strip().lower()
+        if requested_protocol not in {"auto", "ack", "legacy"}:
+            raise ValueError("pump serial protocol must be auto, ack, or legacy")
+        self._requested_protocol = requested_protocol
+        self._active_protocol = (
+            "ack_v2"
+            if requested_protocol == "ack"
+            else "legacy_abc"
+            if requested_protocol == "legacy"
+            else "detecting"
+        )
+        self._firmware_pulse_direction = ""
+        self._supports_variable_rate = False
         self._serial_obj = None
         self._resolved_port = ""
         self._status = "waiting_for_port"
@@ -1805,7 +3167,11 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
         self._retry_count = 0
         self._connected_epoch_s: float | None = None
         self._last_attempt_epoch_s: float | None = None
+        self._last_command = ""
+        self._last_command_epoch_s: float | None = None
         self._lock = threading.Lock()
+        self._emergency_write_lock = threading.Lock()
+        self._armed_guard_timeout_ms: int | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         if start_background:
@@ -1825,6 +3191,11 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
     def _close_serial_locked(self) -> None:
         serial_obj = self._serial_obj
         self._serial_obj = None
+        self._armed_guard_timeout_ms = None
+        if self._requested_protocol == "auto":
+            self._active_protocol = "detecting"
+            self._firmware_pulse_direction = ""
+            self._supports_variable_rate = False
         close = getattr(serial_obj, "close", None)
         if callable(close):
             try:
@@ -1853,12 +3224,100 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
             self._connected_epoch_s = time.time()
             if self._open_reset_delay_s > 0:
                 time.sleep(self._open_reset_delay_s)
+            if self._requested_protocol == "auto":
+                self._active_protocol = self._detect_protocol_locked(serial_obj)
             return True
         except Exception as exc:  # noqa: BLE001 - surface hardware/port diagnostics to browser.
             self._close_serial_locked()
             self._status = "busy" if _pump_serial_error_likely_busy(exc) else "error"
             self._last_error = str(exc)
             return False
+
+    def _detect_protocol_locked(self, serial_obj: Any) -> str:
+        reset_input = getattr(serial_obj, "reset_input_buffer", None)
+        if callable(reset_input):
+            reset_input()
+        # A query can be lost while the board finishes resetting. Retry only Q,
+        # never a motion command; unknown firmware still cannot use STEP.
+        for _attempt in range(3):
+            serial_obj.write(b"Q\n")
+            flush = getattr(serial_obj, "flush", None)
+            if callable(flush):
+                flush()
+            for _ in range(3):
+                line = _serial_response_line(serial_obj)
+                version = re.fullmatch(
+                    r"PUMP FW 2 PULSE ([ab]) GUARD 1",
+                    str(line or ""),
+                )
+                if version is not None:
+                    self._firmware_pulse_direction = version.group(1)
+                    self._supports_variable_rate = self._probe_variable_rate_locked(serial_obj)
+                    return "ack_v2"
+                if re.fullmatch(r"GUARD (?:IDLE|RUNNING) [0-9]+", str(line or "")):
+                    return "ack_v1"
+        return "legacy_abc"
+
+    def _probe_variable_rate_locked(self, serial_obj: Any) -> bool:
+        """A read-only V query is the capability gate for optional slow dosing."""
+
+        serial_obj.write(b"V\n")
+        flush = getattr(serial_obj, "flush", None)
+        if callable(flush):
+            flush()
+        return _serial_response_line(serial_obj) == "PUMP SPEED 1"
+
+    def _send_legacy_locked(self, serial_obj: Any, command: str) -> dict[str, Any]:
+        guard_command = command.startswith("G ") and command.endswith("\n")
+        step_command = _validated_step_serial_command(command)
+        if step_command:
+            raise RuntimeError(
+                "legacy a/b/c firmware does not support STEP pulses; "
+                "upload auto_titrator/arduino_stepper/arduino_stepper.ino"
+            )
+        if guard_command:
+            requested_timeout_ms = int(command[2:-1])
+            self._armed_guard_timeout_ms = requested_timeout_ms
+            return {
+                "guard_armed": True,
+                "guard_timeout_ms": requested_timeout_ms,
+                "guard_scope": "host_only",
+                "firmware_ack": "",
+            }
+        if command not in {"a", "b", "c"}:
+            raise ValueError("legacy pump command must be a, b, or c")
+        with self._emergency_write_lock:
+            self._last_command = command
+            self._last_command_epoch_s = time.time()
+            serial_obj.write(command.encode("ascii"))
+            flush = getattr(serial_obj, "flush", None)
+            if callable(flush):
+                flush()
+        if command == "c":
+            self._armed_guard_timeout_ms = None
+            return {
+                "port": self._resolved_port,
+                "baud": self.baud,
+                "auto_retry": True,
+                "pump_serial_status": "connected_legacy",
+                "firmware_protocol": "legacy_abc",
+                "firmware_ack": "",
+                "acknowledged": False,
+                "stop_sent": True,
+            }
+        timeout_ms = self._armed_guard_timeout_ms or int(ABSOLUTE_PUMP_MAX_RUN_TIME_S * 1000)
+        return {
+            "port": self._resolved_port,
+            "baud": self.baud,
+            "auto_retry": True,
+            "pump_serial_status": "connected_legacy",
+            "firmware_protocol": "legacy_abc",
+            "acknowledged": False,
+            "pump_running": True,
+            "pump_direction": command,
+            "guard_timeout_ms": timeout_ms,
+            "guard_scope": "host_only",
+        }
 
     def _retry_loop(self) -> None:
         while not self._stop_event.wait(self._retry_interval_s):
@@ -1870,11 +3329,20 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
         with self._lock:
             self._connect_once_locked()
 
-    def send(self, command: str) -> dict[str, Any]:
-        if command not in {"a", "b", "c"}:
-            raise ValueError("pump command must be one of a, b, c")
+    def send(self, command: str) -> Any:
+        guard_command = command.startswith("G ") and command.endswith("\n")
+        step_command = _validated_step_serial_command(command)
+        rate_steps = _rate_steps_per_second(command)
+        if command not in {"a", "b", "c"} and not guard_command and not step_command and rate_steps is None:
+            raise ValueError(
+                "pump command must be one of a, b, c, G <milliseconds>\\n, RATE <1..100>\\n, or STEP <steps>\\n"
+            )
+        if rate_steps is not None and not self._supports_variable_rate:
+            raise RuntimeError("connected firmware does not advertise RATE support via V query")
         last_exc: Exception | None = None
         for _attempt in range(2):
+            step_delivery_attempted = False
+            run_start_delivery_attempted = False
             with self._lock:
                 if self._serial_obj is None:
                     self._connect_once_locked()
@@ -1883,18 +3351,93 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
                     status = self.status_locked()
                     raise RuntimeError(status["message"])
                 try:
-                    serial_obj.write(command.encode("ascii"))
-                    flush = getattr(serial_obj, "flush", None)
-                    if callable(flush):
-                        flush()
+                    if self._active_protocol == "legacy_abc":
+                        result = self._send_legacy_locked(serial_obj, command)
+                        self._status = "connected"
+                        self._last_error = ""
+                        return result
+                    if guard_command or step_command or rate_steps is not None or command in {"a", "b", "c"}:
+                        reset_input = getattr(serial_obj, "reset_input_buffer", None)
+                        if callable(reset_input):
+                            reset_input()
+                    step_delivery_attempted = bool(step_command)
+                    run_start_delivery_attempted = command in {"a", "b"}
+                    with self._emergency_write_lock:
+                        self._last_command = command
+                        self._last_command_epoch_s = time.time()
+                        serial_obj.write(command.encode("ascii"))
+                        flush = getattr(serial_obj, "flush", None)
+                        if callable(flush):
+                            flush()
+                    if guard_command or step_command or rate_steps is not None:
+                        readline = getattr(serial_obj, "readline", None)
+                        if not callable(readline):
+                            raise RuntimeError(
+                                "pump serial transport cannot read firmware acknowledgement"
+                            )
+                        if step_command:
+                            steps = int(command[5:-1])
+                            acknowledgement = _wait_for_step_completion(serial_obj, steps=steps)
+                            self._status = "connected"
+                            self._last_error = ""
+                            return acknowledgement
+                        if rate_steps is not None:
+                            acknowledgement = _serial_response_line(serial_obj)
+                            expected_rate_ack = f"RATE ACCEPTED {rate_steps}"
+                            if acknowledgement != expected_rate_ack:
+                                _best_effort_serial_stop(serial_obj)
+                                raise RuntimeError(
+                                    "firmware did not acknowledge the exact requested rate: "
+                                    f"{acknowledgement or 'no acknowledgement'}"
+                                )
+                            self._status = "connected"
+                            self._last_error = ""
+                            return acknowledgement
+                        acknowledgement = _serial_response_line(serial_obj)
+                        if not acknowledgement:
+                            raise RuntimeError("firmware acknowledgement timed out")
+                        requested_timeout_ms = int(command[2:-1])
+                        expected_guard_ack = f"GUARD ARMED {requested_timeout_ms}"
+                        if acknowledgement != expected_guard_ack:
+                            self._armed_guard_timeout_ms = None
+                            raise RuntimeError(
+                                "firmware did not acknowledge the exact requested guard deadline: "
+                                f"{acknowledgement}"
+                            )
+                        self._armed_guard_timeout_ms = requested_timeout_ms
+                        self._status = "connected"
+                        self._last_error = ""
+                        return acknowledgement
+                    acknowledgement = _wait_for_legacy_pump_ack(
+                        serial_obj,
+                        command=command,
+                        expected_run_limit_ms=(
+                            self._armed_guard_timeout_ms if command in {"a", "b"} else None
+                        ),
+                    )
+                    self._armed_guard_timeout_ms = None
                     self._status = "connected"
                     self._last_error = ""
-                    return {"port": self._resolved_port, "baud": self.baud, "auto_retry": True, "pump_serial_status": self._status}
+                    return {
+                        "port": self._resolved_port,
+                        "baud": self.baud,
+                        "auto_retry": True,
+                        "pump_serial_status": self._status,
+                        "firmware_ack": acknowledgement,
+                    }
                 except Exception as exc:  # noqa: BLE001 - retry once after dropping stale port handle.
                     last_exc = exc
                     self._status = "busy" if _pump_serial_error_likely_busy(exc) else "error"
                     self._last_error = str(exc)
+                    if (step_delivery_attempted or run_start_delivery_attempted) and not isinstance(
+                        exc, PulseDeliveryUncertainError
+                    ):
+                        _best_effort_serial_stop(serial_obj)
                     self._close_serial_locked()
+                    # Never replay a STEP after bytes may have reached the
+                    # firmware: an acknowledgement loss must not double-dose.
+                    if step_delivery_attempted or run_start_delivery_attempted or rate_steps is not None:
+                        break
         raise RuntimeError(
             _pump_serial_user_message(
                 status=self._status,
@@ -1904,6 +3447,128 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
             )
         )
 
+    def send_guarded_direction(
+        self,
+        command: str,
+        can_send: Callable[[], bool],
+    ) -> dict[str, Any]:
+        """Send one non-replayable guarded a/b command with emergency arbitration."""
+
+        if command not in {"a", "b"}:
+            raise ValueError("guarded direction command must be a or b")
+        if not callable(can_send):
+            raise TypeError("can_send must be callable")
+        direction_written = False
+        with self._lock:
+            if self._serial_obj is None:
+                self._connect_once_locked()
+            serial_obj = self._serial_obj
+            if serial_obj is None:
+                raise RuntimeError(self.status_locked()["message"])
+            if self._armed_guard_timeout_ms is None:
+                raise RuntimeError("firmware guard must be armed before a guarded direction")
+            armed_guard_timeout_ms = self._armed_guard_timeout_ms
+            if self._active_protocol == "legacy_abc":
+                with self._emergency_write_lock:
+                    if not can_send():
+                        return {
+                            "direction_cancelled": True,
+                            "direction_written": False,
+                        }
+                    direction_written_monotonic_s = time.perf_counter()
+                    self._last_command = command
+                    self._last_command_epoch_s = time.time()
+                    serial_obj.write(command.encode("ascii"))
+                    flush = getattr(serial_obj, "flush", None)
+                    if callable(flush):
+                        flush()
+                self._armed_guard_timeout_ms = None
+                self._status = "connected"
+                self._last_error = ""
+                return {
+                    "port": self._resolved_port,
+                    "baud": self.baud,
+                    "auto_retry": True,
+                    "pump_serial_status": "connected_legacy",
+                    "firmware_protocol": "legacy_abc",
+                    "acknowledged": False,
+                    "pump_running": True,
+                    "pump_direction": command,
+                    "guard_timeout_ms": armed_guard_timeout_ms,
+                    "guard_scope": "host_only",
+                    "direction_written": True,
+                    "direction_written_monotonic_s": direction_written_monotonic_s,
+                }
+            try:
+                reset_input = getattr(serial_obj, "reset_input_buffer", None)
+                if callable(reset_input):
+                    reset_input()
+                with self._emergency_write_lock:
+                    if not can_send():
+                        return {
+                            "direction_cancelled": True,
+                            "direction_written": False,
+                        }
+                    direction_written_monotonic_s = time.perf_counter()
+                    self._last_command = command
+                    self._last_command_epoch_s = time.time()
+                    serial_obj.write(command.encode("ascii"))
+                    flush = getattr(serial_obj, "flush", None)
+                    if callable(flush):
+                        flush()
+                    direction_written = True
+                acknowledgement = _wait_for_legacy_pump_ack(
+                    serial_obj,
+                    command=command,
+                    expected_run_limit_ms=armed_guard_timeout_ms,
+                )
+                self._armed_guard_timeout_ms = None
+                self._status = "connected"
+                self._last_error = ""
+                return {
+                    "port": self._resolved_port,
+                    "baud": self.baud,
+                    "auto_retry": True,
+                    "pump_serial_status": self._status,
+                    "firmware_ack": acknowledgement,
+                    "direction_written": True,
+                    "direction_written_monotonic_s": direction_written_monotonic_s,
+                }
+            except Exception as exc:
+                self._status = "busy" if _pump_serial_error_likely_busy(exc) else "error"
+                self._last_error = str(exc)
+                if direction_written:
+                    with self._emergency_write_lock:
+                        _best_effort_serial_stop(serial_obj)
+                self._close_serial_locked()
+                raise RuntimeError(
+                    _pump_serial_user_message(
+                        status=self._status,
+                        requested=self.requested_port,
+                        port=self._resolved_port,
+                        error=exc,
+                    )
+                ) from exc
+
+    def emergency_stop(self) -> dict[str, Any]:
+        """Write ``c`` without waiting for the reconnect/ACK lock."""
+
+        serial_obj = self._serial_obj
+        if serial_obj is None:
+            return {"sent": False, "status": "not_connected", "error": "pump serial is not open"}
+        try:
+            with self._emergency_write_lock:
+                self._last_command = "c"
+                self._last_command_epoch_s = time.time()
+                serial_obj.write(b"c")
+                flush = getattr(serial_obj, "flush", None)
+                if callable(flush):
+                    flush()
+        except Exception as exc:  # noqa: BLE001 - expose failure to the stop caller.
+            return {"sent": False, "status": "failed", "error": str(exc)}
+        self._armed_guard_timeout_ms = None
+        return {"sent": True, "status": "sent", "command": "c"}
+
     def status_locked(self) -> dict[str, Any]:
         connected = self._serial_obj is not None and self._status == "connected"
         message = _pump_serial_user_message(
@@ -1912,6 +3577,15 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
             port=self._resolved_port,
             error=self._last_error,
         )
+        if connected and self._active_protocol == "legacy_abc":
+            message = (
+                "기존 a/b/c 펌웨어로 연결됨: 웹 수동 밀기·되감기·정지는 사용 가능하며 "
+                "STEP 자동정지는 웹 제어용 펌웨어 업로드 후 사용할 수 있습니다."
+            )
+        elif connected and self._active_protocol == "ack_v2":
+            message = "웹 제어용 Arduino 펌웨어가 확인되었습니다."
+        elif connected and self._active_protocol == "ack_v1":
+            message = "이전 ACK 펌웨어로 연결됨: 수동 제어만 사용하고 최신 펌웨어를 업로드하세요."
         return {
             "enabled": True,
             "auto_retry": True,
@@ -1926,6 +3600,14 @@ class AutoReconnectArduinoAbcPumpSerialBridge:
             "message": message,
             "last_attempt_epoch_s": self._last_attempt_epoch_s,
             "connected_epoch_s": self._connected_epoch_s,
+            "firmware_protocol": self._active_protocol,
+            "supports_firmware_guard": self._active_protocol in {"ack_v1", "ack_v2"},
+            "supports_step_pulse": self._active_protocol == "ack_v2",
+            "supports_variable_rate": self._active_protocol == "ack_v2" and self._supports_variable_rate,
+            "manual_host_guard_only": self._active_protocol == "legacy_abc",
+            "firmware_pulse_direction": self._firmware_pulse_direction,
+            "last_command": self._last_command,
+            "last_command_epoch_s": self._last_command_epoch_s,
         }
 
     def status(self) -> dict[str, Any]:
@@ -1946,15 +3628,20 @@ def build_pump_serial_bridge_from_args(args: argparse.Namespace) -> ArduinoAbcPu
         return None
     baud = int(getattr(args, "pump_serial_baud", 9600) or 9600)
     retry_interval_s = float(getattr(args, "pump_serial_retry_interval_s", 2.0) or 2.0)
-    if requested.lower() == "auto":
+    protocol_mode = str(getattr(args, "pump_serial_protocol", "auto") or "auto").strip().lower()
+    if protocol_mode not in {"auto", "ack", "legacy"}:
+        raise ValueError("pump serial protocol must be auto, ack, or legacy")
+    if requested.lower() == "auto" or protocol_mode in {"auto", "legacy"}:
         print(
-            f"Pump serial: auto reconnect enabled @ {baud} baud, protocol b=start c=stop a=retract, retry={retry_interval_s:g}s",
+            f"Pump serial: reconnect enabled @ {baud} baud, protocol={protocol_mode} "
+            f"b=start c=stop a=retract, retry={retry_interval_s:g}s",
             flush=True,
         )
         bridge = AutoReconnectArduinoAbcPumpSerialBridge(
-            requested_port="auto",
+            requested_port=requested,
             baud=baud,
             retry_interval_s=retry_interval_s,
+            protocol_mode=protocol_mode,
         )
         bridge.warmup()
         status = bridge.status()
@@ -2104,6 +3791,87 @@ class LiveJpegStreamPublisher:
                 self.state.publish_thermal(jpeg)
 
 
+class StopIntentCoordinator:
+    """Keep motion blocked until every overlapping stop path has finished.
+
+    A plain ``threading.Event`` has no ownership.  If manual and automatic
+    stops overlap, either path can clear it while the other is still between
+    the physical stop and the CSV transition lock.  Tokens prevent that early
+    clear, while the latch keeps motion blocked until deferred CSV finalization
+    has actually completed.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._next_token = 0
+        self._active: dict[int, str] = {}
+        self._latched_session_id: int | None = None
+
+    def begin(self, reason: str) -> int:
+        with self._lock:
+            self._next_token += 1
+            token = self._next_token
+            self._active[token] = str(reason or "stop")
+            self._event.set()
+            return token
+
+    def finish(self, token: int) -> None:
+        with self._lock:
+            self._active.pop(int(token), None)
+            self._refresh_event_locked()
+
+    def latch_session(self, session_id: int) -> None:
+        """Keep motion blocked while one specific CSV session finalizes."""
+
+        parsed_session_id = int(session_id)
+        if parsed_session_id <= 0:
+            raise ValueError("session_id must be positive")
+        with self._lock:
+            if (
+                self._latched_session_id is not None
+                and self._latched_session_id != parsed_session_id
+            ):
+                raise RuntimeError(
+                    "cannot replace an active stop latch for another CSV session"
+                )
+            self._latched_session_id = parsed_session_id
+            self._event.set()
+
+    def clear_latch(self, session_id: int) -> bool:
+        """Release only the matching session latch after finalization ends."""
+
+        parsed_session_id = int(session_id)
+        with self._lock:
+            if self._latched_session_id != parsed_session_id:
+                return False
+            self._latched_session_id = None
+            self._refresh_event_locked()
+            return True
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        return self._event.wait(timeout)
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "stop_intent_active": self._event.is_set(),
+                "stop_intent_latched": self._latched_session_id is not None,
+                "stop_intent_latch_session_id": self._latched_session_id,
+                "stop_intent_owner_count": len(self._active),
+                "stop_intent_reasons": tuple(self._active.values()),
+            }
+
+    def _refresh_event_locked(self) -> None:
+        if self._latched_session_id is not None or self._active:
+            self._event.set()
+        else:
+            self._event.clear()
+
+
 class LiveStreamHandler(BaseHTTPRequestHandler):
     server_version = "AutoTitrationLiveStream/1.0"
 
@@ -2124,6 +3892,19 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         return getattr(self.server, "csv_buffer", None)  # type: ignore[attr-defined]
 
     @property
+    def capture_controller(self) -> "Mini2CaptureThread | None":
+        controller = getattr(self.server, "capture_controller", None)  # type: ignore[attr-defined]
+        return controller if isinstance(controller, Mini2CaptureThread) else None
+
+    @property
+    def csv_control_lock(self) -> Any:
+        return self.server.csv_control_lock  # type: ignore[attr-defined]
+
+    @property
+    def csv_stop_intent(self) -> StopIntentCoordinator:
+        return self.server.csv_stop_intent  # type: ignore[attr-defined]
+
+    @property
     def mobile_bridge(self) -> MobileBridge | None:
         return getattr(self.server, "mobile_bridge", None)  # type: ignore[attr-defined]
 
@@ -2136,6 +3917,35 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
     def pump_status_provider(self) -> Callable[[], dict[str, Any]] | None:
         provider = getattr(self.server, "pump_status_provider", None)  # type: ignore[attr-defined]
         return provider if callable(provider) else None
+
+    @property
+    def pump_emergency_stop_sender(self) -> Callable[[], dict[str, Any]] | None:
+        sender = getattr(self.server, "pump_emergency_stop_sender", None)  # type: ignore[attr-defined]
+        return sender if callable(sender) else None
+
+    def _preemptive_pump_stop(self) -> dict[str, Any] | None:
+        sender = self.pump_emergency_stop_sender
+        if sender is None:
+            return None
+        try:
+            return sender()
+        except Exception as exc:  # noqa: BLE001 - continue to the acknowledged guard stop path.
+            return {"sent": False, "status": "failed", "error": str(exc)}
+
+    @property
+    def auto_stop_controller(self) -> ColorChangeAutoStopController | None:
+        controller = getattr(self.server, "auto_stop_controller", None)  # type: ignore[attr-defined]
+        return controller if isinstance(controller, ColorChangeAutoStopController) else None
+
+    @property
+    def endpoint_pulse_runtime(self) -> EndpointPulseRuntime | None:
+        runtime = getattr(self.server, "endpoint_pulse_runtime", None)  # type: ignore[attr-defined]
+        return runtime if isinstance(runtime, EndpointPulseRuntime) else None
+
+    @property
+    def absolute_pump_safety_guard(self) -> AbsolutePumpSafetyGuard | None:
+        guard = getattr(self.server, "absolute_pump_safety_guard", None)  # type: ignore[attr-defined]
+        return guard if isinstance(guard, AbsolutePumpSafetyGuard) else None
 
     @property
     def roi_click_enabled(self) -> bool:
@@ -2168,6 +3978,9 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
             self._send_json(self.state.snapshot_metadata())
         elif path in {"/api/health", "/api/collector-health"}:
             self._send_json(self._collector_health())
+        elif path == "/api/remote/config":
+            config = getattr(self.server, "remote_recording_config", None)
+            self._send_json({"ok": True, "config": config})
         elif path == "/api/settings":
             self._send_json({"ok": True, "settings": self.controls.snapshot()})
         elif path == "/api/csv/status":
@@ -2203,16 +4016,28 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         mobile_status = None if self.mobile_bridge is None else self.mobile_bridge.status().get("mobile")
         pump_status_provider = self.pump_status_provider
         pump_status = None if pump_status_provider is None else pump_status_provider()
+        absolute_guard_status = (
+            None
+            if self.absolute_pump_safety_guard is None
+            else self.absolute_pump_safety_guard.status()
+        )
         if isinstance(pump_status, dict) and pump_status.get("enabled") and not pump_status.get("connected"):
             pump_message = str(pump_status.get("message") or "")
             if pump_message:
                 hints.insert(0, pump_message)
+        if (
+            isinstance(absolute_guard_status, dict)
+            and absolute_guard_status.get("absolute_guard_state") == "error"
+        ):
+            guard_error = str(absolute_guard_status.get("absolute_guard_error") or "")
+            hints.insert(0, f"펌프 절대 안전 가드 오류: {guard_error}")
         payload.update(
             {
                 "settings": self.controls.snapshot(),
                 "csv": None if self.csv_buffer is None else self.csv_buffer.status(),
                 "mobile": mobile_status,
                 "pump": pump_status,
+                "absolute_pump_guard": absolute_guard_status,
                 "mini2_unavailable": mini2_unavailable,
                 "action_hints": hints,
                 "warning": warnings,
@@ -2228,6 +4053,9 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
             )
             return
         path = urlparse(self.path).path
+        if path == "/api/remote/config":
+            self._handle_remote_config_post()
+            return
         if path == "/api/settings":
             self._handle_settings_post()
             return
@@ -2264,6 +4092,9 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         if path == "/api/pump/stop":
             self._handle_pump_command_post("stop")
             return
+        if path == "/api/pump/reset":
+            self._handle_pump_command_post("reset")
+            return
         if path == "/api/mobile/pair":
             self._handle_mobile_pair_post()
             return
@@ -2295,6 +4126,32 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             raise ValueError("JSON payload must be an object")
         return payload
+
+    def _handle_remote_config_post(self) -> None:
+        """Stage explicit notebook settings without issuing any pump commands."""
+        try:
+            payload = self._read_json_object()
+            if payload == {"clear": True}:
+                with self.csv_control_lock:
+                    self.server.remote_recording_config = None
+                self._send_json({"ok": True})
+                return
+            rate = _finite_float_or_none(payload.get("pump_rate_ml_per_s"))
+            if rate is None or rate <= 0:
+                raise ValueError("원격 설정에 유효한 펌프 유량이 필요합니다")
+            if str(payload.get("titration_type") or "") not in SUPPORTED_TITRATION_TYPES:
+                raise ValueError("원격 설정에 적정 종류가 필요합니다")
+            for key in ("auto_stop_enabled", "auto_stop_pulse_enabled", "auto_stop_slow_stage_enabled"):
+                _strict_optional_bool(payload, key, default=False)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        with self.csv_control_lock:
+            if self.csv_buffer is not None and self.csv_buffer.status().get("state") in {"recording", "finalizing"}:
+                self._send_json({"ok": False, "error": "녹화 종료 후 원격 설정을 저장하세요"}, status=HTTPStatus.CONFLICT)
+                return
+            self.server.remote_recording_config = payload
+        self._send_json({"ok": True})
 
     def _handle_settings_post(self) -> None:
         try:
@@ -2453,18 +4310,30 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
             return
         self._send_json(response_payload)
 
-    def _pump_command_for_action(self, action: str) -> str:
+    def _pump_command_for_action(self, action: str, *, direction_mode: str = "normal") -> str:
         command_map = getattr(self.server, "pump_command_map", {})  # type: ignore[attr-defined]
         if isinstance(command_map, dict) and action in command_map:
             command = str(command_map[action])
         else:
-            command = {"start": "b", "retract": "a", "stop": "c"}[action]
-        if command not in {"a", "b", "c"}:
+            command = {"start": "b", "retract": "a", "stop": "c", "reset": "r"}[action]
+        normalized_mode = str(direction_mode or "normal").strip().lower()
+        if normalized_mode not in {"normal", "reversed"}:
+            raise ValueError("pump_direction_mode must be normal or reversed")
+        if normalized_mode == "reversed" and action in {"start", "retract"}:
+            command = "a" if command == "b" else "b"
+        if command not in {"a", "b", "c", "r"}:
             raise ValueError(f"invalid pump command for {action}: {command}")
         return command
 
-    def _dispatch_pump_command(self, action: str) -> dict[str, Any]:
-        command = self._pump_command_for_action(action)
+    def _dispatch_pump_command(
+        self,
+        action: str,
+        *,
+        safety_limits: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        limits = safety_limits or {}
+        direction_mode = str(limits.get("pump_direction_mode") or "normal")
+        command = self._pump_command_for_action(action, direction_mode=direction_mode)
         sender = self.pump_command_sender
         base = {
             "enabled": sender is not None,
@@ -2475,6 +4344,158 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         }
         if sender is None:
             return {**base, "status": "disabled", "message": "PUMP_SERIAL_PORT 미설정"}
+        if action in {"start", "retract"} and bool(limits.get("manual_unbounded")):
+            try:
+                result = sender(command)
+            except Exception as exc:  # noqa: BLE001 - pump failure must be browser-readable.
+                provider = self.pump_status_provider
+                diagnostic = None if provider is None else provider()
+                return {**base, "status": "error", "error": str(exc), "diagnostic": diagnostic}
+            extra = result if isinstance(result, dict) else {}
+            return {
+                **base,
+                **extra,
+                "enabled": True,
+                "sent": True,
+                "status": "sent",
+                "manual_unbounded": True,
+            }
+        guard = self.absolute_pump_safety_guard
+        if guard is None:
+            return {
+                **base,
+                "status": "error",
+                "error": "absolute pump safety guard is unavailable; pump command rejected",
+            }
+        if action in {"start", "retract"}:
+            current_csv = None
+            if self.csv_buffer is not None:
+                current_csv = self.csv_buffer.status()
+                if current_csv.get("finalizing") or current_csv.get("state") == "finalizing":
+                    return {
+                        **base,
+                        "status": "error",
+                        "error": (
+                            "CSV finalization is in progress; pump start/retract is rejected "
+                            "until the session is fully closed"
+                        ),
+                    }
+            rate = _finite_float_or_none(limits.get("maximum_pump_rate_ml_per_s"))
+            if rate is None or rate <= 0:
+                return {
+                    **base,
+                    "status": "error",
+                    "error": (
+                        "maximum_pump_rate_ml_per_s (mL/s) is required to arm "
+                        "the absolute volume guard"
+                    ),
+                    "absolute_guard": guard.status(),
+                }
+            existing_guard = guard.status()
+            if existing_guard.get("absolute_guard_state") in {
+                "arming",
+                "armed_running",
+                "stopping",
+                "stop_unconfirmed",
+            } or existing_guard.get("absolute_guard_armed"):
+                return {
+                    **base,
+                    "status": "error",
+                    "error": "pump is already active; stop it explicitly before another start",
+                    "absolute_guard": existing_guard,
+                }
+            requested_volume = limits.get(
+                "absolute_maximum_volume_ml",
+                ABSOLUTE_PUMP_MAX_VOLUME_ML,
+            )
+            requested_volume_value = _finite_float_or_none(requested_volume)
+            session_used_volume = 0.0
+            if current_csv is not None:
+                if current_csv.get("recording"):
+                    session_used_volume = (
+                        _finite_float_or_none(current_csv.get("injected_volume_ml")) or 0.0
+                    )
+                    if requested_volume_value is not None:
+                        requested_volume = requested_volume_value - session_used_volume
+                        if requested_volume <= 0:
+                            return {
+                                **base,
+                                "status": "error",
+                                "error": "recording-session pump volume budget is exhausted",
+                                "session_used_volume_ml": round(session_used_volume, 6),
+                                "session_maximum_volume_ml": round(requested_volume_value, 6),
+                                "absolute_guard": existing_guard,
+                            }
+            try:
+                guard_status = guard.start(
+                    direction_command=command,
+                    maximum_pump_rate_ml_per_s=rate,
+                    requested_maximum_volume_ml=requested_volume,
+                    requested_maximum_run_time_s=limits.get(
+                        "absolute_maximum_run_time_s",
+                        ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+                    ),
+                    absolute_deadline_monotonic_s=_finite_float_or_none(
+                        limits.get("_absolute_session_deadline_monotonic_s")
+                    ),
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                return {
+                    **base,
+                    "status": "error",
+                    "error": str(exc),
+                    "absolute_guard": guard.status(),
+                }
+            if not guard_status.get("absolute_guard_armed"):
+                return {
+                    **base,
+                    "status": "error",
+                    "error": guard_status.get("absolute_guard_error")
+                    or "firmware guard could not be armed",
+                    "absolute_guard": guard_status,
+                }
+            return {
+                **base,
+                "enabled": True,
+                "sent": True,
+                "status": "sent",
+                "session_used_volume_ml": round(session_used_volume, 6),
+                "session_remaining_volume_ml": round(
+                    float(guard_status.get("absolute_guard_effective_maximum_volume_ml") or 0.0),
+                    6,
+                ),
+                "absolute_guard": guard_status,
+            }
+        if action == "stop":
+            preemptive = None
+
+            def emergency_stop() -> None:
+                nonlocal preemptive
+                preemptive = self._preemptive_pump_stop()
+
+            guard_status = guard.stop(
+                "manual_pump_stop",
+                emergency_stop=emergency_stop,
+            )
+            sent = guard_status.get("absolute_guard_stop_status") == "sent"
+            return {
+                **base,
+                "enabled": True,
+                "sent": sent,
+                "status": "sent" if sent else "error",
+                "error": "" if sent else guard_status.get("absolute_guard_error", ""),
+                "preemptive_stop": preemptive,
+                "absolute_guard": guard_status,
+            }
+        if action == "reset":
+            try:
+                result = sender(command)
+            except Exception as exc:  # noqa: BLE001 - pump failure must be browser-readable.
+                provider = self.pump_status_provider
+                diagnostic = None if provider is None else provider()
+                return {**base, "status": "error", "error": str(exc), "diagnostic": diagnostic}
+            extra = result if isinstance(result, dict) else {}
+            return {**base, **extra, "enabled": True, "sent": True, "status": "sent"}
         try:
             result = sender(command)
         except Exception as exc:  # noqa: BLE001 - pump failure must be browser-readable.
@@ -2485,59 +4506,552 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         return {**base, **extra, "enabled": True, "sent": True, "status": "sent"}
 
     def _handle_pump_command_post(self, action: str) -> None:
-        try:
-            # Read and ignore the JSON body so clients can send `{}` with the
-            # same fetch helper used for CSV buttons.
+        # Start/retract must never queue behind a CSV start/stop transition.
+        # In particular, CSV stop drains the capture FIFO before it exposes
+        # finalizing/stopped state. Rejecting a concurrent motion request here
+        # prevents it from starting immediately after that drain completes.
+        payload: dict[str, Any] = {}
+        if action in {"start", "retract"}:
             try:
-                self._read_json_object()
-            except Exception:
-                pass
-            pump_status = self._dispatch_pump_command(action)
+                payload = self._read_json_object()
+            except Exception as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc)},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+        if action == "retract":
+            # Match the automatic callback's callback-gate -> CSV-lock order.
+            # Waiting for controller callbacks while holding csv_control_lock
+            # would deadlock against an on_trigger callback finishing a stop.
+            if self.auto_stop_controller is not None:
+                self.auto_stop_controller.disarm("manual_pump_retract")
+            if self.endpoint_pulse_runtime is not None:
+                self.endpoint_pulse_runtime.disarm("manual_pump_retract")
+        if action in {"start", "retract"}:
+            acquired = self.csv_control_lock.acquire(blocking=False)
+            if not acquired:
+                self._send_json(
+                    {
+                        "ok": False,
+                        "pump": {
+                            "action": action,
+                            "status": "error",
+                            "error": (
+                                "CSV start/stop transition is in progress; "
+                                "pump start/retract is rejected"
+                            ),
+                        },
+                    },
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
+            try:
+                if self.csv_stop_intent.is_set():
+                    self._send_json(
+                        {
+                            "ok": False,
+                            "pump": {
+                                "action": action,
+                                "status": "error",
+                                "error": (
+                                    "CSV stop/finalization intent is active; "
+                                    "pump start/retract is rejected"
+                                ),
+                            },
+                        },
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
+                self._handle_pump_command_post_unlocked(action, payload=payload)
+            finally:
+                self.csv_control_lock.release()
+            return
+        self._handle_pump_command_post_unlocked(action, payload=payload)
+
+    def _handle_pump_command_post_unlocked(
+        self,
+        action: str,
+        *,
+        payload: dict[str, Any],
+    ) -> None:
+        try:
+            pump_status = self._dispatch_pump_command(action, safety_limits=payload)
+            if self.csv_buffer is not None and self.csv_buffer.status().get("recording"):
+                if action == "start" and pump_status.get("sent"):
+                    direction_written_s = _finite_float_or_none(
+                        (pump_status.get("absolute_guard") or {}).get(
+                            "direction_written_monotonic_s"
+                        )
+                    )
+                    try:
+                        self.csv_buffer.resume_commanded_pump_timeline(
+                            now_monotonic_s=direction_written_s
+                        )
+                    except RuntimeError:
+                        self.csv_buffer.begin_commanded_pump_timeline(
+                            now_monotonic_s=direction_written_s, running=True
+                        )
+                elif action in {"stop", "retract"}:
+                    self.csv_buffer.pause_commanded_pump_timeline(state=action)
+            if action == "stop" and self.auto_stop_controller is not None:
+                self.auto_stop_controller.disarm(f"manual_pump_{action}")
+            if action == "stop" and self.endpoint_pulse_runtime is not None:
+                self.endpoint_pulse_runtime.disarm(f"manual_pump_{action}")
         except Exception as exc:  # noqa: BLE001 - compact browser-readable error.
             self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
         self._send_json({"ok": pump_status.get("status") != "error", "pump": pump_status})
 
     def _handle_csv_start_post(self) -> None:
+        with self.csv_control_lock:
+            self._handle_csv_start_post_locked()
+
+    def _handle_csv_start_post_locked(self) -> None:
         if self.csv_buffer is None:
-            self._send_json({"ok": False, "error": "CSV buffer is not enabled", "csv": None}, status=HTTPStatus.NOT_FOUND)
-            return
-        try:
-            try:
-                payload = self._read_json_object()
-            except Exception:
-                payload = {}
-            roi_status = self.roi_state.start_recording()
-            csv_status = self.csv_buffer.start_recording(
-                roi_session_id=roi_status["roi_session_id"],
-                pump_rate_ml_per_s=payload.get("pump_rate_ml_per_s"),
-                theoretical_equivalence_volume_ml=payload.get("theoretical_equivalence_volume_ml"),
-                equivalence_window_ml=payload.get("equivalence_window_ml", 0.05),
-                experiment_metadata=start_payload_experiment_metadata(payload),
-                event_note=payload.get("event_note"),
-            )
-        except Exception as exc:  # noqa: BLE001 - compact browser-readable error.
             self._send_json(
-                {"ok": False, "error": str(exc), "csv": self.csv_buffer.status(), "roi": self.roi_state.status()},
+                {"ok": False, "error": "CSV buffer is not enabled", "csv": None},
+                status=HTTPStatus.NOT_FOUND,
+            )
+            return
+        if self.csv_stop_intent.is_set():
+            self._send_json(
+                {
+                    "ok": False,
+                    "error": "CSV stop/finalization intent is active",
+                    "csv": self.csv_buffer.status(),
+                },
                 status=HTTPStatus.CONFLICT,
             )
             return
-        pump_status = self._dispatch_pump_command("start")
-        if pump_status.get("enabled") and not pump_status.get("sent"):
-            pump_status["recording_continues_without_pump"] = True
-            pump_status["message"] = pump_status.get("error") or pump_status.get("message") or "pump command failed"
-            self._send_json({"ok": True, "warning": "pump command failed; CSV recording continues", "csv": csv_status, "roi": roi_status, "pump": pump_status})
+        try:
+            payload = self._read_json_object()
+            auto_stop_requested = _strict_optional_bool(
+                payload, "auto_stop_enabled", default=False
+            )
+            pulse_requested = _strict_optional_bool(
+                payload, "auto_stop_pulse_enabled", default=auto_stop_requested
+            )
+            slow_stage_requested = _strict_optional_bool(
+                payload, "auto_stop_slow_stage_enabled", default=False
+            )
+            pulse_steps = _strict_optional_int(
+                payload, "auto_stop_pulse_steps", default=ENDPOINT_PULSE_DEFAULT_STEPS,
+                minimum=1, maximum=ENDPOINT_PULSE_MAX_STEPS,
+            )
+            slow_rate_steps = _strict_optional_int(
+                payload, "auto_stop_slow_rate_steps_per_s", default=25,
+                minimum=1, maximum=100,
+            )
+            slow_onset_score = _strict_optional_number(
+                payload, "auto_stop_slow_onset_score", default=0.10
+            )
+            slow_onset_duration_s = _strict_optional_number(
+                payload, "auto_stop_slow_onset_duration_s", default=0.50
+            )
+            pulse_approach_score = _strict_optional_number(
+                payload, "auto_stop_pulse_approach_score",
+                default=ENDPOINT_PULSE_DEFAULT_APPROACH_SCORE,
+            )
+            pulse_settle_time_s = _strict_optional_number(
+                payload, "auto_stop_pulse_settle_time_s",
+                default=ENDPOINT_PULSE_DEFAULT_SETTLE_S,
+            )
+            absolute_run_time_s = _strict_optional_number(
+                payload, "absolute_maximum_run_time_s",
+                default=ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+            )
+            if not 0 < pulse_approach_score < 1:
+                raise ValueError("auto_stop_pulse_approach_score must be in 0..1 exclusive")
+            if pulse_settle_time_s < 0 or slow_onset_duration_s < 0:
+                raise ValueError("staged dosing durations must be non-negative")
+            if absolute_run_time_s <= 0:
+                raise ValueError("absolute_maximum_run_time_s must be positive")
+            if slow_stage_requested and not 0 <= slow_onset_score < pulse_approach_score:
+                raise ValueError(
+                    "auto_stop_slow_onset_score must be lower than auto_stop_pulse_approach_score"
+                )
+        except Exception as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
-        self._send_json({"ok": True, "csv": csv_status, "roi": roi_status, "pump": pump_status})
+        csv_started_here = False
+        roi_started_here = False
+        capture_started_here = False
+        pump_started_here = False
+        csv_status: dict[str, Any] = {}
+        roi_status: dict[str, Any] = {}
+        capture_status: dict[str, Any] | None = None
+        pump_status: dict[str, Any] = {}
+        auto_stop_status: dict[str, Any] | None = None
+        recording_origin_monotonic_s = time.monotonic()
+        recording_origin_perf_s = time.perf_counter()
+        absolute_session_deadline_s = recording_origin_monotonic_s + min(
+            absolute_run_time_s, ABSOLUTE_PUMP_MAX_RUN_TIME_S
+        )
+        payload = {
+            **payload,
+            "_absolute_session_deadline_monotonic_s": absolute_session_deadline_s,
+        }
+
+        def rollback_started_session(reason: str) -> None:
+            if self.endpoint_pulse_runtime is not None:
+                self.endpoint_pulse_runtime.disarm(reason)
+            if self.auto_stop_controller is not None:
+                self.auto_stop_controller.disarm(reason)
+            guard = self.absolute_pump_safety_guard
+            if pump_started_here and guard is not None:
+                guard.stop(reason)
+            if csv_started_here:
+                try:
+                    self.csv_buffer.pause_commanded_pump_timeline(state="stopped")
+                except RuntimeError:
+                    pass
+            if capture_started_here and self.capture_controller is not None:
+                try:
+                    drained = self.capture_controller.end_recording(
+                        int(csv_status.get("session_id") or 0)
+                    )
+                    if csv_started_here:
+                        self.csv_buffer.request_stop()
+                        if bool(drained.get("drained")):
+                            self.csv_buffer.complete_stop()
+                except Exception:
+                    if csv_started_here:
+                        self.csv_buffer.stop_recording()
+            elif csv_started_here and self.csv_buffer.status().get("state") in {
+                "recording",
+                "finalizing",
+            }:
+                self.csv_buffer.stop_recording()
+            if roi_started_here and self.roi_state.status().get("roi_recording"):
+                self.roi_state.stop_recording()
+
+        try:
+            current_csv = self.csv_buffer.status()
+            if current_csv.get("state") in {"recording", "finalizing"}:
+                raise RuntimeError(f"CSV session is already {current_csv['state']}")
+
+            maximum_flow_rate = _finite_float_or_none(
+                payload.get("maximum_pump_rate_ml_per_s")
+            )
+            nominal_flow_rate = _finite_float_or_none(payload.get("pump_rate_ml_per_s"))
+            absolute_maximum_volume = _finite_float_or_none(
+                payload.get("absolute_maximum_volume_ml")
+            )
+            pulse_ml_per_step_upper_bound = _finite_float_or_none(
+                payload.get("pulse_ml_per_step_upper_bound")
+            )
+            pulse_nominal_ml_per_step = _finite_float_or_none(
+                payload.get("pulse_nominal_ml_per_step")
+            )
+            if auto_stop_requested:
+                if self.pump_command_sender is None:
+                    raise RuntimeError("automatic stop requires a connected Arduino pump")
+                provider = self.pump_status_provider
+                pump_diagnostic = None if provider is None else provider()
+                if (
+                    isinstance(pump_diagnostic, Mapping)
+                    and pump_diagnostic.get("supports_step_pulse") is False
+                ):
+                    raise RuntimeError(
+                        "automatic STEP stop requires the acknowledged web-control firmware; "
+                        "legacy a/b/c firmware remains available for manual pump buttons only"
+                    )
+                if slow_stage_requested and (
+                    not isinstance(pump_diagnostic, Mapping)
+                    or pump_diagnostic.get("supports_variable_rate") is not True
+                ):
+                    raise RuntimeError(
+                        "optional slow stage is unsupported by the connected firmware; "
+                        "the V query must return exactly PUMP SPEED 1 before any pump movement"
+                    )
+                if self.auto_stop_controller is None or self.endpoint_pulse_runtime is None:
+                    raise RuntimeError("automatic stop controller is unavailable")
+                if maximum_flow_rate is None or maximum_flow_rate <= 0:
+                    raise ValueError(
+                        "maximum_pump_rate_ml_per_s is required for automatic pumping"
+                    )
+                if nominal_flow_rate is not None and maximum_flow_rate < nominal_flow_rate:
+                    raise ValueError(
+                        "maximum_pump_rate_ml_per_s must be at least pump_rate_ml_per_s"
+                    )
+                if absolute_maximum_volume is None or absolute_maximum_volume <= 0:
+                    raise ValueError(
+                        "absolute_maximum_volume_ml is required for automatic pumping"
+                    )
+                if pulse_requested and (
+                    pulse_ml_per_step_upper_bound is None
+                    or pulse_ml_per_step_upper_bound <= 0
+                ):
+                    raise ValueError(
+                        "pulse_ml_per_step_upper_bound is required for pulse dosing"
+                    )
+                configured_pulse_direction = str(
+                    getattr(self.server, "pump_pulse_direction", "b")
+                )
+                detected_pulse_direction = (
+                    str(pump_diagnostic.get("firmware_pulse_direction") or "")
+                    if isinstance(pump_diagnostic, Mapping)
+                    else ""
+                )
+                if (
+                    pulse_requested
+                    and detected_pulse_direction
+                    and detected_pulse_direction != configured_pulse_direction
+                ):
+                    raise ValueError(
+                        "connected firmware STEP direction does not match the configured "
+                        f"direction: firmware={detected_pulse_direction} "
+                        f"configured={configured_pulse_direction}"
+                    )
+                if pulse_requested and self._pump_command_for_action(
+                    "start",
+                    direction_mode=str(payload.get("pump_direction_mode") or "normal"),
+                ) != configured_pulse_direction:
+                    raise ValueError(
+                        "automatic pulse dosing direction does not match the configured "
+                        f"firmware STEP direction {configured_pulse_direction}"
+                    )
+
+            roi_status = self.roi_state.start_recording()
+            roi_started_here = True
+            csv_status = self.csv_buffer.start_recording(
+                roi_session_id=roi_status["roi_session_id"],
+                pump_rate_ml_per_s=payload.get("pump_rate_ml_per_s"),
+                theoretical_equivalence_volume_ml=payload.get(
+                    "theoretical_equivalence_volume_ml"
+                ),
+                equivalence_window_ml=payload.get("equivalence_window_ml", 0.05),
+                experiment_metadata=start_payload_experiment_metadata(payload),
+                event_note=payload.get("event_note"),
+                started_monotonic_s=recording_origin_perf_s,
+                capture_session_required=self.capture_controller is not None,
+            )
+            csv_started_here = True
+            # Baseline frames are recorded while the motor is physically
+            # stopped, so the first second contributes exactly 0 mL.
+            self.csv_buffer.begin_commanded_pump_timeline(running=False)
+            if self.capture_controller is not None:
+                capture_status = self.capture_controller.begin_recording(
+                    int(csv_status["session_id"])
+                )
+                capture_started_here = True
+
+            confirmation_delay_s = _finite_float_or_none(
+                payload.get("auto_stop_confirmation_delay_s")
+            )
+            requested_auto_maximum = _finite_float_or_none(
+                payload.get("auto_stop_maximum_volume_ml")
+            )
+            if requested_auto_maximum is None:
+                requested_auto_maximum = absolute_maximum_volume
+            maximum_volume_ml = (
+                AUTO_STOP_MAX_VOLUME_ML
+                if requested_auto_maximum is None
+                else min(requested_auto_maximum, ABSOLUTE_PUMP_MAX_VOLUME_ML)
+            )
+
+            if self.auto_stop_controller is not None:
+                auto_stop_status = self.auto_stop_controller.arm(
+                    session_id=int(csv_status["session_id"]),
+                    requested=auto_stop_requested,
+                    recording_started=True,
+                    titration_type=str(payload.get("titration_type") or ""),
+                    confirmation_delay_s=AUTO_STOP_CONFIRMATION_SECONDS
+                    if confirmation_delay_s is None
+                    else confirmation_delay_s,
+                    maximum_volume_ml=maximum_volume_ml,
+                )
+
+            if auto_stop_requested:
+                deadline = time.monotonic() + AUTO_STOP_BASELINE_START_TIMEOUT_S
+                while time.monotonic() < deadline:
+                    auto_stop_status = self.auto_stop_controller.status()
+                    state = str(auto_stop_status.get("auto_stop_state") or "")
+                    if bool(auto_stop_status.get("auto_stop_baseline_ready")):
+                        if state in {"armed", "armed_confirming"}:
+                            break
+                        if state in {"armed_safety_only", "error", "unavailable"}:
+                            raise RuntimeError(
+                                "automatic stop baseline/model validation failed: "
+                                f"{auto_stop_status.get('auto_stop_reason') or state}"
+                            )
+                    elif state in {"error", "unavailable"}:
+                        raise RuntimeError(
+                            "automatic stop calibration failed: "
+                            f"{auto_stop_status.get('auto_stop_reason') or state}"
+                        )
+                    time.sleep(0.02)
+                else:
+                    raise RuntimeError(
+                        "automatic stop baseline timed out before the pump was started"
+                    )
+
+            pump_status = self._dispatch_pump_command("start", safety_limits=payload)
+            pump_started_here = bool(pump_status.get("sent"))
+            if pump_started_here:
+                self.csv_buffer.resume_commanded_pump_timeline(
+                    now_monotonic_s=_finite_float_or_none(
+                        (pump_status.get("absolute_guard") or {}).get(
+                            "direction_written_monotonic_s"
+                        )
+                    )
+                )
+            elif auto_stop_requested:
+                raise RuntimeError(
+                    str(
+                        pump_status.get("error")
+                        or pump_status.get("message")
+                        or "pump command failed"
+                    )
+                )
+
+            if self.endpoint_pulse_runtime is not None:
+                pulse_status = self.endpoint_pulse_runtime.arm(
+                    session_id=int(csv_status["session_id"]),
+                    requested=auto_stop_requested and pulse_requested,
+                    pump_started=pump_started_here,
+                    pump_rate_ml_per_s=nominal_flow_rate,
+                    maximum_pump_rate_ml_per_s=maximum_flow_rate,
+                    pulse_ml_per_step_upper_bound=pulse_ml_per_step_upper_bound,
+                    maximum_volume_ml=maximum_volume_ml,
+                    pulse_nominal_ml_per_step=pulse_nominal_ml_per_step,
+                    dispense_direction=self._pump_command_for_action(
+                        "start",
+                        direction_mode=str(payload.get("pump_direction_mode") or "normal"),
+                    ),
+                    approach_score=pulse_approach_score,
+                    pulse_steps=pulse_steps,
+                    settle_time_s=pulse_settle_time_s,
+                    slow_stage_enabled=slow_stage_requested,
+                    slow_onset_score=slow_onset_score,
+                    slow_onset_duration_s=slow_onset_duration_s,
+                    slow_rate_steps_per_s=slow_rate_steps,
+                    absolute_maximum_run_time_s=_finite_float_or_none(
+                        payload.get("absolute_maximum_run_time_s")
+                    )
+                    or ABSOLUTE_PUMP_MAX_RUN_TIME_S,
+                    absolute_deadline_monotonic_s=absolute_session_deadline_s,
+                )
+                if auto_stop_requested and pulse_requested and str(
+                    pulse_status.get("auto_stop_pulse_state") or ""
+                ) == "unavailable":
+                    raise RuntimeError(
+                        "pulse dosing could not be armed: "
+                        f"{pulse_status.get('auto_stop_pulse_reason') or 'invalid settings'}"
+                    )
+
+            csv_status = self.csv_buffer.status()
+        except Exception as exc:  # noqa: BLE001 - compact browser-readable error.
+            rollback_started_session("recording_start_failed")
+            self._send_json(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "csv": self.csv_buffer.status(),
+                    "roi": self.roi_state.status(),
+                    "pump": pump_status or None,
+                    "auto_stop": auto_stop_status,
+                },
+                status=HTTPStatus.CONFLICT,
+            )
+            return
+
+        if pump_status.get("enabled") and not pump_started_here:
+            pump_status["recording_continues_without_pump"] = True
+            pump_status["message"] = (
+                pump_status.get("error")
+                or pump_status.get("message")
+                or "pump command failed"
+            )
+            self._send_json(
+                {
+                    "ok": True,
+                    "warning": "pump command failed; CSV recording continues",
+                    "csv": csv_status,
+                    "roi": roi_status,
+                    "pump": pump_status,
+                    "capture": capture_status,
+                    "auto_stop": auto_stop_status,
+                }
+            )
+            return
+        self._send_json(
+            {
+                "ok": True,
+                "csv": csv_status,
+                "roi": roi_status,
+                "pump": pump_status,
+                "capture": capture_status,
+                "auto_stop": auto_stop_status,
+            }
+        )
 
     def _handle_csv_stop_post(self) -> None:
         if self.csv_buffer is None:
-            self._send_json({"ok": False, "error": "CSV buffer is not enabled", "csv": None}, status=HTTPStatus.NOT_FOUND)
+            self._send_json(
+                {"ok": False, "error": "CSV buffer is not enabled", "csv": None},
+                status=HTTPStatus.NOT_FOUND,
+            )
             return
-        pump_status = self._dispatch_pump_command("stop")
-        csv_status = self.csv_buffer.stop_recording()
+        # Publish stop intent before any serial or CSV-lock operation. Motion
+        # requests observe this latch after acquiring the transition lock, so
+        # none can enter the pre-lock stop gap.
+        stop_token = self.csv_stop_intent.begin("manual_recording_stop")
+        stop_session_id = 0
+        try:
+            current_before_stop = self.csv_buffer.status()
+            if current_before_stop.get("state") in {"recording", "finalizing"}:
+                stop_session_id = int(
+                    current_before_stop.get("session_id") or 0
+                )
+                if stop_session_id > 0:
+                    self.csv_stop_intent.latch_session(stop_session_id)
+            # Cancel an in-flight pump start before waiting for the CSV
+            # transition lock. AbsolutePumpSafetyGuard.stop() increments its
+            # generation before waiting on the serial command lock, so a start
+            # that has only armed G cannot continue into a direction command.
+            # The emergency sender also puts c on the wire immediately if
+            # motion was already attempted.
+            pump_status = self._dispatch_pump_command("stop")
+            auto_stop_status = None
+            if self.auto_stop_controller is not None:
+                auto_stop_status = self.auto_stop_controller.disarm(
+                    "manual_recording_stop"
+                )
+            if self.endpoint_pulse_runtime is not None:
+                self.endpoint_pulse_runtime.disarm("manual_recording_stop")
+            with self.csv_control_lock:
+                self._handle_csv_stop_post_locked(
+                    pump_status=pump_status,
+                    auto_stop_status=auto_stop_status,
+                    stop_session_id=stop_session_id,
+                )
+        finally:
+            self.csv_stop_intent.finish(stop_token)
+
+    def _handle_csv_stop_post_locked(
+        self,
+        *,
+        pump_status: dict[str, Any],
+        auto_stop_status: dict[str, Any] | None,
+        stop_session_id: int,
+    ) -> None:
+        assert self.csv_buffer is not None
+        self.csv_buffer.pause_commanded_pump_timeline(state="stopped")
+        current_status = self.csv_buffer.status()
+        capture_status = None
+        if self.capture_controller is None:
+            csv_status = self.csv_buffer.stop_recording()
+        else:
+            capture_status = self.capture_controller.end_recording(int(current_status.get("session_id") or 0))
+            csv_status = self.csv_buffer.request_stop()
+            if bool(capture_status.get("drained")):
+                csv_status = self.csv_buffer.complete_stop()
+        if not csv_status.get("recording") and not csv_status.get("finalizing"):
+            self.csv_stop_intent.clear_latch(stop_session_id)
         roi_status = self.roi_state.stop_recording()
-        self._send_json({"ok": True, "csv": csv_status, "roi": roi_status, "pump": pump_status})
+        self._send_json({"ok": True, "csv": csv_status, "roi": roi_status, "pump": pump_status, "capture": capture_status, "auto_stop": auto_stop_status})
 
     def _send_mobile_status(self) -> None:
         if self.mobile_bridge is None:
@@ -2603,14 +5117,30 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
         if self.csv_buffer is None:
             self._send_json({"ok": False, "error": "CSV buffer is not enabled", "csv": None}, status=HTTPStatus.NOT_FOUND)
             return
-        self._send_json({"ok": True, "csv": self.csv_buffer.status()})
+        self._send_json(
+            {
+                "ok": True,
+                "csv": self.csv_buffer.status(),
+                "absolute_pump_guard": None
+                if self.absolute_pump_safety_guard is None
+                else self.absolute_pump_safety_guard.status(),
+            }
+        )
 
     def _send_csv_download(self) -> None:
         if self.csv_buffer is None:
             self._send_json({"ok": False, "error": "CSV buffer is not enabled"}, status=HTTPStatus.NOT_FOUND)
             return
-        body = self.csv_buffer.to_csv_bytes()
-        filename = self.csv_buffer.download_filename()
+        with self.csv_control_lock:
+            status = self.csv_buffer.status()
+            if status.get("finalizing") or status.get("state") == "finalizing":
+                self._send_json(
+                    {"ok": False, "error": "CSV is finalizing preserved 25 fps frames", "csv": status},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
+            body = self.csv_buffer.to_csv_bytes()
+            filename = self.csv_buffer.download_filename()
         self.send_response(HTTPStatus.OK.value)
         self._send_cors_headers()
         self.send_header("Content-Type", "text/csv; charset=utf-8")
@@ -2678,8 +5208,16 @@ def start_live_stream_server(
     csv_buffer: LiveCsvBuffer | None = None,
     enable_mobile_bridge: bool = True,
     pump_command_sender: Callable[[str], Any] | None = None,
+    pump_guarded_direction_sender: Callable[
+        [str, Callable[[], bool]], Any
+    ] | None = None,
+    pump_emergency_stop_sender: Callable[[], dict[str, Any]] | None = None,
     pump_command_map: dict[str, str] | None = None,
+    pump_pulse_direction: str = "b",
     pump_status_provider: Callable[[], dict[str, Any]] | None = None,
+    auto_stop_controller: ColorChangeAutoStopController | None = None,
+    endpoint_pulse_runtime: EndpointPulseRuntime | None = None,
+    absolute_pump_safety_guard: AbsolutePumpSafetyGuard | None = None,
 ) -> LiveStreamServerHandle:
     server = ThreadingHTTPServer((host, port), LiveStreamHandler)
     server.live_state = state  # type: ignore[attr-defined]
@@ -2687,10 +5225,32 @@ def start_live_stream_server(
     server.roi_click_enabled = bool(roi_click_enabled)  # type: ignore[attr-defined]
     server.live_controls = controls if controls is not None else LiveControlState()  # type: ignore[attr-defined]
     server.csv_buffer = csv_buffer  # type: ignore[attr-defined]
+    server.csv_control_lock = threading.RLock()  # type: ignore[attr-defined]
+    server.csv_stop_intent = StopIntentCoordinator()  # type: ignore[attr-defined]
     server.mobile_bridge = MobileBridge(csv_buffer=csv_buffer) if enable_mobile_bridge and csv_buffer is not None else None  # type: ignore[attr-defined]
     server.pump_command_sender = pump_command_sender  # type: ignore[attr-defined]
+    server.pump_emergency_stop_sender = pump_emergency_stop_sender  # type: ignore[attr-defined]
     server.pump_status_provider = pump_status_provider  # type: ignore[attr-defined]
-    server.pump_command_map = pump_command_map or {"start": "b", "retract": "a", "stop": "c"}  # type: ignore[attr-defined]
+    server.auto_stop_controller = auto_stop_controller  # type: ignore[attr-defined]
+    server.endpoint_pulse_runtime = endpoint_pulse_runtime  # type: ignore[attr-defined]
+    server.absolute_pump_safety_guard = (  # type: ignore[attr-defined]
+        absolute_pump_safety_guard
+        if absolute_pump_safety_guard is not None
+        else (
+            AbsolutePumpSafetyGuard(
+                pump_command_sender,
+                direction_sender=pump_guarded_direction_sender,
+            )
+            if pump_command_sender is not None
+            else None
+        )
+    )
+    server.pump_command_map = pump_command_map or {"start": "b", "retract": "a", "stop": "c", "reset": "r"}  # type: ignore[attr-defined]
+    normalized_pulse_direction = str(pump_pulse_direction or "b").strip().lower()
+    if normalized_pulse_direction not in {"a", "b"}:
+        raise ValueError("pump_pulse_direction must be a or b")
+    server.pump_pulse_direction = normalized_pulse_direction  # type: ignore[attr-defined]
+    server.capture_controller = None  # type: ignore[attr-defined]
     server.visible_frame_provider = None  # type: ignore[attr-defined]
     server.thermal_matrix_provider = None  # type: ignore[attr-defined]
     server.visible_candidate_detector = None  # type: ignore[attr-defined]
@@ -2737,7 +5297,12 @@ class VisibleFrameBuffer:
 
 
 class Mini2CaptureThread:
-    """Background Mini2 capture so 25fps reads overlap DLL conversion."""
+    """Background Mini2 capture with separate preview and recording paths.
+
+    Preview delivery remains latest-only so the browser never accumulates stale
+    video.  Frames captured during an explicit recording session are also put in
+    an ordered FIFO and are never silently evicted.
+    """
 
     def __init__(
         self,
@@ -2745,40 +5310,74 @@ class Mini2CaptureThread:
         *,
         start_time: float,
         max_queue: int = 1,
+        max_recording_queue: int = 2048,
         on_frame: Callable[[CapturedMini2Frame], None] | None = None,
     ) -> None:
         if max_queue <= 0:
             raise ValueError("max_queue must be positive")
+        if max_recording_queue <= 0:
+            raise ValueError("max_recording_queue must be positive")
         self.reader = reader
         self.start_time = start_time
         self.on_frame = on_frame
         self.queue: queue.Queue[CapturedMini2Frame] = queue.Queue(maxsize=max_queue)
+        self.max_recording_queue = int(max_recording_queue)
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="mini2-capture", daemon=True)
         self._error: BaseException | None = None
-        self._dropped_frames = 0
+        self._preview_dropped_frames = 0
+        self._recording_dropped_frames = 0
         self._condition = threading.Condition()
         self._latest_capture: CapturedMini2Frame | None = None
+        self._recording_frames: deque[CapturedMini2Frame] = deque()
+        self._active_recording_session_id = 0
+        self._last_recording_session_id = 0
+        self._last_recording_frame_id: int | None = None
+        self._processed_recording_frame_id: int | None = None
+        self._recording_captured_frames = 0
+        self._recording_processed_frames = 0
+        self._recording_inflight_frames = 0
+        self._max_recording_backlog = 0
+        self._capture_count = 0
+        self._first_capture_timestamp_s: float | None = None
+        self._last_capture_timestamp_s: float | None = None
 
     def start(self) -> None:
         self._thread.start()
 
     def read(self, *, timeout_s: float = 5.0) -> CapturedMini2Frame:
-        if self._error is not None and self.queue.empty():
-            raise RuntimeError(f"Mini2 capture thread failed: {self._error}") from self._error
-        try:
-            captured = self.queue.get(timeout=timeout_s)
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        while True:
+            with self._condition:
+                if self._recording_frames:
+                    captured = self._recording_frames.popleft()
+                    self._recording_inflight_frames += 1
+                    self._discard_preview_notifications()
+                    self._condition.notify_all()
+                    return captured
+                if self._error is not None and self.queue.empty():
+                    raise RuntimeError(f"Mini2 capture thread failed: {self._error}") from self._error
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("timed out waiting for Mini2 frame")
+            try:
+                captured = self.queue.get(timeout=min(remaining, 0.1))
+            except queue.Empty:
+                continue
+            with self._condition:
+                if self._recording_frames:
+                    recorded = self._recording_frames.popleft()
+                    self._recording_inflight_frames += 1
+                    self._discard_preview_notifications()
+                    self._condition.notify_all()
+                    return recorded
             while True:
                 try:
                     newer = self.queue.get_nowait()
                 except queue.Empty:
                     return captured
-                self._dropped_frames += 1
+                self._preview_dropped_frames += 1
                 captured = newer
-        except queue.Empty as exc:
-            if self._error is not None:
-                raise RuntimeError(f"Mini2 capture thread failed: {self._error}") from self._error
-            raise TimeoutError("timed out waiting for Mini2 frame") from exc
 
     def latest(self, *, timeout_s: float = 0.5) -> CapturedMini2Frame | None:
         deadline = time.monotonic() + max(0.0, float(timeout_s))
@@ -2794,10 +5393,107 @@ class Mini2CaptureThread:
 
     @property
     def dropped_frames(self) -> int:
-        return self._dropped_frames
+        """Legacy total; use split counters for recording-loss decisions."""
+
+        return self._preview_dropped_frames + self._recording_dropped_frames
+
+    @property
+    def preview_dropped_frames(self) -> int:
+        return self._preview_dropped_frames
+
+    @property
+    def recording_dropped_frames(self) -> int:
+        return self._recording_dropped_frames
+
+    def begin_recording(self, session_id: int) -> dict[str, Any]:
+        parsed = int(session_id)
+        if parsed <= 0:
+            raise ValueError("recording session_id must be positive")
+        with self._condition:
+            if self._active_recording_session_id:
+                raise RuntimeError("Mini2 recording capture is already active")
+            if self._recording_frames or self._recording_inflight_frames:
+                raise RuntimeError("previous Mini2 recording backlog is still draining")
+            self._active_recording_session_id = parsed
+            self._last_recording_session_id = parsed
+            self._last_recording_frame_id = None
+            self._processed_recording_frame_id = None
+            self._recording_captured_frames = 0
+            self._recording_processed_frames = 0
+            self._recording_dropped_frames = 0
+            self._max_recording_backlog = 0
+            self._condition.notify_all()
+            return self.recording_status_locked()
+
+    def end_recording(self, session_id: int) -> dict[str, Any]:
+        parsed = int(session_id)
+        with self._condition:
+            if self._active_recording_session_id not in {0, parsed}:
+                raise RuntimeError("Mini2 recording session does not match active CSV session")
+            if self._last_recording_session_id not in {0, parsed}:
+                raise RuntimeError("Mini2 recording session does not match latest capture session")
+            self._active_recording_session_id = 0
+            self._condition.notify_all()
+            return self.recording_status_locked()
+
+    def mark_processed(self, captured: CapturedMini2Frame, *, stored: bool = True) -> None:
+        if captured.recording_session_id <= 0:
+            return
+        with self._condition:
+            self._recording_inflight_frames = max(0, self._recording_inflight_frames - 1)
+            self._recording_processed_frames += 1
+            if not stored:
+                self._recording_dropped_frames += 1
+            self._processed_recording_frame_id = int(captured.frame_id)
+            self._condition.notify_all()
+
+    def recording_drained(self, session_id: int) -> bool:
+        parsed = int(session_id)
+        with self._condition:
+            return self._recording_drained_locked(parsed)
+
+    def recording_status(self) -> dict[str, Any]:
+        with self._condition:
+            return self.recording_status_locked()
+
+    def recording_status_locked(self) -> dict[str, Any]:
+        capture_span_s = 0.0
+        if self._first_capture_timestamp_s is not None and self._last_capture_timestamp_s is not None:
+            capture_span_s = max(0.0, self._last_capture_timestamp_s - self._first_capture_timestamp_s)
+        capture_fps = 0.0
+        if self._capture_count > 1 and capture_span_s > 0:
+            capture_fps = (self._capture_count - 1) / capture_span_s
+        backlog = len(self._recording_frames) + self._recording_inflight_frames
+        return {
+            "active_session_id": self._active_recording_session_id,
+            "latest_session_id": self._last_recording_session_id,
+            "last_recording_frame_id": self._last_recording_frame_id,
+            "processed_recording_frame_id": self._processed_recording_frame_id,
+            "recording_captured_frames": self._recording_captured_frames,
+            "recording_processed_frames": self._recording_processed_frames,
+            "recording_backlog_frames": backlog,
+            "recording_max_backlog_frames": self._max_recording_backlog,
+            "recording_dropped_frames": self._recording_dropped_frames,
+            "preview_dropped_frames": self._preview_dropped_frames,
+            "capture_count": self._capture_count,
+            "capture_fps": round(capture_fps, 6),
+            "drained": self._recording_drained_locked(self._last_recording_session_id),
+        }
+
+    def _recording_drained_locked(self, session_id: int) -> bool:
+        if session_id <= 0 or session_id != self._last_recording_session_id:
+            return True
+        return (
+            self._active_recording_session_id == 0
+            and not self._recording_frames
+            and self._recording_inflight_frames == 0
+            and self._recording_processed_frames >= self._recording_captured_frames
+        )
 
     def close(self) -> None:
         self._stop.set()
+        with self._condition:
+            self._condition.notify_all()
         self._thread.join(timeout=2.0)
         self.reader.release()
 
@@ -2806,13 +5502,29 @@ class Mini2CaptureThread:
         try:
             while not self._stop.is_set():
                 parts = self.reader.read_frame_parts()
-                captured = CapturedMini2Frame(frame_id, time.perf_counter() - self.start_time, parts)
+                timestamp_s = time.perf_counter() - self.start_time
                 with self._condition:
+                    recording_session_id = self._active_recording_session_id
+                    captured = CapturedMini2Frame(frame_id, timestamp_s, parts, recording_session_id)
                     self._latest_capture = captured
+                    self._capture_count += 1
+                    if self._first_capture_timestamp_s is None:
+                        self._first_capture_timestamp_s = timestamp_s
+                    self._last_capture_timestamp_s = timestamp_s
+                    if recording_session_id > 0:
+                        while len(self._recording_frames) >= self.max_recording_queue and not self._stop.is_set():
+                            self._condition.wait(timeout=0.1)
+                        if self._stop.is_set():
+                            return
+                        self._recording_frames.append(captured)
+                        self._recording_captured_frames += 1
+                        self._last_recording_frame_id = frame_id
+                        backlog = len(self._recording_frames) + self._recording_inflight_frames
+                        self._max_recording_backlog = max(self._max_recording_backlog, backlog)
                     self._condition.notify_all()
+                self._put_latest(captured)
                 if self.on_frame is not None:
                     self.on_frame(captured)
-                self._put_latest(captured)
                 frame_id += 1
         except BaseException as exc:  # noqa: BLE001 - propagated through read().
             self._error = exc
@@ -2827,9 +5539,16 @@ class Mini2CaptureThread:
             except queue.Full:
                 try:
                     self.queue.get_nowait()
-                    self._dropped_frames += 1
+                    self._preview_dropped_frames += 1
                 except queue.Empty:
                     pass
+
+    def _discard_preview_notifications(self) -> None:
+        while True:
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                return
 
 
 def start_mini2_capture_thread(
@@ -2838,18 +5557,21 @@ def start_mini2_capture_thread(
     start_time: float,
     thermal_stream_publisher: "LiveJpegStreamPublisher | None" = None,
     thermal_rotation_getter: Callable[[], int] | None = None,
+    max_recording_queue: int = 2048,
 ) -> Mini2CaptureThread:
     """Start the Mini2 reader thread and wire raw frames to the live thermal preview."""
 
     def publish_thermal(captured: CapturedMini2Frame) -> None:
         if thermal_stream_publisher is None:
             return
-        degrees = 0 if thermal_rotation_getter is None else thermal_rotation_getter()
-        thermal_stream_publisher.submit(orient_thermal_matrix(captured.parts.raw_matrix, degrees))
+        # Rotation, palette conversion, overlays, and JPEG encoding belong to
+        # the latest-only preview worker, never the lossless UVC capture thread.
+        thermal_stream_publisher.submit(captured.parts.raw_matrix)
 
     worker = Mini2CaptureThread(
         reader,
         start_time=start_time,
+        max_recording_queue=max_recording_queue,
         on_frame=publish_thermal if thermal_stream_publisher is not None else None,
     )
     worker.start()
@@ -2950,7 +5672,10 @@ class VisibleLatestFrameThread:
                 read_end = time.perf_counter()
                 timestamp_s = ((read_start + read_end) / 2.0) - self.start_time
                 received_s = read_end - self.start_time
-                captured = TimestampedVisibleFrame(self._count, timestamp_s, frame.copy(), received_s)
+                # UsbCamera.read_rgb() returns a fresh cvtColor result.  Keep it
+                # directly; another full-frame copy here only adds bandwidth and
+                # latency before the ring buffer/preview paths split.
+                captured = TimestampedVisibleFrame(self._count, timestamp_s, np.ascontiguousarray(frame), received_s)
                 self.frames.add(captured)
                 with self._condition:
                     self._latest_frame = captured
@@ -4702,22 +7427,42 @@ def validate_matrix_roi(matrix: np.ndarray, roi: Roi) -> None:
         raise ValueError("ROI must be fully inside the matrix")
 
 
+@lru_cache(maxsize=64)
+def _cached_rect_coords_yx(x: int, y: int, width: int, height: int) -> np.ndarray:
+    yy, xx = np.indices((height, width), dtype=np.int64)
+    yy += int(y)
+    xx += int(x)
+    coords = np.column_stack([yy.ravel(), xx.ravel()])
+    coords.setflags(write=False)
+    return coords
+
+
 def _rect_coords_yx(roi: Roi) -> np.ndarray:
-    yy, xx = np.indices((roi.height, roi.width), dtype=np.int64)
-    yy += int(roi.y)
-    xx += int(roi.x)
-    return np.column_stack([yy.ravel(), xx.ravel()])
+    """Return immutable cached coordinates for a normally fixed experiment ROI."""
+
+    return _cached_rect_coords_yx(int(roi.x), int(roi.y), int(roi.width), int(roi.height))
 
 
-def _distribution_features(prefix: str, values: np.ndarray, *, coords_yx: np.ndarray | None = None) -> dict[str, object]:
+def _distribution_features(
+    prefix: str,
+    values: np.ndarray,
+    *,
+    coords_yx: np.ndarray | None = None,
+    include_moments: bool = False,
+    mean_suffix: str = "avg",
+) -> dict[str, object]:
     arr = np.asarray(values, dtype=np.float64).reshape(-1)
     if arr.size == 0:
         return {}
     p05, p25, p50, p75, p95 = np.percentile(arr, [5, 25, 50, 75, 95])
     avg = float(np.mean(arr))
     std = float(np.std(arr))
+    min_index = int(np.argmin(arr))
+    max_index = int(np.argmax(arr))
+    min_value = float(arr[min_index])
+    max_value = float(arr[max_index])
     features: dict[str, object] = {
-        f"{prefix}_range": round(float(np.max(arr) - np.min(arr)), 6),
+        f"{prefix}_range": round(max_value - min_value, 6),
         f"{prefix}_iqr": round(float(p75 - p25), 6),
         f"{prefix}_p05": round(float(p05), 6),
         f"{prefix}_p25": round(float(p25), 6),
@@ -4727,11 +7472,20 @@ def _distribution_features(prefix: str, values: np.ndarray, *, coords_yx: np.nda
         f"{prefix}_hot_fraction": 0.0 if std == 0.0 else round(float(np.mean(arr > avg + std)), 6),
         f"{prefix}_cold_fraction": 0.0 if std == 0.0 else round(float(np.mean(arr < avg - std)), 6),
     }
+    if include_moments:
+        features.update(
+            {
+                f"{prefix}_{mean_suffix}": round(avg, 6),
+                f"{prefix}_min": round(min_value, 6),
+                f"{prefix}_max": round(max_value, 6),
+                f"{prefix}_std": round(std, 12 if prefix == "thermal_roi" else 6),
+            }
+        )
     if coords_yx is not None:
         coords = np.asarray(coords_yx, dtype=np.int64).reshape(-1, 2)
         if coords.shape[0] == arr.size:
-            min_y, min_x = coords[int(np.argmin(arr))]
-            max_y, max_x = coords[int(np.argmax(arr))]
+            min_y, min_x = coords[min_index]
+            max_y, max_x = coords[max_index]
             features.update(
                 {
                     f"{prefix}_min_x": int(min_x),
@@ -4836,7 +7590,29 @@ def extract_roi_only_thermal_features(
             converter,
             conversion_status,
         )
-    roi_avg = round(float(np.mean(roi_c)), 6)
+    roi_features = _distribution_features(
+        "thermal_roi",
+        roi_c,
+        coords_yx=roi_coords_yx,
+        include_moments=True,
+    )
+    raw_roi_features = _distribution_features(
+        "thermal_raw_roi",
+        raw_roi,
+        coords_yx=roi_coords_yx,
+        include_moments=True,
+    )
+    raw_features = _distribution_features(
+        "thermal_raw",
+        raw_matrix,
+        include_moments=True,
+        mean_suffix="mean",
+    )
+    for key in ("thermal_raw_roi_min", "thermal_raw_roi_max"):
+        raw_roi_features[key] = int(raw_roi_features[key])
+    for key in ("thermal_raw_min", "thermal_raw_max"):
+        raw_features[key] = int(raw_features[key])
+    roi_avg = float(roi_features["thermal_roi_avg"])
     prev_avg_raw = None if previous is None else previous.get("thermal_roi_avg")
     try:
         prev_avg = None if prev_avg_raw is None else float(prev_avg_raw)
@@ -4852,18 +7628,11 @@ def extract_roi_only_thermal_features(
         "thermal_frame_rate_hz": float(frame_rate_hz),
         "thermal_matrix_shape": f"roi-only:{raw_matrix.shape[0]}x{raw_matrix.shape[1]}",
         "thermal_roi_avg": roi_avg,
-        "thermal_roi_max": round(float(np.max(roi_c)), 6),
-        "thermal_roi_min": round(float(np.min(roi_c)), 6),
-        "thermal_roi_std": round(float(np.std(roi_c)), 12),
         "thermal_roi_delta": 0.0 if prev_avg is None else round(roi_avg - prev_avg, 6),
-        "thermal_raw_min": int(np.min(raw_matrix)),
-        "thermal_raw_max": int(np.max(raw_matrix)),
-        "thermal_raw_mean": round(float(np.mean(raw_matrix)), 6),
-        "thermal_raw_std": round(float(np.std(raw_matrix)), 6),
     }
-    features.update(_distribution_features("thermal_roi", roi_c, coords_yx=roi_coords_yx))
-    features.update(_distribution_features("thermal_raw_roi", raw_roi, coords_yx=roi_coords_yx))
-    features.update(_distribution_features("thermal_raw", raw_matrix))
+    features.update(roi_features)
+    features.update(raw_roi_features)
+    features.update(raw_features)
     return features
 
 
@@ -5016,9 +7785,25 @@ def extract_raw_thermal_features(
     """Compute Mini2 raw-value ROI features without Celsius conversion."""
 
     validate_matrix_roi(raw_matrix, roi)
-    raw_roi = raw_matrix[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width].astype(np.float64)
+    raw_roi = raw_matrix[roi.y : roi.y + roi.height, roi.x : roi.x + roi.width]
     roi_coords_yx = _rect_coords_yx(roi)
-    raw_avg = round(float(np.mean(raw_roi)), 6)
+    raw_roi_features = _distribution_features(
+        "thermal_raw_roi",
+        raw_roi,
+        coords_yx=roi_coords_yx,
+        include_moments=True,
+    )
+    raw_features = _distribution_features(
+        "thermal_raw",
+        raw_matrix,
+        include_moments=True,
+        mean_suffix="mean",
+    )
+    for key in ("thermal_raw_roi_min", "thermal_raw_roi_max"):
+        raw_roi_features[key] = int(raw_roi_features[key])
+    for key in ("thermal_raw_min", "thermal_raw_max"):
+        raw_features[key] = int(raw_features[key])
+    raw_avg = float(raw_roi_features["thermal_raw_roi_avg"])
     prev_avg_raw = None if previous is None else previous.get("thermal_raw_roi_avg")
     try:
         prev_avg = None if prev_avg_raw in (None, "") else float(prev_avg_raw)
@@ -5033,18 +7818,11 @@ def extract_raw_thermal_features(
         "thermal_frame_rate_hz": float(frame_rate_hz),
         "thermal_matrix_shape": f"{raw_matrix.shape[0]}x{raw_matrix.shape[1]}",
         "thermal_raw_roi_avg": raw_avg,
-        "thermal_raw_roi_max": int(np.max(raw_roi)),
-        "thermal_raw_roi_min": int(np.min(raw_roi)),
-        "thermal_raw_roi_std": round(float(np.std(raw_roi)), 6),
         "thermal_raw_roi_delta": raw_delta,
         "thermal_delta": raw_delta,
-        "thermal_raw_min": int(np.min(raw_matrix)),
-        "thermal_raw_max": int(np.max(raw_matrix)),
-        "thermal_raw_mean": round(float(np.mean(raw_matrix)), 6),
-        "thermal_raw_std": round(float(np.std(raw_matrix)), 6),
     }
-    features.update(_distribution_features("thermal_raw_roi", raw_roi, coords_yx=roi_coords_yx))
-    features.update(_distribution_features("thermal_raw", raw_matrix))
+    features.update(raw_roi_features)
+    features.update(raw_features)
     return features
 
 
@@ -5127,7 +7905,7 @@ def orient_thermal_matrix(raw_matrix: np.ndarray, rotation_degrees: int) -> np.n
     if degrees == 0:
         return matrix
     if degrees == 180:
-        return np.rot90(matrix, 2).copy()
+        return matrix[::-1, ::-1]
     raise ValueError("thermal_rotation_degrees must be 0 or 180")
 
 
@@ -5246,6 +8024,135 @@ def load_typewise_live_prediction_model(path: Any) -> dict[str, Any] | None:
         return None
 
 
+def load_endpoint_prediction_model(path: Any) -> dict[str, Any] | None:
+    raw = str(path or "").strip()
+    if not raw:
+        return None
+    try:
+        return load_type_conditioned_sensor_model(raw)
+    except (OSError, ValueError, AttributeError, pickle.UnpicklingError, ImportError) as exc:
+        print(
+            "Warning: post-run sensor endpoint model unavailable; "
+            f"using live classifier fallback. Reason: {exc}",
+            flush=True,
+        )
+        return None
+
+
+def finish_live_automatic_stop(
+    *,
+    server: Any,
+    csv_buffer: LiveCsvBuffer,
+    roi_state: RoiSelectionState,
+    auto_stop_controller: ColorChangeAutoStopController | None,
+    endpoint_pulse_runtime: EndpointPulseRuntime | None,
+    session_id: int,
+    status: Mapping[str, Any],
+    guard_reason: str,
+) -> None:
+    """Fail closed for one live session without touching a newer session.
+
+    The stop-intent token is acquired before the first session read.  Once a
+    callback can observe its session as current, no new recording/pump start
+    can pass the intent gate until that callback stops the session or proves it
+    stale.  A callback that resumes after a newer session has started exits
+    before touching the pump guard.
+    """
+
+    stop_intent: StopIntentCoordinator = getattr(server, "csv_stop_intent")
+    stop_token = stop_intent.begin(guard_reason)
+    latched_session = False
+    try:
+        current = csv_buffer.status()
+        if (
+            not current.get("recording")
+            or int(current.get("session_id") or 0) != int(session_id)
+        ):
+            # Do not write an old callback's status into a newer active run.
+            if not current.get("recording"):
+                csv_buffer.update_auto_stop_status(
+                    {**status, "auto_stop_action_status": "ignored_stale_session"}
+                )
+            return
+
+        stop_intent.latch_session(session_id)
+        latched_session = True
+
+        emergency_sender = getattr(server, "pump_emergency_stop_sender", None)
+        pump_stop_status = "disabled"
+        pump_stop_error = ""
+        absolute_guard = getattr(server, "absolute_pump_safety_guard", None)
+        if isinstance(absolute_guard, AbsolutePumpSafetyGuard):
+
+            def emergency_stop() -> None:
+                if callable(emergency_sender):
+                    emergency_sender()
+
+            guard_status = absolute_guard.stop(
+                guard_reason,
+                emergency_stop=emergency_stop,
+            )
+            pump_stop_status = str(
+                guard_status.get("absolute_guard_stop_status") or "failed"
+            )
+            pump_stop_error = str(guard_status.get("absolute_guard_error") or "")
+        elif callable(emergency_sender):
+            try:
+                emergency_sender()
+                pump_stop_status = "sent"
+            except Exception as exc:  # noqa: BLE001 - record the stop failure.
+                pump_stop_status = "failed"
+                pump_stop_error = str(exc)
+
+        control_lock = getattr(server, "csv_control_lock")
+        with control_lock:
+            current = csv_buffer.status()
+            if (
+                not current.get("recording")
+                or int(current.get("session_id") or 0) != int(session_id)
+            ):
+                if not current.get("recording"):
+                    csv_buffer.update_auto_stop_status(
+                        {**status, "auto_stop_action_status": "ignored_stale_session"}
+                    )
+                if latched_session and not current.get("finalizing"):
+                    stop_intent.clear_latch(session_id)
+                return
+            csv_buffer.update_auto_stop_status(dict(status))
+            if endpoint_pulse_runtime is not None:
+                endpoint_pulse_runtime.disarm(guard_reason)
+            if auto_stop_controller is not None:
+                auto_stop_controller.disarm(guard_reason)
+            csv_buffer.pause_commanded_pump_timeline(state="stopped")
+            capture_controller = getattr(server, "capture_controller", None)
+            if isinstance(capture_controller, Mini2CaptureThread):
+                capture_status = capture_controller.end_recording(int(session_id))
+                csv_buffer.request_stop()
+                if bool(capture_status.get("drained")):
+                    csv_buffer.complete_stop()
+            else:
+                csv_buffer.stop_recording()
+            final_csv_status = csv_buffer.status()
+            if (
+                not final_csv_status.get("recording")
+                and not final_csv_status.get("finalizing")
+            ):
+                stop_intent.clear_latch(session_id)
+            roi_state.stop_recording()
+            csv_buffer.update_auto_stop_status(
+                {
+                    "auto_stop_action_status": "completed"
+                    if pump_stop_status == "sent"
+                    else "pump_stop_failed",
+                    "auto_stop_pump_command": "c",
+                    "auto_stop_pump_status": pump_stop_status,
+                    "auto_stop_pump_error": pump_stop_error,
+                }
+            )
+    finally:
+        stop_intent.finish(stop_token)
+
+
 def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = None, visible_camera: Any | None = None) -> Path:
     converter = None
     injected_mini2 = mini2_reader is not None
@@ -5293,6 +8200,9 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    endpoint_prediction_model = load_endpoint_prediction_model(
+        getattr(args, "endpoint_ml_model", DEFAULT_ENDPOINT_ML_MODEL)
+    )
     typewise_prediction_model = load_typewise_live_prediction_model(
         getattr(args, "typewise_ml_model", DEFAULT_TYPEWISE_LIVE_ML_MODEL)
     )
@@ -5300,6 +8210,7 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
     live_csv_buffer = LiveCsvBuffer(
         output_path=output,
         prediction_model=prediction_model,
+        endpoint_prediction_model=endpoint_prediction_model,
         typewise_prediction_model=typewise_prediction_model,
     )
     color_extractor = ColorFeatureExtractor()
@@ -5307,6 +8218,9 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
     live_stream_port = int(getattr(args, "live_stream_port", 0) or 0)
     pump_serial_bridge = build_pump_serial_bridge_from_args(args)
     yolo_model = None
+    yolo_setup_load_lock = threading.Lock()
+    yolo_setup_load_attempted = False
+    yolo_setup_load_error = ""
     yolo_worker: YoloVisibleRoiWorker | None = None
     yolo_classes = parse_yolo_classes(getattr(args, "yolo_classes", None))
     auto_roi_worker_requested = bool(int(getattr(args, "auto_roi_worker", 1 if live_stream_port > 0 else 0) or 0))
@@ -5322,6 +8236,7 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
     )
     if yolo_needed:
         yolo_model = load_yolo_model(str(getattr(args, "yolo_model", "yolo11n-seg.pt")))
+        yolo_setup_load_attempted = True
         if int(getattr(args, "live_stream_port", 0) or 0) > 0:
             yolo_worker = YoloVisibleRoiWorker(
                 yolo_model,
@@ -5335,10 +8250,12 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
     live_controls = LiveControlState(
         roi_auto_detect=str(getattr(args, "roi_auto_detect", "off")),
         visible_roi_detector=visible_roi_detector,
-        yolo_available=yolo_worker is not None,
+        yolo_available=yolo_model is not None,
         thermal_rotation_degrees=int(getattr(args, "thermal_rotation_degrees", 0) or 0),
     )
     rows: list[dict[str, Any]] = []
+    feature_history: list[dict[str, Any]] = []
+    retained_recording_session_id = 0
     previous_thermal: dict[str, object] | None = None
     previous_visible: dict[str, float] | None = None
     roi_state = RoiSelectionState()
@@ -5351,6 +8268,8 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
     next_mini2_retry_s = 0.0 if mini2_reader is None and not injected_mini2 and allow_mini2_missing else float("inf")
     mini2_retry_count = 0
     mini2_reconnect_count = 0
+    gc_enabled_before_run = gc.isenabled()
+    gc_suspended_for_recording = False
     live_state: LiveStreamState | None = None
     live_server: LiveStreamServerHandle | None = None
     visible_stream_publisher: LiveJpegStreamPublisher | None = None
@@ -5369,6 +8288,68 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
     }
     if auto_roi_worker_enabled:
         auto_roi_worker = AutoRoiWorker()
+    auto_stop_controller: ColorChangeAutoStopController | None = None
+    endpoint_pulse_runtime: EndpointPulseRuntime | None = None
+    if live_stream_port > 0:
+        def finish_automatic_stop(
+            session_id: int,
+            status: dict[str, Any],
+            *,
+            guard_reason: str,
+        ) -> None:
+            if live_server is None:
+                return
+            finish_live_automatic_stop(
+                server=live_server.server,
+                csv_buffer=live_csv_buffer,
+                roi_state=roi_state,
+                auto_stop_controller=auto_stop_controller,
+                endpoint_pulse_runtime=endpoint_pulse_runtime,
+                session_id=session_id,
+                status=status,
+                guard_reason=guard_reason,
+            )
+
+        def handle_auto_stop(decision: AutoStopDecision) -> None:
+            """Stop pump and recording once for the still-active CSV session."""
+
+            finish_automatic_stop(
+                decision.session_id,
+                decision.as_status(),
+                guard_reason="optional_auto_stop_triggered",
+            )
+
+        def handle_pulse_safety_stop(
+            session_id: int,
+            reason: str,
+            volume_ml: float | None,
+            elapsed_s: float,
+        ) -> None:
+            finish_automatic_stop(
+                session_id,
+                {
+                    "auto_stop_state": "triggered",
+                    "auto_stop_triggered": True,
+                    "auto_stop_reason": reason,
+                    "auto_stop_trigger_volume_ml": ""
+                    if volume_ml is None
+                    else round(volume_ml, 6),
+                    "auto_stop_trigger_elapsed_s": round(elapsed_s, 6),
+                    "auto_stop_action_source": "endpoint_pulse_runtime",
+                },
+                guard_reason=reason,
+            )
+
+        def handle_auto_stop_status(status: dict[str, Any]) -> None:
+            live_csv_buffer.update_auto_stop_status(status)
+            if endpoint_pulse_runtime is not None:
+                endpoint_pulse_runtime.handle_auto_stop_status(status)
+
+        auto_stop_controller = ColorChangeAutoStopController(
+            typewise_prediction_model,
+            on_trigger=handle_auto_stop,
+            on_status=handle_auto_stop_status,
+        )
     if live_stream_port > 0:
         live_state = LiveStreamState()
         jpeg_quality = int(getattr(args, "live_stream_jpeg_quality", 75))
@@ -5383,7 +8364,13 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             live_state,
             kind="thermal",
             jpeg_quality=jpeg_quality,
-            transform=lambda frame: build_thermal_stream_frame(frame, roi_state),
+            transform=lambda frame: build_thermal_stream_frame(
+                orient_thermal_matrix(
+                    frame,
+                    int(live_controls.snapshot().get("thermal_rotation_degrees", 0) or 0),
+                ),
+                roi_state,
+            ),
             copy_frame=False,
         )
         visible_stream_publisher.start()
@@ -5397,16 +8384,108 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             controls=live_controls,
             csv_buffer=live_csv_buffer,
             pump_command_sender=None if pump_serial_bridge is None else pump_serial_bridge.send,
+            pump_guarded_direction_sender=(
+                None
+                if pump_serial_bridge is None
+                else pump_serial_bridge.send_guarded_direction
+            ),
+            pump_emergency_stop_sender=(
+                None
+                if pump_serial_bridge is None
+                else pump_serial_bridge.emergency_stop
+            ),
             pump_status_provider=None if pump_serial_bridge is None or not hasattr(pump_serial_bridge, "status") else pump_serial_bridge.status,
+            auto_stop_controller=auto_stop_controller,
+            endpoint_pulse_runtime=endpoint_pulse_runtime,
             pump_command_map={
                 "start": str(getattr(args, "pump_start_command", "b") or "b"),
                 "retract": str(getattr(args, "pump_retract_command", "a") or "a"),
                 "stop": str(getattr(args, "pump_stop_command", "c") or "c"),
             },
+            pump_pulse_direction=str(
+                getattr(args, "pump_pulse_direction", "b") or "b"
+            ),
         )
+        if pump_serial_bridge is not None:
+            def stop_continuous_for_endpoint_pulse(reason: str) -> dict[str, Any]:
+                if live_server is None:
+                    raise RuntimeError("live server is unavailable")
+                guard = getattr(live_server.server, "absolute_pump_safety_guard", None)
+                if not isinstance(guard, AbsolutePumpSafetyGuard):
+                    raise RuntimeError("absolute pump safety guard is unavailable")
+                stopped = guard.stop(str(reason or "endpoint_pulse_mode"))
+                if stopped.get("absolute_guard_stop_status") != "sent":
+                    raise RuntimeError(
+                        str(stopped.get("absolute_guard_error") or "pump stop command failed")
+                    )
+                live_csv_buffer.pause_commanded_pump_timeline(state="pulse_settling")
+                return stopped
+
+            def start_slow_continuous_for_endpoint(
+                *,
+                rate_steps_per_s: int,
+                nominal_rate_ml_per_s: float,
+                maximum_rate_ml_per_s: float,
+                remaining_volume_ml: float,
+                absolute_deadline_monotonic_s: float,
+                can_restart: Callable[[], bool],
+            ) -> dict[str, Any]:
+                """After STOP, require RATE ACK, then arm G and direction."""
+
+                if live_server is None:
+                    raise RuntimeError("live server is unavailable")
+                guard = getattr(live_server.server, "absolute_pump_safety_guard", None)
+                if not isinstance(guard, AbsolutePumpSafetyGuard):
+                    raise RuntimeError("absolute pump safety guard is unavailable")
+                status = start_guarded_continuous_at_rate(
+                    command_sender=pump_serial_bridge.send,
+                    guard=guard,
+                    direction_command=str(getattr(live_server.server, "pump_pulse_direction", "b")),
+                    rate_steps_per_s=rate_steps_per_s,
+                    maximum_rate_ml_per_s=maximum_rate_ml_per_s,
+                    remaining_volume_ml=remaining_volume_ml,
+                    absolute_deadline_monotonic_s=absolute_deadline_monotonic_s,
+                    can_restart=can_restart,
+                )
+                status.update(
+                    {
+                        "rate_steps_per_s": rate_steps_per_s,
+                        "nominal_rate_ml_per_s": nominal_rate_ml_per_s,
+                        "rate_basis": "nominal_uncalibrated_fast_rate_times_steps_per_100",
+                    }
+                )
+                return status
+
+            endpoint_pulse_runtime = EndpointPulseRuntime(
+                command_sender=pump_serial_bridge.send,
+                stop_continuous=stop_continuous_for_endpoint_pulse,
+                csv_buffer=live_csv_buffer,
+                on_safety_stop=handle_pulse_safety_stop,
+                start_slow_continuous=start_slow_continuous_for_endpoint,
+            )
+            live_server.server.endpoint_pulse_runtime = endpoint_pulse_runtime  # type: ignore[attr-defined]
         live_server.server.roi_candidate_min_confidence = float(getattr(args, "roi_auto_min_confidence", 0.5))  # type: ignore[attr-defined]
     if live_server is not None:
         def yolo_visible_candidate_for_setup(frame: np.ndarray) -> RoiDetectionResult:
+            nonlocal yolo_model, yolo_setup_load_attempted, yolo_setup_load_error
+            if yolo_model is None:
+                with yolo_setup_load_lock:
+                    if yolo_model is None and not yolo_setup_load_attempted:
+                        yolo_setup_load_attempted = True
+                        try:
+                            yolo_model = load_yolo_model(str(getattr(args, "yolo_model", "yolo11n-seg.pt")))
+                            live_controls.set_yolo_available(True)
+                            print("Optional YOLO ROI model loaded on demand.", flush=True)
+                        except Exception as exc:  # noqa: BLE001 - optional setup aid must not stop collection.
+                            yolo_setup_load_error = str(exc)
+                            live_controls.set_yolo_available(False)
+                            print(
+                                "Optional YOLO ROI unavailable; use manual visible ROI. "
+                                f"Reason: {yolo_setup_load_error}",
+                                flush=True,
+                            )
+            if yolo_model is None:
+                return RoiDetectionResult(None, 0.0, "yolo_runtime_unavailable")
             return auto_detect_visible_roi_setup_candidate(
                 frame,
                 visible_detector=visible_roi_detector,
@@ -5434,7 +8513,10 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             start_time=start,
             thermal_stream_publisher=thermal_stream_publisher,
             thermal_rotation_getter=lambda: int(live_controls.snapshot().get("thermal_rotation_degrees", 0) or 0),
+            max_recording_queue=int(getattr(args, "mini2_recording_queue_frames", 2048) or 2048),
         )
+        if live_server is not None:
+            live_server.server.capture_controller = mini2_worker  # type: ignore[attr-defined]
     if visible_camera is not None and not injected_visible:
         visible_worker = VisibleLatestFrameThread(visible_camera, start_time=start)
         visible_worker.start()
@@ -5463,6 +8545,8 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
         resolved_mini2_index = ""
         failed_worker = mini2_worker
         mini2_worker = None
+        if live_server is not None:
+            live_server.server.capture_controller = None  # type: ignore[attr-defined]
         failed_reader = mini2_reader
         mini2_reader = None
         close_current_converter()
@@ -5515,7 +8599,10 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                 start_time=start,
                 thermal_stream_publisher=thermal_stream_publisher,
                 thermal_rotation_getter=lambda: int(live_controls.snapshot().get("thermal_rotation_degrees", 0) or 0),
+                max_recording_queue=int(getattr(args, "mini2_recording_queue_frames", 2048) or 2048),
             )
+            if live_server is not None:
+                live_server.server.capture_controller = mini2_worker  # type: ignore[attr-defined]
             mini2_unavailable_reason = ""
             mini2_reconnect_count += 1
             next_mini2_retry_s = now_s + mini2_retry_interval_s
@@ -5540,8 +8627,21 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
 
     try:
         for frame_id in range(args.frames):
+            csv_loop_status = live_csv_buffer.status()
+            low_latency_recording = bool(csv_loop_status.get("recording") or csv_loop_status.get("finalizing"))
+            if low_latency_recording and not gc_suspended_for_recording:
+                if gc.isenabled():
+                    gc.disable()
+                gc_suspended_for_recording = True
+            elif not low_latency_recording and gc_suspended_for_recording:
+                if gc_enabled_before_run:
+                    gc.enable()
+                    gc.collect()
+                gc_suspended_for_recording = False
             parts: Mini2RawFrameParts | None = None
             thermal_time_s: float | None = None
+            captured: CapturedMini2Frame | None = None
+            capture_recording_session_id = 0
             retry_mini2_if_due(time.perf_counter() - start)
             if mini2_reader is None:
                 target_time = start + (frame_id / max(0.001, float(args.frame_rate_hz)))
@@ -5563,6 +8663,7 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                     parts = captured.parts
                     elapsed_s = captured.timestamp_s
                     captured_frame_id = captured.frame_id
+                    capture_recording_session_id = captured.recording_session_id
                     thermal_time_s = elapsed_s
                     processing_latency_ms = max(0.0, ((time.perf_counter() - start) - float(elapsed_s)) * 1000.0)
                 except Exception as exc:  # noqa: BLE001 - let the collector recover if Mini2 is unplugged/busy.
@@ -5589,9 +8690,9 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             if visible_camera is not None:
                 if visible_worker is not None:
                     visible_sync_max_age_ms = float(getattr(args, "visible_sync_max_age_ms", 1000.0) or 0.0)
-                    visible_future_wait_s = min(
-                        0.03,
-                        max(0.0, 0.75 / max(1.0, float(args.frame_rate_hz))),
+                    visible_future_wait_s = max(
+                        0.0,
+                        float(getattr(args, "visible_future_wait_ms", 10.0) or 0.0) / 1000.0,
                     )
                     visible_future_wait_min_gap_s = max(0.0, 0.5 / max(1.0, float(args.frame_rate_hz)))
                     matched_visible = visible_worker.nearest(
@@ -5600,14 +8701,17 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                         future_wait_s=visible_future_wait_s,
                         future_wait_min_gap_s=visible_future_wait_min_gap_s,
                     )
-                    frame_rgb = None if matched_visible is None else matched_visible.frame_rgb.copy()
+                    # Captured visible frames are immutable snapshots owned by
+                    # the ring buffer.  Reuse them instead of copying two full
+                    # RGB images on every thermal frame.
+                    frame_rgb = None if matched_visible is None else matched_visible.frame_rgb
                     matched_visible_time_s = None if matched_visible is None else matched_visible.timestamp_s
                     matched_visible_frame_id = None if matched_visible is None else matched_visible.frame_id
                     try:
                         latest_visible = visible_worker.latest_timestamped(timeout_s=0.0)
                     except RuntimeError:
                         latest_visible = None
-                    preview_frame_rgb = None if latest_visible is None else latest_visible.frame_rgb.copy()
+                    preview_frame_rgb = None if latest_visible is None else latest_visible.frame_rgb
                     preview_visible_time_s = None if latest_visible is None else latest_visible.preview_timestamp_s
                     preview_visible_frame_id = None if latest_visible is None else latest_visible.frame_id
                 else:
@@ -5974,12 +9078,19 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                 )
             )
             row["processing_latency_ms"] = round(processing_latency_ms, 6)
+            row["capture_recording_session_id"] = capture_recording_session_id
             if preview_visible_time_s is not None:
                 row["preview_visible_latency_ms"] = round(
                     max(0.0, ((time.perf_counter() - start) - float(preview_visible_time_s)) * 1000.0),
                     6,
                 )
-            row["mini2_dropped_frames"] = 0 if mini2_worker is None else mini2_worker.dropped_frames
+            capture_status = {} if mini2_worker is None else mini2_worker.recording_status()
+            row["mini2_dropped_frames"] = int(capture_status.get("recording_dropped_frames", 0) or 0)
+            row["mini2_preview_dropped_frames"] = int(capture_status.get("preview_dropped_frames", 0) or 0)
+            row["mini2_recording_dropped_frames"] = int(capture_status.get("recording_dropped_frames", 0) or 0)
+            row["mini2_recording_backlog_frames"] = int(capture_status.get("recording_backlog_frames", 0) or 0)
+            row["mini2_recording_max_backlog_frames"] = int(capture_status.get("recording_max_backlog_frames", 0) or 0)
+            row["mini2_capture_fps"] = capture_status.get("capture_fps", 0.0)
             row["mini2_retry_count"] = mini2_retry_count
             row["mini2_reconnect_count"] = mini2_reconnect_count
             row["mini2_retry_interval_s"] = mini2_retry_interval_s
@@ -5989,11 +9100,48 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             row["visible_capture_index"] = "" if visible_camera is None else resolved_visible_index
             row.update(roi_state.row_metadata(visible_roi=visible_roi, thermal_roi=thermal_roi))
             row.update(auto_roi_status)
-            row.update(derive_ml_features(rows, row))
-            rows.append(row)
-            live_csv_buffer.add(row, now_monotonic_s=frame_monotonic_s)
+            csv_status_before_add = live_csv_buffer.status()
+            row_recording_session_id = int(capture_recording_session_id or 0)
+            if row_recording_session_id <= 0 and mini2_worker is None and bool(
+                csv_status_before_add.get("recording") or csv_status_before_add.get("finalizing")
+            ):
+                row_recording_session_id = int(csv_status_before_add.get("session_id") or 0)
+            if row_recording_session_id > 0 and row_recording_session_id != retained_recording_session_id:
+                # A new experiment gets a new one-second baseline.  Do not use
+                # idle frames captured before the user pressed Record.
+                rows.clear()
+                feature_history.clear()
+                retained_recording_session_id = row_recording_session_id
+            selected_history = select_online_history_rows(feature_history, row)
+            row.update(derive_ml_features(selected_history, row))
+            feature_history = [*selected_history, row]
+            retain_output_row = live_stream_port <= 0 or row_recording_session_id > 0
+            if retain_output_row:
+                rows.append(row)
+            csv_row_added = live_csv_buffer.add(row, now_monotonic_s=frame_monotonic_s)
+            if csv_row_added and auto_stop_controller is not None and row_recording_session_id > 0:
+                # The model also needs experiment metadata merged by
+                # LiveCsvBuffer; status already holds that immutable metadata.
+                accepted_row = live_csv_buffer.latest_recorded_row(row_recording_session_id)
+                if accepted_row is not None:
+                    auto_stop_controller.submit(row_recording_session_id, accepted_row)
+            if mini2_worker is not None and captured is not None:
+                mini2_worker.mark_processed(captured, stored=csv_row_added)
+                csv_status_after_add = live_csv_buffer.status()
+                if csv_status_after_add.get("finalizing") and mini2_worker.recording_drained(
+                    int(csv_status_after_add.get("session_id") or 0)
+                ):
+                    completed_session_id = int(
+                        csv_status_after_add.get("session_id") or 0
+                    )
+                    live_csv_buffer.complete_stop()
+                    if live_server is not None:
+                        getattr(
+                            live_server.server,
+                            "csv_stop_intent",
+                        ).clear_latch(completed_session_id)
             stream_every = int(getattr(args, "stream_every", 0) or 0)
-            if stream_every > 0 and len(rows) % stream_every == 0:
+            if stream_every > 0 and rows and len(rows) % stream_every == 0:
                 write_rows(output, rows)
             live_payload = build_live_payload(
                 thermal_features,
@@ -6013,7 +9161,7 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                     thermal_stream_publisher.submit(parts.raw_matrix)
             preview_every = int(getattr(args, "preview_every", 0) or 0)
             preview_dir = getattr(args, "preview_dir", "")
-            if preview_every > 0 and preview_dir and len(rows) % preview_every == 0:
+            if preview_every > 0 and preview_dir and (frame_id + 1) % preview_every == 0:
                 write_live_preview(
                     Path(preview_dir),
                     preview_frame_rgb,
@@ -6053,6 +9201,10 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                     )
                 print(f"frame={frame_id}{thermal_msg}{visible_msg} status={label}", flush=True)
     finally:
+        if gc_enabled_before_run and not gc.isenabled():
+            gc.enable()
+        elif not gc_enabled_before_run and gc.isenabled():
+            gc.disable()
         if visible_preview_worker is not None:
             visible_preview_worker.close()
         if mini2_worker is not None:
@@ -6071,6 +9223,10 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             yolo_worker.close()
         if auto_roi_worker is not None:
             auto_roi_worker.close()
+        if endpoint_pulse_runtime is not None:
+            endpoint_pulse_runtime.disarm("collector_shutdown")
+        if auto_stop_controller is not None:
+            auto_stop_controller.close()
         if live_server is not None:
             live_server.close()
         if pump_serial_bridge is not None:
@@ -6105,7 +9261,10 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
         "mini2_backend": args.mini2_backend,
         "mini2_frame": f"{args.mini2_width}x{args.mini2_height} {args.mini2_fourcc}",
         "visible_index": None if visible_camera is None else resolved_visible_index,
-        "mini2_dropped_frames": 0 if mini2_worker is None else mini2_worker.dropped_frames,
+        "mini2_dropped_frames": 0 if mini2_worker is None else mini2_worker.recording_dropped_frames,
+        "mini2_preview_dropped_frames": 0 if mini2_worker is None else mini2_worker.preview_dropped_frames,
+        "mini2_recording_dropped_frames": 0 if mini2_worker is None else mini2_worker.recording_dropped_frames,
+        "mini2_recording_status": {} if mini2_worker is None else mini2_worker.recording_status(),
         "mini2_retry_count": mini2_retry_count,
         "mini2_reconnect_count": mini2_reconnect_count,
         "mini2_retry_interval_s": mini2_retry_interval_s,
@@ -6252,9 +9411,14 @@ def raw_matrix_to_rgb_preview(raw_matrix: np.ndarray) -> np.ndarray:
     matrix = np.asarray(raw_matrix)
     if matrix.ndim != 2:
         raise ValueError("Mini2 raw preview matrix must be 2D")
-    matrix_f = matrix.astype(np.float64)
-    low = float(np.percentile(matrix_f, 1))
-    high = float(np.percentile(matrix_f, 99))
+    matrix_f = matrix.astype(np.float32)
+    # Percentile limits are only for the browser palette.  Estimate them from a
+    # regular sample while still rendering every pixel; this keeps 25 fps JPEG
+    # preview work away from the scientific feature path.
+    sample_step = max(1, int(np.sqrt(max(1, matrix_f.size // 4096))))
+    sample = matrix_f[::sample_step, ::sample_step]
+    low = float(np.percentile(sample, 1))
+    high = float(np.percentile(sample, 99))
     if not np.isfinite(low) or not np.isfinite(high) or high <= low:
         low = float(np.min(matrix_f))
         high = float(np.max(matrix_f))
@@ -6373,12 +9537,28 @@ def build_live_payload(
             THERMAL_CONVERSION_OK if thermal_calibrated else THERMAL_CONVERSION_RAW,
         )
     )
+    temperature_avg_c = _json_float(thermal_features.get("thermal_roi_avg"))
+    temperature_min_c = _json_float(thermal_features.get("thermal_roi_min"))
+    temperature_max_c = _json_float(thermal_features.get("thermal_roi_max"))
+    celsius_allowed = (
+        thermal_calibrated
+        and thermal_conversion_status == THERMAL_CONVERSION_OK
+        and all(value is not None and math.isfinite(value) for value in (
+            temperature_avg_c,
+            temperature_min_c,
+            temperature_max_c,
+        ))
+        and temperature_min_c <= temperature_avg_c <= temperature_max_c
+    )
     payload = {
         "frame_id": row.get("frame_id"),
         "time_s": _json_float(row.get("time_s")),
         "updated_epoch_s": round(time.time(), 6),
         "pump_elapsed_s": _json_float(row.get("pump_elapsed_s")),
         "pump_run_rate_ml_per_s": _json_float(row.get("pump_run_rate_ml_per_s")),
+        "pump_dosing_stage": row.get("pump_dosing_stage", ""),
+        "pump_nominal_rate_ml_per_s": _json_float(row.get("pump_nominal_rate_ml_per_s")),
+        "pump_rate_basis": row.get("pump_rate_basis", ""),
         "injected_volume_ml": _json_float(row.get("injected_volume_ml")),
         "theoretical_equivalence_volume_ml": _json_float(row.get("theoretical_equivalence_volume_ml")),
         "theoretical_equivalence_time_s": _json_float(row.get("theoretical_equivalence_time_s")),
@@ -6398,6 +9578,8 @@ def build_live_payload(
         "predicted_equivalence_source": row.get("predicted_equivalence_source", ""),
         "predicted_equivalence_evidence": row.get("predicted_equivalence_evidence", ""),
         "predicted_equivalence_model_key": row.get("predicted_equivalence_model_key", ""),
+        "predicted_equivalence_status": row.get("predicted_equivalence_status", PREDICTION_STATUS_PENDING),
+        "predicted_equivalence_reason": row.get("predicted_equivalence_reason", "recording_not_finalized"),
         "thermal_mode": thermal_features.get("thermal_source", ""),
         "thermal_calibrated": thermal_calibrated,
         "thermal_conversion_status": thermal_conversion_status,
@@ -6405,9 +9587,13 @@ def build_live_payload(
         "thermal_celsius_fallback_reason": str(thermal_features.get("thermal_celsius_fallback_reason", "")),
         "thermal_conversion_model": str(thermal_features.get("thermal_conversion_model", "")),
         "thermal_conversion_calibration_source": str(thermal_features.get("thermal_conversion_calibration_source", "")),
-        "temperature_avg_c": _json_float(thermal_features.get("thermal_roi_avg")),
-        "temperature_min_c": _json_float(thermal_features.get("thermal_roi_min")),
-        "temperature_max_c": _json_float(thermal_features.get("thermal_roi_max")),
+        "celsius_allowed": celsius_allowed,
+        "temperature_provenance": "windows_official_mini2_roi_scalar" if celsius_allowed else "",
+        "temperature_scope": "thermal_roi" if celsius_allowed else "",
+        "full_matrix_celsius_allowed": False,
+        "temperature_avg_c": temperature_avg_c,
+        "temperature_min_c": temperature_min_c,
+        "temperature_max_c": temperature_max_c,
         "temperature_delta_c": _json_float(thermal_features.get("thermal_roi_delta")),
         "temperature_std_c": _json_float(thermal_features.get("thermal_roi_std")),
         "thermal_roi_range": _json_float(thermal_features.get("thermal_roi_range")),
@@ -6439,6 +9625,11 @@ def build_live_payload(
         "auto_roi_result_reason": row.get("auto_roi_result_reason", ""),
         "auto_roi_dropped_pending": row.get("auto_roi_dropped_pending", 0),
         "mini2_dropped_frames": row.get("mini2_dropped_frames", 0),
+        "mini2_preview_dropped_frames": row.get("mini2_preview_dropped_frames", 0),
+        "mini2_recording_dropped_frames": row.get("mini2_recording_dropped_frames", 0),
+        "mini2_recording_backlog_frames": row.get("mini2_recording_backlog_frames", 0),
+        "mini2_recording_max_backlog_frames": row.get("mini2_recording_max_backlog_frames", 0),
+        "mini2_capture_fps": _json_float(row.get("mini2_capture_fps")),
         "mini2_retry_count": row.get("mini2_retry_count", 0),
         "mini2_reconnect_count": row.get("mini2_reconnect_count", 0),
         "mini2_retry_interval_s": _json_float(row.get("mini2_retry_interval_s")),
@@ -6481,17 +9672,27 @@ def build_live_payload(
                 "csv_path": "",
                 "csv_updated_epoch_s": None,
                 "csv_recording": False,
+                "csv_finalizing": False,
                 "csv_state": "idle",
                 "csv_download_url": "/api/csv",
                 "csv_event_note": "",
                 "csv_mark_sequence": 0,
                 "csv_recording_elapsed_s": None,
+                "csv_recording_started_epoch_s": None,
+                "predicted_equivalence_status": PREDICTION_STATUS_PENDING,
+                "predicted_equivalence_reason": "recording_not_finalized",
             }
         )
     else:
         for key in (
             "pump_elapsed_s",
             "pump_run_rate_ml_per_s",
+            "pump_dosing_stage",
+            "pump_nominal_rate_ml_per_s",
+            "pump_rate_basis",
+            "auto_stop_slow_stage_enabled",
+            "auto_stop_slow_rate_steps_per_s",
+            "auto_stop_slow_nominal_rate_ml_per_s",
             "injected_volume_ml",
             "theoretical_equivalence_volume_ml",
             "theoretical_equivalence_time_s",
@@ -6548,13 +9749,38 @@ def build_live_payload(
                 "csv_path": csv_status.get("path", ""),
                 "csv_updated_epoch_s": _json_float(csv_status.get("updated_epoch_s")),
                 "csv_recording": bool(csv_status.get("recording")),
+                "csv_finalizing": bool(csv_status.get("finalizing")),
                 "csv_state": csv_status.get("state", ""),
                 "csv_download_url": "/api/csv",
                 "csv_event_note": csv_status.get("csv_event_note", ""),
                 "csv_mark_sequence": csv_status.get("csv_mark_sequence", 0),
                 "csv_recording_elapsed_s": _json_float(csv_status.get("recording_elapsed_s")),
+                "csv_recording_started_epoch_s": _json_float(csv_status.get("started_epoch_s")),
+                "predicted_equivalence_status": csv_status.get(
+                    "predicted_equivalence_status", PREDICTION_STATUS_PENDING
+                ),
+                "predicted_equivalence_reason": csv_status.get(
+                    "predicted_equivalence_reason", "recording_not_finalized"
+                ),
             }
         )
+        if csv_status.get("predicted_equivalence_status") != PREDICTION_STATUS_AVAILABLE:
+            for key in (
+                "predicted_equivalence_volume_ml",
+                "sample_concentration_from_predicted_equivalence_M",
+                "predicted_sample_concentration_error_percent",
+                "predicted_equivalence_pH",
+                "predicted_equivalence_confidence",
+            ):
+                payload[key] = None
+            for key in (
+                "predicted_equivalence_pH_model",
+                "predicted_equivalence_pH_warning",
+                "predicted_equivalence_source",
+                "predicted_equivalence_evidence",
+                "predicted_equivalence_model_key",
+            ):
+                payload[key] = ""
     if primary_mask is not None:
         payload.update(
             {
@@ -6676,6 +9902,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frames", type=int, default=125)
     parser.add_argument("--frame-rate-hz", type=float, default=MINI2_FRAME_RATE_HZ)
+    parser.add_argument(
+        "--mini2-recording-queue-frames",
+        type=int,
+        default=2048,
+        help="bounded lossless Mini2 recording FIFO; preview remains latest-only",
+    )
     parser.add_argument("--mini2-index", default="auto", help="Mini2 OpenCV camera index, or auto")
     parser.add_argument("--mini2-max-index", type=int, default=10, help="camera indices to probe when --mini2-index auto")
     parser.add_argument("--mini2-backend", default="AUTO", choices=["AUTO", "ANY", "DSHOW", "MSMF"])
@@ -6698,18 +9930,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dll-dir", default=default_dll_dir())
     parser.add_argument("--output", default=str(ROOT / "data" / "raw" / "windows-live-mini2-visible.csv"))
     parser.add_argument(
+        "--endpoint-ml-model",
+        default=str(DEFAULT_ENDPOINT_ML_MODEL),
+        help="trusted type-conditioned sensor ranker used after CSV recording stops; empty disables",
+    )
+    parser.add_argument(
         "--typewise-ml-model",
         default=str(DEFAULT_TYPEWISE_LIVE_ML_MODEL),
-        help="trusted sklearn typewise classifier artifact used at CSV stop; empty disables",
+        help="trusted causal classifier used by optional auto-stop and as post-run fallback; empty disables",
     )
     parser.add_argument(
         "--ml-model",
         default=str(DEFAULT_LIVE_ML_MODEL),
         help="legacy simple JSON regression model used only after leakage safety checks; empty disables",
     )
-    parser.add_argument("--stream-every", type=int, default=5, help="rewrite output CSV every N rows so the dashboard can poll it live; 0 disables")
+    parser.add_argument("--stream-every", type=int, default=0, help="legacy whole-CSV rewrite interval; keep 0 for low-latency SSE/in-memory recording")
     parser.add_argument("--preview-dir", default=str(ROOT / "website" / "live"), help="write latest visible.bmp and thermal.json for the web app; empty disables")
-    parser.add_argument("--preview-every", type=int, default=5, help="rewrite live preview files every N rows; 0 disables")
+    parser.add_argument("--preview-every", type=int, default=0, help="legacy BMP/JSON preview interval; keep 0 when MJPEG/SSE is enabled")
     parser.add_argument("--live-stream-host", default="127.0.0.1", help="host for low-latency MJPEG/SSE browser stream")
     parser.add_argument("--live-stream-port", type=int, default=0, help="port for low-latency MJPEG/SSE browser stream; 0 disables")
     parser.add_argument("--live-stream-jpeg-quality", type=int, default=75, help="JPEG quality for MJPEG preview frames")
@@ -6731,12 +9968,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sync-method", choices=["nearest"], default="nearest")
     parser.add_argument("--max-sync-offset-ms", type=float, default=40.0)
     parser.add_argument("--visible-sync-max-age-ms", type=float, default=1000.0, help="reject visible frames older than this sync window; 0 disables the age guard")
+    parser.add_argument(
+        "--visible-future-wait-ms",
+        type=float,
+        default=10.0,
+        help="maximum wait for a closer visible frame; bounded to protect live latency",
+    )
     parser.add_argument("--pump-serial-port", default=os.environ.get("PUMP_SERIAL_PORT", ""), help="Arduino pump serial port, COM3, auto, or empty/off to disable")
     parser.add_argument("--pump-serial-baud", type=int, default=int(os.environ.get("PUMP_SERIAL_BAUD", "9600") or 9600), help="Arduino pump serial baud; original sketch uses 9600")
     parser.add_argument("--pump-serial-retry-interval-s", type=float, default=float(os.environ.get("PUMP_SERIAL_RETRY_INTERVAL_S", "2.0") or 2.0), help="seconds between Arduino auto-port reconnect attempts when --pump-serial-port=auto")
+    parser.add_argument("--pump-serial-protocol", choices=["auto", "ack", "legacy"], default=os.environ.get("PUMP_SERIAL_PROTOCOL", "auto"), help="auto-detect current acknowledged firmware or original byte-only a/b/c firmware")
     parser.add_argument("--pump-start-command", choices=["a", "b", "c"], default=os.environ.get("PUMP_START_COMMAND", "b"), help="command sent when CSV recording starts")
     parser.add_argument("--pump-retract-command", choices=["a", "b", "c"], default=os.environ.get("PUMP_RETRACT_COMMAND", "a"), help="command sent by the pull-back button")
     parser.add_argument("--pump-stop-command", choices=["a", "b", "c"], default=os.environ.get("PUMP_STOP_COMMAND", "c"), help="command sent when CSV recording stops")
+    parser.add_argument("--pump-pulse-direction", choices=["a", "b"], default=os.environ.get("PUMP_PULSE_DIRECTION", "b"), help="physical direction used by firmware STEP pulses")
     parser.add_argument("--print-every", type=int, default=5)
     args = parser.parse_args(argv)
     if args.frames <= 0:
@@ -6771,6 +10016,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--live-stream-port must be zero or positive")
     if not 1 <= args.live_stream_jpeg_quality <= 100:
         parser.error("--live-stream-jpeg-quality must be between 1 and 100")
+    if args.mini2_recording_queue_frames <= 0:
+        parser.error("--mini2-recording-queue-frames must be positive")
     if not 0.0 <= args.yolo_min_confidence <= 1.0:
         parser.error("--yolo-min-confidence must be between 0 and 1")
     if not 0.0 < args.yolo_max_area_fraction <= 1.0:
@@ -6791,14 +10038,27 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-sync-offset-ms must be positive")
     if args.visible_sync_max_age_ms < 0:
         parser.error("--visible-sync-max-age-ms must be non-negative")
+    if args.visible_future_wait_ms < 0:
+        parser.error("--visible-future-wait-ms must be non-negative")
     if args.pump_serial_baud <= 0:
         parser.error("--pump-serial-baud must be positive")
     if args.mini2_fourcc.lower() in {"yuyv422", "yuyv"}:
         args.mini2_fourcc = "YUY2"
     if len(args.mini2_fourcc) != 4:
         parser.error("--mini2-fourcc must be a 4-character OpenCV FOURCC, e.g. YUY2")
-    run(args)
-    return 0
+    instance_lock = CollectorInstanceLock(
+        ROOT / ".runtime" / "windows_live_collect.lock"
+    )
+    try:
+        instance_lock.acquire()
+    except RuntimeError as exc:
+        print(f"Collector start rejected: {exc}", file=sys.stderr, flush=True)
+        return 2
+    try:
+        run(args)
+        return 0
+    finally:
+        instance_lock.release()
 
 
 if __name__ == "__main__":

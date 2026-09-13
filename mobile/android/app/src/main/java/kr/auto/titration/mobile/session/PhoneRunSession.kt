@@ -43,6 +43,57 @@ class PhoneRunSession(
         private set
     val rows: MutableList<CsvFeatureRow> = mutableListOf()
     private var timeline: RecordingTimeline? = null
+    private var predictionGeneration: Long = 0
+    var finalPredictionFields: Map<String, String> = emptyMap()
+        private set
+
+    fun beginFinalPrediction(): Long {
+        require(state == SessionState.STOPPED || state == SessionState.EXPORTED) { "final prediction requires stopped recording" }
+        predictionGeneration += 1
+        finalPredictionFields = mapOf("predicted_equivalence_status" to "pending", "predicted_equivalence_reason" to "analyzing_on_phone")
+        return predictionGeneration
+    }
+
+    fun finishFinalPrediction(
+        generation: Long, resultRunId: String, status: String,
+        volumeMl: Double?, confidence: Double?, source: String, reason: String,
+    ): Boolean {
+        if (generation != predictionGeneration || resultRunId != runId ||
+            (state != SessionState.STOPPED && state != SessionState.EXPORTED)) return false
+        require(status in setOf("available", "withheld", "unavailable")) { "invalid endpoint result status" }
+        val fields = linkedMapOf("predicted_equivalence_status" to status,
+            "predicted_equivalence_reason" to reason,
+            "predicted_equivalence_source" to source)
+        if (status == "available") {
+            require(hasEndpointObservations()) { "insufficient_or_flat_endpoint_observations" }
+            require(source == "type_conditioned_sensor_endpoint_ranker") { "unexpected model source" }
+            require(volumeMl != null && volumeMl.isFinite() && volumeMl > 0.0) { "invalid predicted volume" }
+            require(rows.isNotEmpty() && volumeMl <= rows.maxOf { it.injectedVolumeMl } + 0.000001) { "predicted volume exceeds recorded volume" }
+            require(confidence != null && confidence.isFinite() && confidence in 0.0..1.0) { "invalid model confidence" }
+            fields["predicted_equivalence_volume_ml"] = volumeMl.toString()
+            fields["predicted_equivalence_confidence"] = confidence.toString()
+            fields["sample_concentration_from_predicted_equivalence_M"] = config.sampleConcentrationFromTitrantVolumeMl(volumeMl).toString()
+            fields["predicted_equivalence_evidence"] = reason
+        }
+        finalPredictionFields = fields
+        return true
+    }
+
+    private fun hasEndpointObservations(): Boolean {
+        if (rows.size < 8 || rows.maxOf { it.timeS } - rows.minOf { it.timeS } < 3.0) return false
+        if (rows.any { !it.timeS.isFinite() || it.timeS < 0 || !it.injectedVolumeMl.isFinite() || it.injectedVolumeMl < 0 }) return false
+        if (rows.maxOf { it.injectedVolumeMl } <= rows.minOf { it.injectedVolumeMl }) return false
+        val visible = rows.count { listOf(it.visibleHMean, it.visibleSMean, it.visibleVMean).all { v -> v != null && v.isFinite() } }
+        val thermal = rows.count {
+            val a = it.thermalRawRoiP50; val b = it.thermalRawRoiP95
+            a != null && b != null && a.isFinite() && b.isFinite() && a > 0 && b >= a
+        }
+        if (visible < rows.size * 0.8 || thermal < rows.size * 0.8) return false
+        val channels = listOf(rows.mapNotNull { it.visibleHMean }, rows.mapNotNull { it.visibleSMean },
+            rows.mapNotNull { it.visibleVMean }, rows.mapNotNull { it.thermalRawRoiP50 }, rows.mapNotNull { it.thermalRawRoiP95 })
+        return channels.any { values -> values.size > 1 && values.max() - values.min() > 1e-12 }
+    }
+
     private var pumpSnapshot: PumpSnapshot = PumpSnapshot(
         mode = "android_manual_bluetooth",
         state = "idle",
@@ -52,6 +103,8 @@ class PhoneRunSession(
 
     fun startSetup(config: ExperimentConfig = ExperimentConfig()) {
         this.config = config
+        predictionGeneration += 1
+        finalPredictionFields = emptyMap()
         frameCount = 0
         recordedRowCount = 0
         lastFrame = null
@@ -75,6 +128,8 @@ class PhoneRunSession(
 
     fun startRecording(startedElapsedNanos: Long, pumpRateMlPerS: Double = config.pumpRunRateMlPerS) {
         require(state == SessionState.ROI_LOCKED) { "recording requires locked ROI" }
+        predictionGeneration += 1
+        finalPredictionFields = emptyMap()
         timeline = RecordingTimeline(startedElapsedNanos, pumpRateMlPerS)
         state = SessionState.RECORDING
     }
@@ -193,6 +248,7 @@ class PhoneRunSession(
             thermalRawRoiStd = thermalMaskStats?.std,
             thermalRawRoiDelta = thermalMaskStats?.delta ?: storedRawRoi?.let { it.max - it.min },
             thermalRawRoiP50 = thermalMaskStats?.p50 ?: storedRawRoi?.p50,
+            thermalRawRoiP95 = thermalMaskStats?.p95 ?: storedRawRoi?.p95,
             thermalRawRoiIqr = thermalMaskStats?.iqr,
             thermalRawStd = thermalMatrixStats?.std,
             thermalStatusRawJson = thermalStreamSnapshot.rawJson,
@@ -217,6 +273,19 @@ class PhoneRunSession(
             thermalDeviceGlobalRequestedDisplayUnit = thermalStreamSnapshot.deviceGlobalSummary?.requestedDisplayUnit.orEmpty(),
             thermalDeviceGlobalRequestedDisplayUnitCode = thermalStreamSnapshot.deviceGlobalSummary?.requestedDisplayUnitCode,
             thermalFullMatrixCelsiusAllowed = thermalStreamSnapshot.fullMatrixCelsiusAllowed,
+            officialMeasurementStatus = thermalStreamSnapshot.officialMeasurement?.status.orEmpty(),
+            officialMeasurementReason = thermalStreamSnapshot.officialMeasurement?.reason.orEmpty(),
+            officialMeasurementFrameCounter = thermalStreamSnapshot.officialMeasurement?.frameCounter,
+            officialTemperatureAvgC = thermalStreamSnapshot.officialMeasurement?.avgC,
+            officialTemperatureMinC = thermalStreamSnapshot.officialMeasurement?.minC,
+            officialTemperatureMaxC = thermalStreamSnapshot.officialMeasurement?.maxC,
+            officialTemperatureCenterC = thermalStreamSnapshot.officialMeasurement?.centerC,
+            officialTemperatureProvenance = thermalStreamSnapshot.officialMeasurement?.provenance.orEmpty(),
+            officialTemperatureScope = thermalStreamSnapshot.officialMeasurement?.scope.orEmpty(),
+            officialMeasurementMatchesCurrentFrame = thermalStreamSnapshot.officialMeasurement?.matchesCurrentFrame,
+            officialMeasurementTemporalScope = thermalStreamSnapshot.officialMeasurement?.temporalScope,
+            officialMeasurementAgeFrames = thermalStreamSnapshot.officialMeasurement?.ageFrames,
+            officialFullMatrixCelsiusAllowed = false,
             pendingAutoCandidateRequests = frame.pendingAutoCandidateRequests,
             pendingAutoCandidateTarget = frame.pendingAutoCandidateTarget,
             warnings = buildWarnings(frame),
@@ -260,6 +329,7 @@ class PhoneRunSession(
             max = maxValue.toDouble(),
             std = sqrt(variance / selected.size),
             p50 = p50,
+            p95 = percentile(selected, 0.95),
             iqr = q3 - q1,
             delta = (maxValue - minValue).toDouble(),
         )
@@ -267,8 +337,10 @@ class PhoneRunSession(
 
     private fun percentile(sortedValues: List<Int>, fraction: Double): Double {
         if (sortedValues.isEmpty()) return Double.NaN
-        val index = ((sortedValues.size - 1) * fraction).roundToInt().coerceIn(0, sortedValues.size - 1)
-        return sortedValues[index].toDouble()
+        val index = (sortedValues.size - 1) * fraction
+        val low = kotlin.math.floor(index).toInt().coerceIn(0, sortedValues.size - 1)
+        val high = kotlin.math.ceil(index).toInt().coerceIn(0, sortedValues.size - 1)
+        return sortedValues[low] + (sortedValues[high] - sortedValues[low]) * (index - low)
     }
 
     private data class RawStats(
@@ -277,6 +349,7 @@ class PhoneRunSession(
         val max: Double,
         val std: Double,
         val p50: Double,
+        val p95: Double,
         val iqr: Double,
         val delta: Double,
     )
@@ -293,10 +366,9 @@ class PhoneRunSession(
     ) {
         companion object {
             fun fromJson(json: JSONObject): ThermalDeviceGlobalSummary? {
-                if (!json.optBoolean("celsius_allowed", false)) return null
                 if (json.optBoolean("full_matrix_celsius_allowed", false)) return null
-                val summary = json.optJSONObject("temperature_summary")
-                    ?: json.optJSONObject("device_global_summary")
+                val summary = json.optJSONObject("device_global_summary")
+                    ?: json.optJSONObject("temperature_summary")
                 val provenance = firstNonBlank(
                     summary?.optCleanString("provenance"),
                     json.optCleanString("temperature_provenance"),
@@ -327,6 +399,7 @@ class PhoneRunSession(
                     json.optFiniteDouble("temperature_max_c"),
                     json.optFiniteDouble("max_c"),
                 ) ?: return null
+                if (min > avg || avg > max) return null
 
                 return ThermalDeviceGlobalSummary(
                     avgC = avg,
@@ -361,6 +434,100 @@ class PhoneRunSession(
         }
     }
 
+
+    private data class OfficialMeasurementSummary(
+        val status: String,
+        val reason: String,
+        val frameCounter: Long?,
+        val avgC: Double,
+        val minC: Double,
+        val maxC: Double,
+        val centerC: Double?,
+        val provenance: String,
+        val scope: String,
+        val matchesCurrentFrame: Boolean,
+        val temporalScope: String,
+        val ageFrames: Long?,
+    ) {
+        companion object {
+            private const val PROVENANCE = "official_f2_analyzer_measurement_stats"
+
+            fun fromJson(json: JSONObject): OfficialMeasurementSummary? {
+                val status = json.optCleanString("official_measurement_status")
+                val provenance = json.optCleanString("official_temperature_provenance")
+                val scope = json.optCleanString("official_temperature_scope")
+                if (status != "READY" || provenance != PROVENANCE || scope !in setOf("fullscreen", "rectangle")) return null
+                if (json.optBoolean("official_full_matrix_celsius_allowed", false)) return null
+                val avg = json.optFiniteDouble("official_temperature_avg_c") ?: return null
+                val min = json.optFiniteDouble("official_temperature_min_c") ?: return null
+                val max = json.optFiniteDouble("official_temperature_max_c") ?: return null
+                if (min > avg || avg > max) return null
+                val center = json.optFiniteDouble("official_temperature_center_c")
+                if (center != null && center !in min..max) return null
+                val currentFrameCounter = json.optStrictLong("frame_counter") ?: return null
+                val measurementFrameCounter =
+                    json.optStrictLong("official_measurement_frame_counter") ?: return null
+                if (
+                    currentFrameCounter < 0L ||
+                    measurementFrameCounter < 0L ||
+                    measurementFrameCounter > currentFrameCounter
+                ) {
+                    return null
+                }
+                val ageFrames = currentFrameCounter - measurementFrameCounter
+                val matchesCurrentFrame =
+                    currentFrameCounter == measurementFrameCounter &&
+                    json.optStrictBoolean("official_measurement_matches_current_frame") == true &&
+                    json.optCleanString("official_measurement_temporal_scope") == "current_frame" &&
+                    json.optStrictLong("official_measurement_age_frames") == 0L
+                return OfficialMeasurementSummary(
+                    status = status,
+                    reason = json.optCleanString("official_measurement_reason"),
+                    frameCounter = measurementFrameCounter,
+                    avgC = avg,
+                    minC = min,
+                    maxC = max,
+                    centerC = center,
+                    provenance = provenance,
+                    scope = scope,
+                    matchesCurrentFrame = matchesCurrentFrame,
+                    temporalScope = if (matchesCurrentFrame) "current_frame" else "last_completed_measurement",
+                    ageFrames = ageFrames,
+                )
+            }
+
+            private fun JSONObject.optCleanString(name: String): String =
+                if (has(name) && !isNull(name)) optString(name).trim() else ""
+
+            private fun JSONObject.optFiniteDouble(name: String): Double? =
+                if (has(name) && !isNull(name)) optDouble(name).takeIf { it.isFinite() } else null
+
+            private fun JSONObject.optStrictBoolean(name: String): Boolean? =
+                if (has(name) && !isNull(name)) opt(name) as? Boolean else null
+
+            private fun JSONObject.optStrictLong(name: String): Long? {
+                if (!has(name) || isNull(name)) return null
+                return when (val value = opt(name)) {
+                    is Byte -> value.toLong()
+                    is Short -> value.toLong()
+                    is Int -> value.toLong()
+                    is Long -> value
+                    is Float -> value.toExactLongOrNull()
+                    is Double -> value.toExactLongOrNull()
+                    is String -> value.trim().toLongOrNull()
+                    else -> null
+                }
+            }
+
+            private fun Number.toExactLongOrNull(): Long? {
+                val doubleValue = toDouble()
+                if (!doubleValue.isFinite()) return null
+                val longValue = toLong()
+                return longValue.takeIf { it.toDouble() == doubleValue }
+            }
+        }
+    }
+
     private data class ThermalStreamSnapshot(
         val rawJson: String,
         val packetClassification: String,
@@ -377,6 +544,7 @@ class PhoneRunSession(
         val celsiusAllowed: Boolean,
         val deviceGlobalSummary: ThermalDeviceGlobalSummary?,
         val fullMatrixCelsiusAllowed: Boolean,
+        val officialMeasurement: OfficialMeasurementSummary?,
     ) {
         companion object {
             val EMPTY = ThermalStreamSnapshot(
@@ -395,6 +563,7 @@ class PhoneRunSession(
                 celsiusAllowed = false,
                 deviceGlobalSummary = null,
                 fullMatrixCelsiusAllowed = false,
+                officialMeasurement = null,
             )
 
             fun fromJson(rawStreamJson: JSONObject?): ThermalStreamSnapshot {
@@ -402,6 +571,7 @@ class PhoneRunSession(
                 val selectedProfile = json.optJSONObject("selected_profile")
                 val validationState = json.optJSONObject("converter_validation_state")
                 val deviceGlobalSummary = ThermalDeviceGlobalSummary.fromJson(json)
+                val officialMeasurement = OfficialMeasurementSummary.fromJson(json)
                 return ThermalStreamSnapshot(
                     rawJson = json.toString(),
                     packetClassification = json.optString("packet_classification"),
@@ -415,9 +585,10 @@ class PhoneRunSession(
                     selectedProfileAllowedSizes = (selectedProfile?.optJSONArray("allowed_packet_sizes") ?: json.optJSONArray("selected_profile_allowed_sizes")).csvString(),
                     converterProfileStatus = json.optString("converter_profile_status"),
                     converterValidationState = validationState?.toString().orEmpty(),
-                    celsiusAllowed = deviceGlobalSummary != null,
+                    celsiusAllowed = officialMeasurement?.matchesCurrentFrame == true,
                     deviceGlobalSummary = deviceGlobalSummary,
-                    fullMatrixCelsiusAllowed = deviceGlobalSummary != null && json.optBoolean("full_matrix_celsius_allowed", false),
+                    fullMatrixCelsiusAllowed = false,
+                    officialMeasurement = officialMeasurement,
                 )
             }
 

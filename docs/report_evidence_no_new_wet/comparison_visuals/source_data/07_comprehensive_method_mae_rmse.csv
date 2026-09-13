@@ -1,0 +1,8 @@
+﻿method,method_label,mae_ml,rmse_ml,run_count
+manual_current,수동 적정 (현재 기록),0.6416666666666663,0.7499999999999994,12
+color_major_slope,색상 기울기 (비ML),1.1833333333333338,1.7358955421722053,12
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),2.0333333333333337,3.3080709383768263,12
+machine_learning_color,색상 ML (이전 파이프라인),0.5477698333333327,0.7536889758525498,12
+machine_learning_thermal,열 ML (이전 파이프라인),0.9172639166666663,1.266932263917551,12
+machine_learning_fusion,융합 ML (이전 파이프라인),0.4762603333333333,0.8311218684544203,12
+current_final_model,최종 선택 모델 (현재),0.07754258333333297,0.09077263817592096,12

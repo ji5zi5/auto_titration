@@ -27,8 +27,9 @@ if "%AUTO_COLLECT%"=="" set "AUTO_COLLECT=1"
 if "%AUTO_FRAMES%"=="" set "AUTO_FRAMES=999999"
 if "%CLEAN_OLD%"=="" set "CLEAN_OLD=1"
 if "%VISIBLE_ROI_DETECTOR%"=="" set "VISIBLE_ROI_DETECTOR=yolo"
-if "%AUTO_INSTALL_YOLO%"=="" set "AUTO_INSTALL_YOLO=1"
+if "%AUTO_INSTALL_YOLO%"=="" set "AUTO_INSTALL_YOLO=0"
 if "%AUTO_INSTALL_REQUIREMENTS%"=="" set "AUTO_INSTALL_REQUIREMENTS=1"
+if "%OPEN_BROWSER%"=="" set "OPEN_BROWSER=1"
 
 if /I not "%AUTO_INSTALL_REQUIREMENTS%"=="0" (
   echo Checking Python dependencies...
@@ -59,10 +60,30 @@ if /I "%VISIBLE_ROI_DETECTOR%"=="yolo" if not "%AUTO_INSTALL_YOLO%"=="0" (
 )
 
 if /I not "%CLEAN_OLD%"=="0" (
-  echo Closing old Auto Titration server/collector processes for this folder...
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and ($_.CommandLine -match 'tools\\dashboard_server.py|tools\\windows_live_collect.py|20_windows_live_collect.bat') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force } catch { } }"
+  echo Closing old Auto Titration dashboard process...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -match 'tools\\dashboard_server.py' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force } catch { } }"
   timeout /t 1 >nul
 )
+
+set "REQUESTED_PORT=%PORT%"
+set "PORT="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$start=[int]$env:REQUESTED_PORT; $blocked=[int]$env:LIVE_STREAM_PORT; for($p=$start; $p -le $start+20; $p++){ if($p -eq $blocked){ continue }; $listener=Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue; if(-not $listener){ Write-Output $p; exit 0 } }; exit 1"`) do set "PORT=%%P"
+if "%PORT%"=="" (
+  echo No free dashboard port was found from %REQUESTED_PORT% through %REQUESTED_PORT%+20.
+  pause
+  exit /b 1
+)
+if not "%PORT%"=="%REQUESTED_PORT%" echo Port %REQUESTED_PORT% is already used. Dashboard will use port %PORT% instead.
+
+set "REQUESTED_LIVE_STREAM_PORT=%LIVE_STREAM_PORT%"
+set "LIVE_STREAM_PORT="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$start=[int]$env:REQUESTED_LIVE_STREAM_PORT; $blocked=[int]$env:PORT; for($p=$start; $p -le $start+20; $p++){ if($p -eq $blocked){ continue }; $listener=Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue; if(-not $listener){ Write-Output $p; exit 0 } }; exit 1"`) do set "LIVE_STREAM_PORT=%%P"
+if "%LIVE_STREAM_PORT%"=="" (
+  echo No free collector port was found from %REQUESTED_LIVE_STREAM_PORT% through %REQUESTED_LIVE_STREAM_PORT%+20.
+  pause
+  exit /b 1
+)
+if not "%LIVE_STREAM_PORT%"=="%REQUESTED_LIVE_STREAM_PORT%" echo Port %REQUESTED_LIVE_STREAM_PORT% is already used. Collector will use port %LIVE_STREAM_PORT% instead.
 
 set "LAN_IP="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ips=Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254*' -and $_.InterfaceAlias -notmatch 'vEthernet|Loopback|WSL|VMware|VirtualBox|Bluetooth' }; $ip=($ips | Sort-Object @{Expression={if($_.IPAddress -like '192.168.*'){0}elseif($_.IPAddress -like '10.*'){1}elseif($_.IPAddress -like '172.*'){2}else{3}}} | Select-Object -First 1 -ExpandProperty IPAddress); if($ip){$ip}"`) do set "LAN_IP=%%I"
@@ -78,12 +99,14 @@ echo.
 start "Auto Titration App Server" cmd /k %PYTHON_CMD% tools\dashboard_server.py --host %DASHBOARD_HOST% --port %PORT% --csv "%LIVE_CSV%" --live-stream-base "http://127.0.0.1:%LIVE_STREAM_PORT%"
 
 echo Waiting for app server...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='http://127.0.0.1:%PORT%/'; for($i=0; $i -lt 30; $i++){ try { $r=Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 1; if($r.StatusCode -eq 200){ exit 0 } } catch { } Start-Sleep -Milliseconds 500 }; exit 1"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u='http://127.0.0.1:%PORT%/api/health'; for($i=0; $i -lt 30; $i++){ try { $r=Invoke-WebRequest -UseBasicParsing -Uri $u -TimeoutSec 1; $j=$r.Content | ConvertFrom-Json; if($r.StatusCode -eq 200 -and $j.ok -eq $true -and $j.service -eq 'auto_titration_dashboard'){ exit 0 } } catch { } Start-Sleep -Milliseconds 500 }; exit 1"
 if errorlevel 1 (
   echo App server did not respond. Check the "Auto Titration App Server" window.
   pause
   exit /b 1
 )
+
+echo Verified Auto Titration dashboard: http://127.0.0.1:%PORT%/
 
 if /I not "%AUTO_COLLECT%"=="0" (
   if "%FRAMES%"=="" set "FRAMES=%AUTO_FRAMES%"
@@ -106,5 +129,5 @@ if /I not "%AUTO_COLLECT%"=="0" (
   echo Collector auto-start skipped because AUTO_COLLECT=0.
 )
 
-start "" "http://127.0.0.1:%PORT%/"
+if /I not "%OPEN_BROWSER%"=="0" start "" "http://127.0.0.1:%PORT%/"
 exit /b 0

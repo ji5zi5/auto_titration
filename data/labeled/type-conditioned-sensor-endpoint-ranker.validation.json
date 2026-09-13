@@ -1,0 +1,68 @@
+{
+  "status": "pass",
+  "artifact": "data/labeled/type-conditioned-sensor-endpoint-ranker.pkl",
+  "deployment_strategy": "median_of_12_leave_one_run_out_rankers",
+  "model_types": [
+    "strong_acid_strong_base",
+    "strong_acid_weak_base",
+    "weak_acid_strong_base",
+    "weak_acid_weak_base"
+  ],
+  "fold_counts": {
+    "strong_acid_strong_base": 12,
+    "strong_acid_weak_base": 12,
+    "weak_acid_strong_base": 12,
+    "weak_acid_weak_base": 12
+  },
+  "blocked_features": {
+    "strong_acid_strong_base": [],
+    "strong_acid_weak_base": [],
+    "weak_acid_strong_base": [],
+    "weak_acid_weak_base": []
+  },
+  "metrics": {
+    "selected_configuration_oob_mape_percent": 0.2950000694444431,
+    "full_fit_replay_mape_percent": 1.2254006249999996,
+    "fold_ensemble_replay_mape_percent": 1.1056003472222218,
+    "same_type_only_loro_mape_percent": 9.941399027777779,
+    "july_unknown_repeatability_cv_percent": 0.9611503693940324,
+    "single_run_prediction_seconds": 0.5470770219999395
+  },
+  "july_predictions": [
+    {
+      "source_file": "auto-titration-live-20260726-150424-session-5.csv",
+      "endpoint_ml": 18.495477,
+      "concentration_M": 0.09247738500000001
+    },
+    {
+      "source_file": "auto-titration-live-20260726-151233-session-7.csv",
+      "endpoint_ml": 18.822741,
+      "concentration_M": 0.094113705
+    },
+    {
+      "source_file": "auto-titration-live-20260726-151632-session-8.csv",
+      "endpoint_ml": 18.787986,
+      "concentration_M": 0.09393993
+    }
+  ],
+  "accuracy_scope": "June values are development/OOB or replay diagnostics. July has no standardized truth and supports repeatability only, not accuracy.",
+  "checks": {
+    "four_routes": true,
+    "twelve_fold_estimators_per_route": true,
+    "no_forbidden_model_features": true,
+    "oob_reproduces_selected_development_result": true,
+    "ensemble_improves_full_fit_replay": true,
+    "ensemble_beats_same_type_only_loro": true,
+    "july_repeatability_preserved": true,
+    "prediction_latency_within_gate": true,
+    "site_uses_endpoint_model_before_fallback": true,
+    "causal_auto_stop_model_preserved": true,
+    "tests_pass": true
+  },
+  "tests": {
+    "ran": true,
+    "passed": true,
+    "count": 219,
+    "failure": ""
+  }
+}

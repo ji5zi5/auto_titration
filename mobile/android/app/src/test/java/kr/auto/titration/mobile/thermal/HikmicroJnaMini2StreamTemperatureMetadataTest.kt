@@ -2,6 +2,7 @@ package kr.auto.titration.mobile.thermal
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,13 +36,30 @@ class HikmicroJnaMini2StreamTemperatureMetadataTest {
         }
     }
 
-    @Test fun deviceTemperatureSummaryJsonSourceEmitsOnlyDeviceGlobalScopeMetadata() {
+    @Test fun deviceTemperatureSummaryRejectsNonFiniteOrUnorderedValues() {
+        listOf(
+            Triple(Double.NaN, 20.0, 30.0),
+            Triple(25.0, Double.NEGATIVE_INFINITY, 30.0),
+            Triple(25.0, 20.0, Double.POSITIVE_INFINITY),
+            Triple(19.0, 20.0, 30.0),
+            Triple(31.0, 20.0, 30.0),
+            Triple(25.0, 30.0, 20.0),
+        ).forEach { (average, minimum, maximum) ->
+            assertThrows(IllegalArgumentException::class.java) {
+                Mini2DeviceTemperatureSummary(average, minimum, maximum, "celsius", 0)
+            }
+        }
+    }
+
+    @Test fun deviceTemperatureSummaryJsonRemainsDiagnosticAndCannotSetGenericCelsius() {
         // Local JVM unit tests use Android's host-stub org.json.JSONObject, whose mutating methods
         // throw "Method ... not mocked". This source-shape assertion keeps the JSON contract covered
         // without replacing production's Android JSONObject construction with a test-only fake.
         val source = source("kr/auto/titration/mobile/thermal/Mini2RawStreamStatus.kt")
         val summaryJson = source.substringAfter("fun toJson(): JSONObject = JSONObject()")
             .substringBefore("/**\n * Honest raw-stream status")
+        val rawStatusJson = source.substringAfter("fun toJson(): JSONObject {")
+            .substringBefore("private fun classifyPostStartState()")
 
         listOf(
             ".put(\"avg_c\", avgC)",
@@ -51,9 +69,31 @@ class HikmicroJnaMini2StreamTemperatureMetadataTest {
             ".put(\"requested_display_unit_code\", requestedDisplayUnitCode)",
             ".put(\"provenance\", provenance)",
             ".put(\"scope\", scope)",
-            ".put(\"celsius_allowed\", true)",
+            ".put(\"celsius_allowed\", false)",
             ".put(\"full_matrix_celsius_allowed\", false)",
         ).forEach { token -> assertTrue("missing JSON token: $token", summaryJson.contains(token)) }
+
+        listOf(
+            ".put(\"celsius_allowed\", false)",
+            ".put(\"temperature_avg_c\", JSONObject.NULL)",
+            ".put(\"temperature_min_c\", JSONObject.NULL)",
+            ".put(\"temperature_max_c\", JSONObject.NULL)",
+            ".put(\"temperature_provenance\", JSONObject.NULL)",
+            ".put(\"temperature_scope\", JSONObject.NULL)",
+            ".put(\"temperature_summary\", JSONObject.NULL)",
+            ".put(\"device_global_summary\", summary?.toJson() ?: JSONObject.NULL)",
+            ".put(\"device_global_temperature_avg_c\", summary?.avgC ?: JSONObject.NULL)",
+        ).forEach { token -> assertTrue("missing raw-status JSON token: $token", rawStatusJson.contains(token)) }
+
+        listOf(
+            ".put(\"temperature_avg_c\", summary?.avgC",
+            ".put(\"temperature_min_c\", summary?.minC",
+            ".put(\"temperature_max_c\", summary?.maxC",
+            ".put(\"temperature_provenance\", summary?.provenance",
+            ".put(\"temperature_scope\", summary?.scope",
+        ).forEach { token ->
+            assertFalse("diagnostic summary leaked into generic Celsius field: $token", rawStatusJson.contains(token))
+        }
     }
 
     private fun source(relative: String): String {

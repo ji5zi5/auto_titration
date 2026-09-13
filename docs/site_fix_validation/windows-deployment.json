@@ -1,0 +1,47 @@
+{
+  "backup": "/mnt/c/Users/Jio/Downloads/auto_titration/.runtime/patch-backups/site-fixes-20260910",
+  "files": [
+    {
+      "path": "tools/windows_live_collect.py",
+      "before_sha256": "e140a66f941c4a79d734ff04f9382b573b31acd5bc8c21e484fde3e3cb5b1298",
+      "after_sha256": "d25e4a6fd5cd0a67d26bedad10733cd0a38d258f92cc1586609ceb356b2da497"
+    },
+    {
+      "path": "tools/dashboard_server.py",
+      "before_sha256": "b73c46683a35458a4a5e35a2ef17840fd3a54c2585fb3c230db5e0418b570544",
+      "after_sha256": "54bedb27e69f4060bc02ce342234ecb9299418c7941dd1e15ecaa0f08c573fa6"
+    },
+    {
+      "path": "website/app.js",
+      "before_sha256": "7f64ebb5cbe230ab323e7bf4009beb698b95b61a49a26634b48670bc4b0ea33a",
+      "after_sha256": "226b7411063b9c234fcf883060d705b39be939020fbce721dd44341075b2bab6"
+    },
+    {
+      "path": "auto_titrator/type_conditioned_sensor_live_model.py",
+      "before_sha256": null,
+      "after_sha256": "22b9bbbb71b8a11ef1ac12f928a516f3d07bbd29b563a7ddb1512c0b5af79ce4"
+    },
+    {
+      "path": "tools/sensor_transition_candidate_union.py",
+      "before_sha256": null,
+      "after_sha256": "51c7f3399827cf5f80049ca1ae42d1a924d15a00da25b877ea4438e83fe42efa"
+    },
+    {
+      "path": "data/labeled/type-conditioned-sensor-endpoint-ranker.pkl",
+      "before_sha256": null,
+      "after_sha256": "378a19b3aead649bfe783b42518792001c3de33aebcb51bcecd47d60067e3f90"
+    },
+    {
+      "path": "launchers/windows/20_windows_live_collect.bat",
+      "before_sha256": "4d9b0d24ccc8bb9bc910e3d30ff3dcaa93e5340a7b0fe4be8cf586357b08f827",
+      "after_sha256": "8f601576b469f6db6c0d9a75c221d62ea34d54465beaa9d9390592311c4fadd2"
+    },
+    {
+      "path": "docs/WINDOWS_PREDICTION_READINESS.md",
+      "before_sha256": null,
+      "after_sha256": "296a0c910c8c2e19e79af78edd620385a916193aedebfe426981126122ece2fc"
+    }
+  ],
+  "restarted": false,
+  "hardware_actuated": false
+}

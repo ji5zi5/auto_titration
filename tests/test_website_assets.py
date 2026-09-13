@@ -44,6 +44,8 @@ class WebsiteAssetTests(unittest.TestCase):
             "theoryEquivalenceInput",
             'value="10.00"',
             "equivalenceWindowInput",
+            "autoStopEnabledInput",
+            "autoStopStatus",
             "chemistryModelForm",
             "titrationTypeSelect",
             "sampleSubstanceInput",
@@ -56,7 +58,6 @@ class WebsiteAssetTests(unittest.TestCase):
             "암모니아",
             "표준 농도(M)",
             "pumpVolumeValue",
-            "equivalenceDistanceValue",
             "시작",
             "펌프 주입",
             "종료",
@@ -74,7 +75,6 @@ class WebsiteAssetTests(unittest.TestCase):
             "visibleCandidateNoticeTitle",
             "visibleCandidateNoticeBody",
             "previewStatus",
-            "허용범위(mL)",
             "app-shell",
             "live-view",
             "action-panel",
@@ -90,6 +90,10 @@ class WebsiteAssetTests(unittest.TestCase):
         ]:
             with self.subTest(expected=expected):
                 self.assertIn(expected, html)
+        self.assertIn(
+            'id="pumpRateInput" type="number" inputmode="decimal" min="0" step="0.01" value="0.99"',
+            html,
+        )
         self.assertNotIn("<br", html)
         self.assertNotIn('src="http://127.0.0.1:8766', html)
         self.assertNotIn('href="http://127.0.0.1:8766', html)
@@ -230,6 +234,12 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn("/api/csv/status", js)
         self.assertIn("/api/csv/start", js)
         self.assertIn("/api/csv/stop", js)
+        self.assertIn("auto_stop_confirmation_delay_s", js)
+        self.assertIn("persistent_color_change", js)
+        self.assertIn("pulse_control_failed", js)
+        self.assertIn("미세 주입 제어 오류 정지", js)
+        self.assertIn("maximum_volume", js)
+        self.assertNotIn("auto_stop_guard_fraction", js)
         self.assertIn("/api/pump/dispense", js)
         self.assertIn("/api/pump/retract", js)
         self.assertIn("/api/pump/stop", js)
@@ -249,6 +259,20 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn("csv_rows_per_s", js)
         self.assertIn("/api/chemistry/constants/lookup", js)
         self.assertIn("pump_rate_ml_per_s", js)
+        self.assertIn("function buildPumpSafetyPayload()", js)
+        self.assertIn("maximum_pump_rate_ml_per_s", js)
+        self.assertIn("absolute_maximum_volume_ml", js)
+        self.assertIn("absolute_maximum_run_time_s", js)
+        self.assertIn("pulse_ml_per_step_upper_bound", js)
+        self.assertIn("auto_stop_slow_stage_enabled", js)
+        self.assertIn("auto_stop_slow_onset_score", js)
+        self.assertIn("auto_stop_slow_onset_duration_s", js)
+        self.assertIn("auto_stop_slow_rate_steps_per_s", js)
+        self.assertIn('id="slowStageEnabledInput" type="checkbox"', html)
+        self.assertIn('id="slowRateStepsInput"', html)
+        self.assertIn("보정 유량이 아닌 명목값", html)
+        self.assertIn("JSON.stringify(safetyPayload)", js)
+        self.assertNotIn("body: '{}'", js)
         self.assertIn("buildChemistryMetadataPayload", js)
         self.assertIn("lookupChemistryConstants", js)
         self.assertIn("scheduleChemistryConstantsLookup", js)
@@ -262,6 +286,10 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn("sample: 'acetic acid'", js)
         self.assertIn("standard: 'sodium hydroxide'", js)
         self.assertIn("standard: 'ammonia'", js)
+        self.assertIn("indicator: 'phenolphthalein'", js)
+        self.assertIn("indicator: 'methyl_orange'", js)
+        self.assertIn("indicator: 'bromothymol_blue'", js)
+        self.assertIn("setSelectValueIfPresent('indicatorSelect', preset.indicator)", js)
         self.assertIn("titrationSelect.addEventListener('change'", js)
         self.assertIn("autoSelectRoomTemperatureCandidate", js)
         self.assertIn("populateConstantsCandidateSelect", js)
@@ -303,6 +331,7 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn("ROI 저장 중", js)
         self.assertIn("setRoiAutoTracking('off',", js)
         self.assertIn("toggleMini2Rotation", js)
+
         self.assertIn("thermal_rotation_degrees", js)
         self.assertIn("적외선 180° 회전", js)
         self.assertIn('class="frame-icon-button thermal-rotate-button"', html)
@@ -320,7 +349,10 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertNotIn("sendRoiPolygon", js)
         self.assertNotIn("/api/roi-click", js)
         self.assertNotIn("/api/roi-polygon", js)
-        self.assertNotIn("/api/roi-auto-candidate", js)
+        self.assertIn("/api/roi-auto-candidate", js)
+        self.assertIn('id="roiAutoSetupButton"', html)
+        self.assertIn("let autoRoiSetupEnabled = false", js)
+        self.assertIn("stopAutoRoiSetup();", js)
         self.assertNotIn("lassoPoints", js)
         self.assertNotIn("updateLassoOverlay", js)
         self.assertNotIn("manual_lasso", js)
@@ -421,8 +453,39 @@ class WebsiteAssetTests(unittest.TestCase):
 
         self.assertTrue(Path("website/assets/fonts/PretendardVariable.woff2").is_file())
 
+    def test_titration_type_preset_records_btb_for_weak_acid_weak_base(self):
+        js = Path("website/app.js").read_text(encoding="utf-8")
+        preset_source = js[
+            js.index("const TITRATION_SUBSTANCE_PRESETS") : js.index("function setText")
+        ]
+        helper_source = js[
+            js.index("function setSelectValueIfPresent") : js.index("function indicatorTransitionRange")
+        ]
+        script = f"""
+const assert = require('assert');
+const elements = {{
+  titrationTypeSelect: {{ value: 'weak_acid_weak_base' }},
+  sampleSubstanceInput: {{ value: '', options: [{{value:'hydrochloric acid'}}, {{value:'acetic acid'}}] }},
+  standardSolutionNameInput: {{ value: '', options: [{{value:'sodium hydroxide'}}, {{value:'ammonia'}}] }},
+  indicatorSelect: {{ value: '', options: [{{value:'phenolphthalein'}}, {{value:'methyl_orange'}}, {{value:'bromothymol_blue'}}] }},
+}};
+const $ = (id) => elements[id];
+function updateConcentrationCalculationPreview() {{}}
+function scheduleChemistryConstantsLookup() {{}}
+{preset_source}
+{helper_source}
+applyTitrationTypePreset({{lookup: false}});
+assert.strictEqual(elements.sampleSubstanceInput.value, 'acetic acid');
+assert.strictEqual(elements.standardSolutionNameInput.value, 'ammonia');
+assert.strictEqual(elements.indicatorSelect.value, 'bromothymol_blue');
+elements.titrationTypeSelect.value = 'strong_acid_weak_base';
+applyTitrationTypePreset({{lookup: false}});
+assert.strictEqual(elements.indicatorSelect.value, 'methyl_orange');
+"""
+        subprocess.run(["node", "-e", script], check=True)
 
-    def test_website_has_concentration_calculation_mode_separate_from_csv_collection(self):
+
+    def test_website_has_demo_stage_graphs_and_single_result_surface(self):
         html = Path("website/index.html").read_text(encoding="utf-8")
         js = Path("website/app.js").read_text(encoding="utf-8")
         css = Path("website/styles.css").read_text(encoding="utf-8")
@@ -433,17 +496,18 @@ class WebsiteAssetTests(unittest.TestCase):
             "csvCollectionModeButton",
             "concentrationCalculationModeButton",
             "csvCollectionControls",
-            "concentrationCalculatorControls",
-            "calcPredictedEquivalenceValue",
             "calcSampleConcentrationValue",
-            "calcPredictedPhValue",
-            "predictedPhValue",
+            "calcFinalVolumeValue",
+            "calcPredictedEquivalenceValue",
             "calcCsvDownloadLink",
             "calcModeStatus",
             "sensorGrid",
-            "예측 당량점",
             "미지 시료 농도",
-            "예측 pH",
+            "현재 상태",
+            "colorTrendCanvas",
+            "thermalTrendCanvas",
+            "demoOutcomeBadge",
+            "펌프 정지",
             "녹화 종료 후 계산 결과 표시",
         ]:
             with self.subTest(expected=expected):
@@ -468,6 +532,15 @@ class WebsiteAssetTests(unittest.TestCase):
             html,
             r'<div id="visibleCandidateNotice"[^>]*(?:role="status"|aria-live="polite")',
         )
+        self.assertNotIn("pH", html)
+        self.assertNotIn("예측 당량점", html)
+        self.assertRegex(html, r'id="theoryEquivalenceInput" type="hidden"')
+        self.assertRegex(html, r'id="equivalenceWindowInput" type="hidden"')
+        self.assertGreater(html.index('class="demo-stage"'), html.index('id="csvPanel"'))
+        self.assertIn('serialPumpStopButton', html[html.index('id="csvCollectionControls"'):html.index('</div>', html.index('id="csvCollectionControls"'))])
+        self.assertNotIn('class="main-actions csv-mode-only"', html)
+        self.assertLess(html.index('id="resultsView"'), html.index('class="trend-grid"'))
+        self.assertLess(html.index('class="final-results"'), html.index('class="trend-grid"'))
 
         for expected_css in [
             ".start-button { background: var(--green);",
@@ -506,16 +579,14 @@ class WebsiteAssetTests(unittest.TestCase):
             "parseFiniteNumber",
             "isLikelyInvalidMini2ZeroCelsius",
             "celsiusSummaryLooksAllZero",
-            "hasFiniteNumber(data.temperature_avg_c)",
+            "Number.isFinite(avg)",
             "updateConcentrationModePreview",
-            "csvPredictedPh",
             "calculateTheoreticalEquivalencePh",
             "predictedEquivalencePhFromCsv",
             "currentTheoreticalEquivalencePh",
             "setAppMode",
             "addModeHandlers",
             "document.querySelectorAll('.csv-mode-only')",
-            "concentrationCalculatorControls",
             "sensorGrid",
             "predicted_equivalence_pH",
             "sample_concentration_from_predicted_equivalence_M",
@@ -544,11 +615,9 @@ class WebsiteAssetTests(unittest.TestCase):
             ".mode-switcher",
             ".mode-button.is-active",
             ".mode-hidden",
-            ".calculator-panel",
-            ".result-hero",
-            ".result-card",
-            ".result-card-primary",
-            ".result-meta",
+            ".demo-stage",
+            ".trend-grid",
+            ".final-result-grid",
             ".result-status",
         ]:
             with self.subTest(expected=expected):
@@ -557,7 +626,7 @@ class WebsiteAssetTests(unittest.TestCase):
     def test_concentration_calculator_can_compute_theoretical_ph_without_csv(self):
         js = Path("website/app.js").read_text(encoding="utf-8")
         start = js.index("function parseFiniteNumber")
-        end = js.index("function formatPercent")
+        end = js.index("function readNumericInput")
         helper_source = js[start:end]
         script = f"""
 const assert = require('assert');
@@ -579,7 +648,7 @@ assert.strictEqual(calculateTheoreticalEquivalencePh({{...base, titrationType: '
     def test_result_ph_uses_prediction_not_theory_fallback(self):
         js = Path("website/app.js").read_text(encoding="utf-8")
         start = js.index("function parseFiniteNumber")
-        end = js.index("function formatPercent")
+        end = js.index("function readNumericInput")
         helper_source = js[start:end]
         script = f"""
 const assert = require('assert');
@@ -656,6 +725,74 @@ assert.strictEqual(isLikelyInvalidMini2ZeroCelsius({{
   temperature_max_c: 0,
   temperature_std_c: 0,
 }}), true);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  temperature_avg_c: 0,
+  temperature_min_c: -0.2,
+  temperature_max_c: 0.3,
+  temperature_provenance: 'device_global_summary',
+  temperature_scope: 'device_global_summary',
+  full_matrix_celsius_allowed: false,
+}}), true);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  temperature_avg_c: 0,
+  temperature_min_c: 0,
+  temperature_max_c: 0,
+  raw_avg: 5000,
+  temperature_provenance: 'device_global_summary',
+  temperature_scope: 'device_global_summary',
+  full_matrix_celsius_allowed: false,
+}}), false);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: false,
+  temperature_avg_c: 0,
+  temperature_provenance: 'device_global_summary',
+  temperature_scope: 'device_global_summary',
+}}), false);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  temperature_avg_c: 0,
+  temperature_provenance: 'roi_matrix',
+  temperature_scope: 'roi_matrix',
+  full_matrix_celsius_allowed: true,
+}}), false);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  temperature_avg_c: 22.5,
+}}), false);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  full_matrix_celsius_allowed: false,
+  temperature_avg_c: 22.5,
+  temperature_min_c: 22.0,
+  temperature_max_c: 23.0,
+}}), false);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  full_matrix_celsius_allowed: false,
+  temperature_avg_c: 22.5,
+  temperature_min_c: 22.0,
+  temperature_max_c: 23.0,
+  temperature_provenance: 'windows_official_mini2_roi_scalar',
+  temperature_scope: 'thermal_roi',
+}}), true);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  full_matrix_celsius_allowed: false,
+  temperature_avg_c: 23.5,
+  temperature_min_c: 22.0,
+  temperature_max_c: 23.0,
+  temperature_provenance: 'windows_official_mini2_roi_scalar',
+  temperature_scope: 'thermal_roi',
+}}), false);
+assert.strictEqual(hasTrustedCelsiusTemperature({{
+  celsius_allowed: true,
+  full_matrix_celsius_allowed: false,
+  temperature_avg_c: 22.5,
+  temperature_min_c: 22.0,
+  temperature_max_c: 23.0,
+  temperature_scope: 'thermal_roi',
+}}), false);
 """
         subprocess.run(["node", "-e", script], check=True)
 
@@ -669,9 +806,18 @@ assert.strictEqual(isLikelyInvalidMini2ZeroCelsius({{
         self.assertIn("20_windows_live_collect.bat", dashboard)
         self.assertIn("tools\\windows_live_collect.py", collector)
         self.assertIn("--live-stream-base", dashboard)
+        self.assertIn("Get-NetTCPConnection", dashboard)
+        self.assertIn("/api/health", dashboard)
+        self.assertIn("auto_titration_dashboard", dashboard)
+        self.assertIn("OPEN_BROWSER", dashboard)
         self.assertIn('set "FRAMES=999999"', collector)
         self.assertIn('set "ROI_AUTO_DETECT=off"', collector)
         self.assertIn('set "AUTO_INSTALL_YOLO=0"', collector)
+        self.assertIn('set "PUMP_START_COMMAND=b"', collector)
+        self.assertIn('set "PUMP_RETRACT_COMMAND=a"', collector)
+        self.assertIn('set "PUMP_PULSE_DIRECTION=b"', collector)
+        self.assertNotIn("Stop-Process", collector)
+        self.assertNotIn("tools\\windows_live_collect.py|20_windows_live_collect.bat", dashboard)
         self.assertNotIn("call :find_python", dashboard + collector)
         self.assertNotIn(":find_python", dashboard + collector)
 
@@ -757,7 +903,7 @@ assert.strictEqual(isLikelyInvalidMini2ZeroCelsius({{
                 self.assertNotIn(forbidden, js)
         self.assertNotIn("source-panel", css)
 
-    def test_roi_setup_uses_manual_rectangle_without_auto_tracking(self):
+    def test_roi_setup_keeps_manual_rectangle_and_optional_setup_only_auto_roi(self):
         js = Path("website/app.js").read_text(encoding="utf-8")
         html = Path("website/index.html").read_text(encoding="utf-8")
 
@@ -767,7 +913,10 @@ assert.strictEqual(isLikelyInvalidMini2ZeroCelsius({{
         self.assertIn("let roiSetupMode = true", js)
         self.assertNotIn("kickstartRoiAutoTracking", js)
         self.assertNotIn("kickstartSingleRoiCandidate", js)
-        self.assertNotIn("postRoiAction('/api/roi-auto-candidate'", js)
+        self.assertIn('id="roiAutoSetupButton" class="csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>', html)
+        self.assertIn("postRoiAction('/api/roi-auto-candidate'", js)
+        self.assertIn("autoSetupButton.addEventListener('click', toggleAutoRoiSetup)", js)
+        self.assertIn("if (latestRoiLocked || data.roi_state === 'recording') stopAutoRoiSetup();", js)
         self.assertNotIn("roi_auto_detect: requestedMode", js)
         self.assertIn("setRoiAutoTracking('off',", js)
 

@@ -1,0 +1,38 @@
+{
+  "model": "lightgbm ranker full 12-run fit, median of 3 fixed seeds",
+  "rows": [
+    {
+      "file": "auto-titration-live-20260726-150424-session-5.csv",
+      "seed_volumes": [
+        22.03341,
+        22.123094,
+        22.252501
+      ],
+      "median_volume": 22.123094,
+      "concentration": 0.11061547000000001
+    },
+    {
+      "file": "auto-titration-live-20260726-151233-session-7.csv",
+      "seed_volumes": [
+        22.150985,
+        22.150985,
+        22.072405
+      ],
+      "median_volume": 22.150985,
+      "concentration": 0.11075492499999999
+    },
+    {
+      "file": "auto-titration-live-20260726-151632-session-8.csv",
+      "seed_volumes": [
+        20.816929,
+        20.816929,
+        20.816929
+      ],
+      "median_volume": 20.816929,
+      "concentration": 0.10408464499999999
+    }
+  ],
+  "mean_M": 0.10848501333333332,
+  "sample_sd_M": 0.003811468618001252,
+  "cv_percent": 3.5133595884715
+}

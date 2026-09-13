@@ -17,12 +17,13 @@ import posixpath
 import sys
 import time
 import webbrowser
+from collections import deque
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -171,11 +172,13 @@ def read_csv_tail(csv_path: Path, *, limit: int = 360) -> dict[str, Any]:
             "summary": None,
             "mtime": None,
         }
-    rows: list[dict[str, str]] = []
+    tail_rows: deque[dict[str, str]] = deque(maxlen=max(1, int(limit)))
+    row_count = 0
     with csv_path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            rows.append(dict(row))
+            tail_rows.append(dict(row))
+            row_count += 1
     summary_path = csv_path.with_suffix(".summary.json")
     summary: dict[str, Any] | None = None
     if summary_path.exists():
@@ -183,11 +186,11 @@ def read_csv_tail(csv_path: Path, *, limit: int = 360) -> dict[str, Any]:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             summary = {"error": f"summary json parse failed: {exc}"}
-    tail = rows[-max(1, limit) :]
+    tail = list(tail_rows)
     return {
         "exists": True,
         "path": str(csv_path),
-        "row_count": len(rows),
+        "row_count": row_count,
         "rows": tail,
         "latest": tail[-1] if tail else None,
         "summary": summary,
@@ -223,7 +226,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - http.server API.
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
-            _json_response(self, {"ok": True, "root": str(self.config.root), "default_csv": str(self.config.default_csv)})
+            _json_response(
+                self,
+                {
+                    "ok": True,
+                    "service": "auto_titration_dashboard",
+                    "version": 1,
+                    "root": str(self.config.root),
+                    "website_dir": str(self.config.website_dir),
+                    "default_csv": str(self.config.default_csv),
+                },
+            )
             return
         if parsed.path == "/api/live":
             self._handle_live(parsed.query)
@@ -268,10 +281,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/csv",
             "/api/csv/status",
             "/api/csv/start",
+            "/api/remote/config",
             "/api/csv/stop",
             "/api/pump/dispense",
             "/api/pump/retract",
             "/api/pump/stop",
+            "/api/pump/reset",
             "/api/mobile/status",
             "/api/mobile/pair",
             "/api/mobile/ingest",
@@ -360,6 +375,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
+        except HTTPError as exc:
+            # An upstream rejection is a valid HTTP response, not a disconnected
+            # collector. Preserve its diagnostic body; never retry a POST.
+            try:
+                body = exc.read()
+                if response_started:
+                    return
+                self.send_response(exc.code)
+                self._send_dashboard_cors_headers()
+                self.send_header(
+                    "Content-Type",
+                    exc.headers.get("Content-Type", "application/json; charset=utf-8")
+                    if exc.headers else "application/json; charset=utf-8",
+                )
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
+            finally:
+                exc.close()
         except (OSError, URLError) as exc:
             if response_started:
                 return
@@ -367,10 +404,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self,
                 {
                     "ok": False,
-                    "error": f"수집기(Collector)가 아직 실행 중이 아니거나 포트가 닫혀 있습니다: {self.config.live_stream_base}",
+                    "error": f"수집기 응답을 받지 못했습니다. 연결 또는 응답 지연을 확인하세요: {self.config.live_stream_base}",
                     "detail": f"live collector proxy failed: {exc}",
+                    "request_outcome": "unknown" if method == "POST" else "unavailable",
                     "live_stream_base": self.config.live_stream_base,
                     "action_hints": [
+                        "동작 요청은 처리됐을 수도 있습니다. 반복 실행하지 말고 현재 상태부터 확인하세요.",
                         "21번 실행 창에서 Auto Titration Collector 창이 열렸는지 확인하세요.",
                         "Collector 창에 Python/camera/DLL 오류가 있으면 그 오류가 먼저 해결되어야 합니다.",
                     ],

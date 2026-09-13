@@ -1,0 +1,294 @@
+{
+  "claim_scope": "same_12_run_post_hoc_dense_aggregation_selection_not_independent_validation",
+  "runtime_seconds": 5.86406397819519,
+  "dense_combinations_compared": 1024350,
+  "type_results": {
+    "strong_acid_strong_base": {
+      "mape_percent": 0.24859749999999378,
+      "spec": {
+        "family": "pls",
+        "subset": "state",
+        "transform": "signed_log1p",
+        "parameter": "exp_rank@2"
+      },
+      "normalization": "zscore",
+      "global_weight": 1.0,
+      "top_k": 0,
+      "temperature": 1.059663381256742,
+      "top_blend": 0.024999999999999998,
+      "rows": [
+        {
+          "run_name": "auto-titration-live-20260601-201548-session-4.csv",
+          "titration_type": "strong_acid_strong_base",
+          "selected_frame": 185,
+          "predicted_ml": 39.957241,
+          "actual_ml": 40.0,
+          "signed_error_ml": -0.04275899999999666,
+          "ape_percent": 0.10689749999999165
+        },
+        {
+          "run_name": "auto-titration-live-20260601-202035-session-5.csv",
+          "titration_type": "strong_acid_strong_base",
+          "selected_frame": 91,
+          "predicted_ml": 20.059955,
+          "actual_ml": 20.0,
+          "signed_error_ml": 0.05995499999999865,
+          "ape_percent": 0.29977499999999324
+        },
+        {
+          "run_name": "auto-titration-live-20260601-202744-session-6.csv",
+          "titration_type": "strong_acid_strong_base",
+          "selected_frame": 131,
+          "predicted_ml": 29.898264,
+          "actual_ml": 30.0,
+          "signed_error_ml": -0.10173599999999894,
+          "ape_percent": 0.3391199999999964
+        }
+      ]
+    },
+    "weak_acid_strong_base": {
+      "mape_percent": 0.16275555555555007,
+      "spec": {
+        "family": "lda",
+        "subset": "shift_terminal",
+        "transform": "raw",
+        "parameter": "5@svd"
+      },
+      "normalization": "rank",
+      "global_weight": 0.64,
+      "top_k": 26,
+      "temperature": 0.2,
+      "top_blend": 0.0,
+      "rows": [
+        {
+          "run_name": "auto-titration-live-20260601-203711-session-7.csv",
+          "titration_type": "weak_acid_strong_base",
+          "selected_frame": 84,
+          "predicted_ml": 20.007436,
+          "actual_ml": 20.0,
+          "signed_error_ml": 0.007435999999998444,
+          "ape_percent": 0.03717999999999222
+        },
+        {
+          "run_name": "auto-titration-live-20260601-204506-session-8.csv",
+          "titration_type": "weak_acid_strong_base",
+          "selected_frame": 120,
+          "predicted_ml": 30.12116,
+          "actual_ml": 30.0,
+          "signed_error_ml": 0.12115999999999971,
+          "ape_percent": 0.40386666666666576
+        },
+        {
+          "run_name": "auto-titration-live-20260601-205048-session-9.csv",
+          "titration_type": "weak_acid_strong_base",
+          "selected_frame": 157,
+          "predicted_ml": 40.018888,
+          "actual_ml": 40.0,
+          "signed_error_ml": 0.018887999999996907,
+          "ape_percent": 0.04721999999999227
+        }
+      ]
+    },
+    "strong_acid_weak_base": {
+      "mape_percent": 0.3156827777777791,
+      "spec": {
+        "family": "kernel_ridge_rbf",
+        "subset": "shift_terminal",
+        "transform": "signed_log1p",
+        "parameter": "rank@1,0.05"
+      },
+      "normalization": "rank",
+      "global_weight": 1.0,
+      "top_k": 64,
+      "temperature": 0.10852776208955706,
+      "top_blend": 0.0,
+      "rows": [
+        {
+          "run_name": "auto-titration-live-20260601-213431-session-11.csv",
+          "titration_type": "strong_acid_weak_base",
+          "selected_frame": 69,
+          "predicted_ml": 20.114089,
+          "actual_ml": 20.0,
+          "signed_error_ml": 0.11408899999999988,
+          "ape_percent": 0.5704449999999994
+        },
+        {
+          "run_name": "auto-titration-live-20260601-213925-session-12.csv",
+          "titration_type": "strong_acid_weak_base",
+          "selected_frame": 101,
+          "predicted_ml": 29.923952,
+          "actual_ml": 30.0,
+          "signed_error_ml": -0.07604800000000012,
+          "ape_percent": 0.25349333333333374
+        },
+        {
+          "run_name": "auto-titration-live-20260601-214538-session-13.csv",
+          "titration_type": "strong_acid_weak_base",
+          "selected_frame": 133,
+          "predicted_ml": 40.049244,
+          "actual_ml": 40.0,
+          "signed_error_ml": 0.04924400000000162,
+          "ape_percent": 0.12311000000000405
+        }
+      ]
+    },
+    "weak_acid_weak_base": {
+      "mape_percent": 0.45296444444444955,
+      "spec": {
+        "family": "qda",
+        "subset": "shift_terminal",
+        "transform": "raw",
+        "parameter": "5@0.9"
+      },
+      "normalization": "zscore",
+      "global_weight": 1.0,
+      "top_k": 4,
+      "temperature": 0.06289293513109147,
+      "top_blend": 0.0,
+      "rows": [
+        {
+          "run_name": "auto-titration-live-20260601-215437-session-14.csv",
+          "titration_type": "weak_acid_weak_base",
+          "selected_frame": 64,
+          "predicted_ml": 20.156127,
+          "actual_ml": 20.0,
+          "signed_error_ml": 0.15612700000000146,
+          "ape_percent": 0.7806350000000073
+        },
+        {
+          "run_name": "auto-titration-live-20260601-220325-session-15.csv",
+          "titration_type": "weak_acid_weak_base",
+          "selected_frame": 94,
+          "predicted_ml": 30.144703,
+          "actual_ml": 30.0,
+          "signed_error_ml": 0.1447029999999998,
+          "ape_percent": 0.4823433333333326
+        },
+        {
+          "run_name": "auto-titration-live-20260601-220652-session-16.csv",
+          "titration_type": "weak_acid_weak_base",
+          "selected_frame": 125,
+          "predicted_ml": 40.038366,
+          "actual_ml": 40.0,
+          "signed_error_ml": 0.03836600000000345,
+          "ape_percent": 0.09591500000000863
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "mae_ml": 0.07754258333333297,
+    "rmse_ml": 0.09077263817592095,
+    "mape_percent": 0.2950000694444432
+  },
+  "rows": [
+    {
+      "run_name": "auto-titration-live-20260601-201548-session-4.csv",
+      "titration_type": "strong_acid_strong_base",
+      "selected_frame": 185,
+      "predicted_ml": 39.957241,
+      "actual_ml": 40.0,
+      "signed_error_ml": -0.04275899999999666,
+      "ape_percent": 0.10689749999999165
+    },
+    {
+      "run_name": "auto-titration-live-20260601-202035-session-5.csv",
+      "titration_type": "strong_acid_strong_base",
+      "selected_frame": 91,
+      "predicted_ml": 20.059955,
+      "actual_ml": 20.0,
+      "signed_error_ml": 0.05995499999999865,
+      "ape_percent": 0.29977499999999324
+    },
+    {
+      "run_name": "auto-titration-live-20260601-202744-session-6.csv",
+      "titration_type": "strong_acid_strong_base",
+      "selected_frame": 131,
+      "predicted_ml": 29.898264,
+      "actual_ml": 30.0,
+      "signed_error_ml": -0.10173599999999894,
+      "ape_percent": 0.3391199999999964
+    },
+    {
+      "run_name": "auto-titration-live-20260601-203711-session-7.csv",
+      "titration_type": "weak_acid_strong_base",
+      "selected_frame": 84,
+      "predicted_ml": 20.007436,
+      "actual_ml": 20.0,
+      "signed_error_ml": 0.007435999999998444,
+      "ape_percent": 0.03717999999999222
+    },
+    {
+      "run_name": "auto-titration-live-20260601-204506-session-8.csv",
+      "titration_type": "weak_acid_strong_base",
+      "selected_frame": 120,
+      "predicted_ml": 30.12116,
+      "actual_ml": 30.0,
+      "signed_error_ml": 0.12115999999999971,
+      "ape_percent": 0.40386666666666576
+    },
+    {
+      "run_name": "auto-titration-live-20260601-205048-session-9.csv",
+      "titration_type": "weak_acid_strong_base",
+      "selected_frame": 157,
+      "predicted_ml": 40.018888,
+      "actual_ml": 40.0,
+      "signed_error_ml": 0.018887999999996907,
+      "ape_percent": 0.04721999999999227
+    },
+    {
+      "run_name": "auto-titration-live-20260601-213431-session-11.csv",
+      "titration_type": "strong_acid_weak_base",
+      "selected_frame": 69,
+      "predicted_ml": 20.114089,
+      "actual_ml": 20.0,
+      "signed_error_ml": 0.11408899999999988,
+      "ape_percent": 0.5704449999999994
+    },
+    {
+      "run_name": "auto-titration-live-20260601-213925-session-12.csv",
+      "titration_type": "strong_acid_weak_base",
+      "selected_frame": 101,
+      "predicted_ml": 29.923952,
+      "actual_ml": 30.0,
+      "signed_error_ml": -0.07604800000000012,
+      "ape_percent": 0.25349333333333374
+    },
+    {
+      "run_name": "auto-titration-live-20260601-214538-session-13.csv",
+      "titration_type": "strong_acid_weak_base",
+      "selected_frame": 133,
+      "predicted_ml": 40.049244,
+      "actual_ml": 40.0,
+      "signed_error_ml": 0.04924400000000162,
+      "ape_percent": 0.12311000000000405
+    },
+    {
+      "run_name": "auto-titration-live-20260601-215437-session-14.csv",
+      "titration_type": "weak_acid_weak_base",
+      "selected_frame": 64,
+      "predicted_ml": 20.156127,
+      "actual_ml": 20.0,
+      "signed_error_ml": 0.15612700000000146,
+      "ape_percent": 0.7806350000000073
+    },
+    {
+      "run_name": "auto-titration-live-20260601-220325-session-15.csv",
+      "titration_type": "weak_acid_weak_base",
+      "selected_frame": 94,
+      "predicted_ml": 30.144703,
+      "actual_ml": 30.0,
+      "signed_error_ml": 0.1447029999999998,
+      "ape_percent": 0.4823433333333326
+    },
+    {
+      "run_name": "auto-titration-live-20260601-220652-session-16.csv",
+      "titration_type": "weak_acid_weak_base",
+      "selected_frame": 125,
+      "predicted_ml": 40.038366,
+      "actual_ml": 40.0,
+      "signed_error_ml": 0.03836600000000345,
+      "ape_percent": 0.09591500000000863
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+﻿model_scope,label,cv_percent,n
+recorded_old_model,기존 기록 모델,3.8544738901815636,3
+frozen_current_model,동결 현재 모델,0.9611503693940324,3

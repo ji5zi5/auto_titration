@@ -253,6 +253,17 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("raw_stream_exception", probe)
         self.assertIn("catch (error: Throwable)", probe)
 
+    def test_manual_probe_returns_fresh_status_instead_of_reinserting_probe_snapshot(self):
+        main = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
+        method = main[
+            main.index("private fun runMini2ProbeFromBridge("):
+            main.index("\n    @Synchronized", main.index("private fun runMini2ProbeFromBridge(") + 1)
+        ]
+
+        self.assertIn("lastExplicitMini2Probe = mini2", method)
+        self.assertIn("val result = safeBuildStatusJson()", method)
+        self.assertNotIn('.put("mini2", mini2)', method)
+
     def test_android_native_stream_probe_is_manual_one_shot_not_polling_loop(self):
         main = (JAVA_ROOT / "MainActivity.kt").read_text(encoding="utf-8")
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
@@ -269,9 +280,9 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("fun peekActiveStatus", stream)
         self.assertIn("passive_status_peek", stream)
         self.assertIn("passive_peek_stalled_stale_frame", stream)
-        self.assertIn("isActiveMini2Peek", main)
-        self.assertIn("val rawStream = if (isActiveMini2Peek(currentRawStream)) currentRawStream else explicitRawStream", main)
         self.assertIn('put("last_stream_attempt", explicitRawStream)', main)
+        self.assertNotIn('put("raw_stream", explicitRawStream)', main)
+        self.assertNotIn("isActiveMini2Peek", main)
 
     def test_android_webview_requires_manual_mini2_probe_after_usb_permission(self):
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
@@ -387,7 +398,8 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("native_symbol_discovery", status_model + backend + probe)
         self.assertIn("frame_counter", status_model)
         self.assertIn("thermal_preview_data_url", status_model)
-        self.assertIn('put("temperature_avg_c", summary?.avgC ?: JSONObject.NULL)', status_model)
+        self.assertIn('put("temperature_avg_c", JSONObject.NULL)', status_model)
+        self.assertIn('put("device_global_temperature_avg_c", summary?.avgC ?: JSONObject.NULL)', status_model)
         self.assertNotIn("temperature_avg_c || 0", adapter)
         self.assertIn("showAndroidThermalPlaceholder", adapter)
         self.assertIn("적외선 화면 대기", adapter)
@@ -510,7 +522,8 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("m_iEnumType: Int = ENUM_TYPE_JAVA", java_interface)
         self.assertIn("val m_fnStreamCallBack_jna", java_interface)
         self.assertIn("val m_fnStreamCallBack_jni", java_interface)
-        self.assertIn("com.hcusbsdk.jni.USB_FRAME_INFO?.toInterfaceFrame", java_interface)
+        self.assertIn("com.hcusbsdk.jni.USB_FRAME_INFO.toInterfaceFrame", java_interface)
+        self.assertIn("com.hcusbsdk.jni.USB_FRAME_INFO?.copyRejectionReason", java_interface)
 
     def test_mini2_dto_boundary_keeps_facade_strings_and_native_byte_arrays(self):
         facade = (ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/USB_DEVICE_INFO.kt").read_text(encoding="utf-8")
@@ -541,19 +554,23 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("val INSTANCE: F2UsbModuleHelper", helper)
         self.assertIn("fun openUsbModule", api)
         open_body = function_slice(api, "fun openUsbModule(", "    @Synchronized\n    fun startStreamPreview")
-        self.assertIn("F2UsbModuleApi.openUsbModule:singleAttempt", open_body)
+        self.assertIn("F2UsbModuleApi.openUsbModule:officialRetry", open_body)
         self.assertEqual(1, open_body.count("helper.openUsbDevice("))
-        for forbidden in ["maxRetries", "retryIndex", "Thread.sleep", "while ("]:
-            with self.subTest(forbidden_open_retry_ladder=forbidden):
-                self.assertNotIn(forbidden, open_body)
+        for required in ["retryIndex", "retryIndex < 5", "Thread.sleep(retryIndex * 500L)", "do {", "while ("]:
+            with self.subTest(required_official_open_retry=required):
+                self.assertIn(required, open_body)
         for token in ["sdkInited", "deviceInfoList", "userId", "channel"]:
             self.assertIn(token, helper)
 
         start_locked = function_slice(api, "private fun startStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
         self.assertLess(
-            start_locked.index("helper.stopStreamPreview(context, config.streamingNew)"),
-            start_locked.index("helper.startStreamPreview"),
+            start_locked.index("stopForTransition(context, config.streamingNew)"),
+            start_locked.index("startNativeStreamPreviewLocked"),
         )
+        stop_transition = function_slice(api, "private fun stopForTransition", "    private fun setInvalidPacketSizeTimeoutCallback")
+        native_start = function_slice(api, "private fun startNativeStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
+        self.assertIn("helper.stopStreamPreview(context, streamingNew)", stop_transition)
+        self.assertIn("helper.startStreamPreview", native_start)
 
         for forbidden in [
             "sdkInited",
@@ -579,7 +596,11 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("officialSelection=deviceInfoList[0]", open_slice)
 
         start_locked = function_slice(api, "private fun startStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
-        self.assertLess(start_locked.index("helper.stopStreamPreview(context, config.streamingNew)"), start_locked.index("helper.startStreamPreview"))
+        self.assertLess(start_locked.index("stopForTransition(context, config.streamingNew)"), start_locked.index("startNativeStreamPreviewLocked"))
+        stop_transition = function_slice(api, "private fun stopForTransition", "    private fun setInvalidPacketSizeTimeoutCallback")
+        native_start = function_slice(api, "private fun startNativeStreamPreviewLocked", "    @Synchronized\n    fun startStreamPreviewJNA")
+        self.assertIn("helper.stopStreamPreview(context, streamingNew)", stop_transition)
+        self.assertIn("helper.startStreamPreview", native_start)
         start_slice = function_slice(helper, "fun startStreamPreview(\n        fStreamCallBack: FStreamCallBack", "    @Synchronized\n    fun stopStreamPreview")
         self.assertLess(start_slice.index("USB_SetVideoParam"), start_slice.index("USB_StartStreamCallback"))
         self.assertLess(start_slice.index("USB_StartStreamCallback"), start_slice.index("USB_SetThermalStreamParam"))
@@ -637,8 +658,11 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             "getThermalStreamCtrlState",
             "verifyThermalStreamCtrlDisabled",
             "OFFICIAL_STOP_THERMAL_CTRL_MAX_RETRIES: Int = 100",
+            "OFFICIAL_STOP_THERMAL_CTRL_POLL_SLEEP_MS: Long = 10L",
             "streamEnable=",
-            "retryIndex=",
+            "maxAttempts=",
+            "attempt=",
+            "unsuccessfulPolls=",
             "USB_SetThermalStreamCtrl(false)#retry",
         ]:
             with self.subTest(token=token):
@@ -647,9 +671,232 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         stop_slice = function_slice(helper, "fun stopStreamPreview(context: Context", "    @Synchronized\n    fun closeSession")
         self.assertLess(stop_slice.index("setThermalStreamCtrl(currentUserId, enable = false)"), stop_slice.index("verifyThermalStreamCtrlDisabled"))
         self.assertLess(stop_slice.index("verifyThermalStreamCtrlDisabled"), stop_slice.index("USB_StopChannel"))
-        verify_slice = function_slice(helper, "private fun verifyThermalStreamCtrlDisabled", "    private fun clearOfficialCallbackSlots")
-        self.assertIn("0..OFFICIAL_STOP_THERMAL_CTRL_MAX_RETRIES", verify_slice)
-        self.assertIn("coerceAtMost(100L)", verify_slice)
+        verify_slice = function_slice(
+            helper,
+            "internal fun verifyThermalStreamCtrlDisabledBounded",
+            "data class F2StreamFrame",
+        )
+        self.assertIn("while (unsuccessfulPolls < maxAttempts)", verify_slice)
+        self.assertIn("unsuccessfulPolls += 1", verify_slice)
+        self.assertIn("unsuccessfulPolls >= maxAttempts", verify_slice)
+        self.assertIn("sleep(OFFICIAL_STOP_THERMAL_CTRL_POLL_SLEEP_MS)", verify_slice)
+        self.assertIn("Thread.currentThread().interrupt()", verify_slice)
+        self.assertIn("reason=max_attempts", verify_slice)
+        self.assertNotIn("USB_EnumDevices", verify_slice)
+        self.assertNotIn("coerceAtMost", verify_slice)
+        self.assertIn("Thread.sleep(100)", stop_slice)
+        self.assertIn("stopChannelOperation(currentUserId, currentChannel)", stop_slice)
+        self.assertNotIn("currentChannel != -1", stop_slice)
+
+    def test_mini2_official_interface_callback_abi_uses_jna_callback_invoke(self):
+        callback = read(ANDROID_ROOT / "app/src/main/java/com/hcusbsdk/Interface/FStreamCallBack.kt")
+        preview = read(ANDROID_ROOT / "app/src/main/java/com/hik/viewer/manager/PreviewManagerII$d.java")
+
+        self.assertIn("fun interface FStreamCallBack : Callback", callback)
+        self.assertIn("fun invoke(userId: Int, frameInfo: USB_FRAME_INFO?)", callback)
+        self.assertIn("synchronized void invoke(int userId, USB_FRAME_INFO frameInfo)", preview)
+        self.assertNotIn("fStreamCallback", callback)
+
+    def test_mini2_native_start_without_java_callback_has_specific_classification(self):
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        classifier = function_slice(adapter, "function classifyMini2StageReport", "  function buildMini2DiagnosticExport")
+        script = f"""
+const assert = require('assert');
+{classifier}
+const stage = 'USB_StartStreamCallback=ok channel=0; startStreamPreview resultCode=1 channel=0';
+assert.strictEqual(
+  classifyMini2StageReport(stage, 'stream_attempt_started no_callback_entry'),
+  'native_start_succeeded_waiting_for_java_callback',
+);
+assert.strictEqual(
+  classifyMini2StageReport(stage, 'blocked_native_stream stalled_without_frame no_callback_entry'),
+  'native_start_succeeded_no_java_callback',
+);
+assert.strictEqual(
+  classifyMini2StageReport(stage, 'stream_attempt_started no_callback_entry', {{
+    dispatchedCallbackCount: 129,
+    callbackEntryDetail: 'route=jni disposition=dispatched dispatchedCount=129',
+    frameCounter: 0,
+    postStartState: 'native_start_accepted_callback_packet_observed_official_handoff_missing',
+  }}),
+  'callback_packet_observed_official_handoff_missing',
+);
+assert.strictEqual(
+  classifyMini2StageReport(stage, 'stream_attempt_started no_callback_entry', {{
+    dispatchedCallbackCount: 0,
+    callbackEntryDetail: 'route=jni disposition=rejected rejectedCount=129',
+    frameCounter: 0,
+    postStartState: 'native_start_accepted_callback_packet_observed_official_handoff_missing',
+  }}),
+  'native_start_succeeded_waiting_for_java_callback',
+);
+assert.strictEqual(
+  classifyMini2StageReport(stage, 'stream_attempt_started', {{
+    dispatchedCallbackCount: 0,
+    callbackEntryDetail: 'route=jni disposition=rejected rejectedCount=129',
+    frameCounter: 0,
+    postStartState: 'native_start_accepted_callback_invalid_packet_size_timeout',
+    invalidPacketSizeTimeout: {{
+      observed_packet_size: 102944,
+      allowed_packet_sizes: [203720, 183496],
+    }},
+  }}),
+  'native_start_accepted_callback_invalid_packet_size_timeout',
+);
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+        status_model = read(JAVA_ROOT / "thermal/Mini2RawStreamStatus.kt")
+        self.assertIn('stageReport.contains("startStreamPreview resultCode=1"', status_model)
+        callback_branch = status_model.index("callbackEntryCount > 0L &&")
+        self.assertIn('callbackEntryDetail.contains("disposition=dispatched")', status_model)
+        waiting_branch = status_model.index('if (rawStreamStatus == "stream_attempt_started")')
+        self.assertLess(callback_branch, waiting_branch)
+
+    def test_mini2_structured_callback_evidence_overrides_waiting_web_classification(self):
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        diagnostic_functions = function_slice(
+            adapter,
+            "function isAndroidPlainObject",
+            "  function updateMini2DiagnosticExport",
+        )
+        script = f"""
+const assert = require('assert');
+const MINI2_OFFICIAL_PRIMARY_MODE = 'OFFICIAL_PRIMARY';
+{diagnostic_functions}
+const result = buildMini2DiagnosticExport({{
+  mini2: {{
+    raw_stream: {{
+      raw_stream_status: 'stream_attempt_started',
+      reason: 'stream_attempt_started no_callback_entry',
+      stage_report: 'USB_StartStreamCallback=ok channel=0 lastError=0',
+      frame_counter: 0,
+      java_interface_dispatched_callback_count: 129,
+      java_interface_callback_entry_count: 129,
+      java_interface_callback_entry_detail: 'route=jni disposition=dispatched dispatchedCount=129 callbackUserId=116 dwBufSize=203720',
+      post_start_state: 'native_start_accepted_callback_packet_observed_official_handoff_missing',
+      celsius_allowed: false,
+      temperature_avg_c: null,
+    }},
+  }},
+}});
+assert.strictEqual(result.callbackEntryCount, 129);
+assert.strictEqual(result.classification, 'callback_packet_observed_official_handoff_missing');
+assert.notStrictEqual(result.classification, 'native_start_succeeded_waiting_for_java_callback');
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_mini2_current_raw_stream_wins_over_stale_last_attempt(self):
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        diagnostic_functions = function_slice(
+            adapter,
+            "function isAndroidPlainObject",
+            "  function updateMini2DiagnosticExport",
+        )
+        script = f"""
+const assert = require('assert');
+const MINI2_OFFICIAL_PRIMARY_MODE = 'OFFICIAL_PRIMARY';
+{diagnostic_functions}
+const current = {{
+  raw_stream_status: 'raw_streaming_unverified',
+  reason: 'current official frame observed',
+  stage_report: 'USB_StartStreamCallback=ok channel=0 lastError=0',
+  frame_counter: 129,
+  java_interface_dispatched_callback_count: 129,
+  java_interface_callback_entry_detail: 'route=jni disposition=dispatched dispatchedCount=129',
+}};
+const stale = {{
+  raw_stream_status: 'stream_attempt_started',
+  reason: 'stream_attempt_started no_callback_entry',
+  stage_report: 'USB_StartStreamCallback=ok channel=0 lastError=0',
+  frame_counter: 0,
+  java_interface_dispatched_callback_count: 0,
+  java_interface_callback_entry_detail: 'no_callback_entry',
+}};
+const result = buildMini2DiagnosticExport({{
+  mini2: {{
+    raw_stream: current,
+    last_stream_attempt: stale,
+  }},
+}});
+assert.strictEqual(result.classification, 'official_frame_observed');
+assert.strictEqual(result.callbackEntryCount, 129);
+assert.strictEqual(result.diagnosticStream.frame_counter, 129);
+assert.strictEqual(result.lastStreamAttempt.frame_counter, 0);
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_mini2_stale_only_attempt_is_not_classified_as_current_frame(self):
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        diagnostic_functions = function_slice(
+            adapter,
+            "function isAndroidPlainObject",
+            "  function updateMini2DiagnosticExport",
+        )
+        script = f"""
+const assert = require('assert');
+const MINI2_OFFICIAL_PRIMARY_MODE = 'OFFICIAL_PRIMARY';
+{diagnostic_functions}
+const historical = {{
+  raw_stream_status: 'raw_streaming_unverified',
+  reason: 'historical official frame observed',
+  stage_report: 'USB_StartStreamCallback=ok channel=0 lastError=0',
+  frame_counter: 129,
+  celsius_allowed: true,
+  official_measurement_status: 'READY',
+}};
+const result = buildMini2DiagnosticExport({{
+  mini2: {{
+    last_stream_attempt: historical,
+  }},
+}});
+assert.strictEqual(result.classification, 'historical_last_attempt_only');
+assert.strictEqual(result.diagnosticClassification, 'official_frame_observed');
+assert.strictEqual(result.diagnosticStreamIsCurrent, false);
+assert.strictEqual(result.lastStreamAttempt.frame_counter, 129);
+assert.notStrictEqual(result.classification, 'official_frame_observed');
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_mini2_invalid_packet_timeout_overrides_generic_callback_handoff_classification(self):
+        adapter = read(WEBSITE_ROOT / "android-webview.js")
+        diagnostic_functions = function_slice(
+            adapter,
+            "function isAndroidPlainObject",
+            "  function updateMini2DiagnosticExport",
+        )
+        script = f"""
+const assert = require('assert');
+const MINI2_OFFICIAL_PRIMARY_MODE = 'OFFICIAL_PRIMARY';
+{diagnostic_functions}
+const timeout = {{
+  observed_packet_size: 102944,
+  allowed_packet_sizes: [203720, 183496],
+  elapsed_ms: 40001,
+}};
+const result = buildMini2DiagnosticExport({{
+  mini2: {{
+    raw_stream: {{
+      raw_stream_status: 'stream_attempt_started',
+      reason: 'stream_attempt_started',
+      stage_report: 'USB_StartStreamCallback=ok channel=0 lastError=0',
+      frame_counter: 0,
+      java_interface_callback_entry_count: 129,
+      post_start_state: 'native_start_accepted_callback_invalid_packet_size_timeout',
+      invalid_packet_size_timeout: timeout,
+      celsius_allowed: false,
+      temperature_avg_c: null,
+    }},
+  }},
+}});
+assert.strictEqual(
+  result.classification,
+  'native_start_accepted_callback_invalid_packet_size_timeout',
+);
+assert.deepStrictEqual(result.invalidPacketSizeTimeout, timeout);
+assert.strictEqual(result.live?.celsius_allowed, undefined);
+"""
+        subprocess.run(["node", "-e", script], check=True)
 
     def test_mini2_first_frame_wait_explicit_retry_cleans_and_passive_poll_does_not_restart(self):
         stream = (JAVA_ROOT / "thermal/HikmicroJnaMini2Stream.kt").read_text(encoding="utf-8")
@@ -660,9 +907,16 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertNotIn("retry_throttled", stream)
         ensure_entry = function_slice(stream, "fun ensureStreaming(", "    /**\n     * Passive status polling")
         self.assertIn("explicit manual confirm forces fresh official retry", ensure_entry)
-        self.assertIn("f2Helper.closeSession()", ensure_entry)
+        self.assertNotIn("f2Helper.closeSession()", stream)
+        self.assertIn("f2Api.closeSessionForFreshOpen(reason)", stream)
+        self.assertIn("reason = \"stale_frame\"", ensure_entry)
+        self.assertIn("reason = \"explicit_retry\"", ensure_entry)
+        self.assertIn("reason = \"pre_open_cleanup\"", ensure_entry)
+        self.assertIn("F2SessionCloseOutcome.STREAM_PRESERVED", ensure_entry)
+        self.assertIn("exact prior binding ownership retained", stream)
         self.assertIn("f2Api.openUsbModule(", ensure_entry)
-        self.assertLess(ensure_entry.index("f2Helper.closeSession()"), ensure_entry.index("f2Api.openUsbModule("))
+        self.assertLess(ensure_entry.index('reason = "pre_open_cleanup"'), ensure_entry.index("f2Api.openUsbModule("))
+        self.assertLess(ensure_entry.index("?.let { return it }"), ensure_entry.index("f2Api.openUsbModule("))
         passive_entry = function_slice(stream, "fun peekActiveStatus(", "    @Synchronized\n    fun latestRawFrameSummary")
         self.assertIn("passive_status_peek is read-only", passive_entry)
         self.assertNotIn("f2Api.openUsbModule(", passive_entry)
@@ -689,8 +943,17 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertIn("f2Api.startStreamPreview(", ensure_entry)
         self.assertIn("callback = { frame ->", ensure_entry)
         self.assertIn("captureOfficialF2Frame(frame)", ensure_entry)
-        self.assertIn("onOfficialPreviewSuccess(context.cacheDir)", ensure_entry)
-        self.assertLess(ensure_entry.index("captureOfficialF2Frame(frame)"), ensure_entry.index("onOfficialPreviewSuccess(context.cacheDir)"))
+        self.assertIn("val successCount = onOfficialPreviewSuccess()", ensure_entry)
+        self.assertIn("f2Helper.onPreviewFrameForCalibrationPrefetch(", ensure_entry)
+        self.assertIn("cacheDir = officialF2DataDirectory(context)", ensure_entry)
+        self.assertIn("previewFrameCounter = successCount", ensure_entry)
+        self.assertLess(ensure_entry.index("captureOfficialF2Frame(frame)"), ensure_entry.index("val successCount = onOfficialPreviewSuccess()"))
+        self.assertLess(ensure_entry.index("val successCount = onOfficialPreviewSuccess()"), ensure_entry.index("f2Helper.onPreviewFrameForCalibrationPrefetch("))
+        self.assertNotIn("context.cacheDir", ensure_entry)
+        f2data_entry = function_slice(stream, "internal fun officialF2DataDirectory(context: Context)", "    private fun waitingForFrameStatus")
+        self.assertIn("A5.y.c.b().u()", f2data_entry)
+        self.assertIn("context.getExternalFilesDir(null)", f2data_entry)
+        self.assertIn('File(root, "F2Data")', f2data_entry)
         self.assertNotIn("f2Api.startStreamPreviewJNA", ensure_entry)
 
 
@@ -940,12 +1203,14 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         for token in [
             "explicitLastStreamAttempt",
             "hasExplicitLastStreamAttempt",
-            "const lastAttempt = hasExplicitLastStreamAttempt ? explicitLastStreamAttempt : rawStream",
+            "const diagnosticStream = hasCurrentRawStream ? rawStream : explicitLastStreamAttempt",
+            "const lastAttempt = hasExplicitLastStreamAttempt ? explicitLastStreamAttempt : diagnosticStream",
             "const currentPresence = isAndroidPlainObject(mini2.current_usb_presence)",
             "lastAttemptRoute",
             "currentPresenceRoute",
             "currentUsbPresence",
             "lastStreamAttempt",
+            "diagnosticStream",
         ]:
             with self.subTest(token=token):
                 self.assertIn(token, diagnostic_fn)
@@ -959,7 +1224,7 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
             "celsiusPublishState",
             "validationEvidence",
             "androidRegexValue(stageReport, /selectedProfile=",
-            "androidRegexValue(lastAttempt.reason || rawStream.reason || live.mini2_reason || stageReport, /packet_classification=",
+            "androidRegexValue(diagnosticStream.reason || live.mini2_reason || stageReport, /packet_classification=",
         ]:
             with self.subTest(diagnostic_field=token):
                 self.assertIn(token, diagnostic_fn)
@@ -999,7 +1264,7 @@ class AndroidWebViewMini2Tests(unittest.TestCase):
         self.assertNotIn("0.0°C", adapter)
         self.assertNotIn("0.0℃", adapter)
 
-    def test_android_webview_g004_maps_only_valid_device_global_summary_celsius(self):
+    def test_android_webview_rejects_device_global_fallback_for_public_celsius(self):
         adapter = (WEBSITE_ROOT / "android-webview.js").read_text(encoding="utf-8")
         sanitize_fn = adapter[
             adapter.index("function isAndroidPlainObject"):
@@ -1027,10 +1292,10 @@ const validZero = sanitizeAndroidBridgePayload({{
     }},
   }},
 }});
-assert.strictEqual(validZero.live.temperature_avg_c, 0);
-assert.strictEqual(validZero.live.temperature_delta_c, 0.5);
-assert.strictEqual(validZero.live.temperature_source, 'device_global_summary');
-assert.strictEqual(validZero.live.full_matrix_celsius_allowed, false);
+assert.strictEqual(validZero.live.temperature_avg_c, null);
+assert.strictEqual(validZero.live.temperature_delta_c, null);
+assert.strictEqual(validZero.live.temperature_source, undefined);
+assert.strictEqual(validZero.live.celsius_allowed, false);
 
 const fabricatedZero = sanitizeAndroidBridgePayload({{
   live: {{
@@ -1283,9 +1548,11 @@ assert.strictEqual(blocked.live.celsius_allowed, false);
         self.assertIn("lastFailureReason", helper)
 
         cleanup_slice = function_slice(helper, "private fun cleanupPreviousOfficialF2Login", "    private fun setThermalStreamCtrl")
-        self.assertLess(cleanup_slice.index("USB_StopChannel(currentUserId"), cleanup_slice.index("USB_Logout(currentUserId"))
-        self.assertLess(cleanup_slice.index("USB_Logout(currentUserId"), cleanup_slice.index("selectedDeviceInfo?.closeConnection()"))
-        self.assertIn("clearCallbackSlot(userId)", java_interface)
+        self.assertLess(cleanup_slice.index("invokeStopChannel(currentUserId, currentChannel)"), cleanup_slice.index("logoutOperation(currentUserId)"))
+        self.assertIn("stopChannelOperation(currentUserId, currentChannel)", cleanup_slice)
+        self.assertLess(cleanup_slice.index("logoutOperation(currentUserId)"), cleanup_slice.index("selected?.closeConnection()"))
+        self.assertIn("invalidateStreamCallbackRegistration(userId)", java_interface)
+        self.assertIn("activeStreamRegistrationEpochs[userId] = 0L", java_interface)
         self.assertIn("USB_StopChannel(userId: Int, channel: Int)", java_interface)
 
     def test_mini2_login_failure_cleanup_and_stage_report_evidence(self):
@@ -1310,7 +1577,8 @@ assert.strictEqual(blocked.live.celsius_allowed, false);
         self.assertIn("device-reported Celsius summary is allowed only when provenance=device_global_summary", stream)
         self.assertIn("raw_streaming_unverified", status_model)
         self.assertIn("official_g3_preview_stream_info", stream)
-        self.assertIn('put("temperature_avg_c", summary?.avgC ?: JSONObject.NULL)', status_model)
+        self.assertIn('put("temperature_avg_c", JSONObject.NULL)', status_model)
+        self.assertIn('put("device_global_temperature_avg_c", summary?.avgC ?: JSONObject.NULL)', status_model)
         self.assertIn("live[`temperature_${suffix}`] = null", adapter)
         self.assertNotIn("temperatureCelsius = raw", status_model + stream + helper)
         self.assertNotIn("temperature_avg_c || 0", adapter)

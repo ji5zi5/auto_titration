@@ -35,6 +35,7 @@ if "%THERMAL_PROCESSING%"=="" set "THERMAL_PROCESSING=roi"
 if "%THERMAL_ROTATION_DEGREES%"=="" set "THERMAL_ROTATION_DEGREES=180"
 if "%VISIBLE_ROI%"=="" set "VISIBLE_ROI=auto"
 if "%OUTPUT%"=="" set "OUTPUT=data\raw\windows-live-mini2-visible.csv"
+if "%ENDPOINT_ML_MODEL%"=="" set "ENDPOINT_ML_MODEL=data\labeled\type-conditioned-sensor-endpoint-ranker.pkl"
 if "%STREAM_EVERY%"=="" set "STREAM_EVERY=0"
 if "%PREVIEW_DIR%"=="" set "PREVIEW_DIR=website\live"
 if "%PREVIEW_EVERY%"=="" set "PREVIEW_EVERY=0"
@@ -62,9 +63,11 @@ if "%VISIBLE_SYNC_MAX_AGE_MS%"=="" set "VISIBLE_SYNC_MAX_AGE_MS=1000"
 if "%PUMP_SERIAL_PORT%"=="" set "PUMP_SERIAL_PORT=auto"
 if "%PUMP_SERIAL_BAUD%"=="" set "PUMP_SERIAL_BAUD=9600"
 if "%PUMP_SERIAL_RETRY_INTERVAL_S%"=="" set "PUMP_SERIAL_RETRY_INTERVAL_S=2"
+if "%PUMP_SERIAL_PROTOCOL%"=="" set "PUMP_SERIAL_PROTOCOL=auto"
 if "%PUMP_START_COMMAND%"=="" set "PUMP_START_COMMAND=b"
 if "%PUMP_RETRACT_COMMAND%"=="" set "PUMP_RETRACT_COMMAND=a"
 if "%PUMP_STOP_COMMAND%"=="" set "PUMP_STOP_COMMAND=c"
+if "%PUMP_PULSE_DIRECTION%"=="" set "PUMP_PULSE_DIRECTION=b"
 if "%METADATA_JPEG%"=="" set "METADATA_JPEG=data\fixtures\mini2\IR_00001.jpeg"
 if "%DLL_DIR%"=="" set "DLL_DIR=vendor\hikmicro_analyzer"
 
@@ -78,6 +81,7 @@ echo   Thermal processing: %THERMAL_PROCESSING%
 echo   Thermal rotation: %THERMAL_ROTATION_DEGREES% degrees
 echo   Visible ROI: %VISIBLE_ROI%
 echo   Output: %OUTPUT%
+echo   Final endpoint model: %ENDPOINT_ML_MODEL%
 echo   MJPEG/SSE stream: http://%LIVE_STREAM_HOST%:%LIVE_STREAM_PORT%/
 echo   ROI setup/lock: click=%ROI_CLICK_ENABLED% link=%ROI_LINK_MODE% continuous_auto=%ROI_AUTO_DETECT%
 echo   Visible ROI detector: %VISIBLE_ROI_DETECTOR% model=%YOLO_MODEL%
@@ -86,7 +90,7 @@ echo   YOLO throttle: min=%YOLO_MIN_INTERVAL_MS%ms success=%YOLO_SUCCESS_INTERVA
 echo   Legacy file preview every rows: %PREVIEW_EVERY%
 echo   Stream every rows: %STREAM_EVERY%
 echo   Max sync offset warning: %MAX_SYNC_OFFSET_MS% ms
-echo   Pump serial: port=%PUMP_SERIAL_PORT% baud=%PUMP_SERIAL_BAUD% retry=%PUMP_SERIAL_RETRY_INTERVAL_S%s start=%PUMP_START_COMMAND% retract=%PUMP_RETRACT_COMMAND% stop=%PUMP_STOP_COMMAND%
+echo   Pump serial: port=%PUMP_SERIAL_PORT% baud=%PUMP_SERIAL_BAUD% protocol=%PUMP_SERIAL_PROTOCOL% retry=%PUMP_SERIAL_RETRY_INTERVAL_S%s start=%PUMP_START_COMMAND% retract=%PUMP_RETRACT_COMMAND% stop=%PUMP_STOP_COMMAND% pulse=%PUMP_PULSE_DIRECTION%
 echo.
 
 if /I "%VISIBLE_ROI_DETECTOR%"=="yolo" if not "%AUTO_INSTALL_YOLO%"=="0" (
@@ -120,6 +124,7 @@ if /I "%VISIBLE_ROI_DETECTOR%"=="yolo" if not "%AUTO_INSTALL_YOLO%"=="0" (
   --metadata-jpeg "%METADATA_JPEG%" ^
   --dll-dir "%DLL_DIR%" ^
   --output "%OUTPUT%" ^
+  --endpoint-ml-model "%ENDPOINT_ML_MODEL%" ^
   --stream-every %STREAM_EVERY% ^
   --preview-dir "%PREVIEW_DIR%" ^
   --preview-every %PREVIEW_EVERY% ^
@@ -146,9 +151,11 @@ if /I "%VISIBLE_ROI_DETECTOR%"=="yolo" if not "%AUTO_INSTALL_YOLO%"=="0" (
   --pump-serial-port "%PUMP_SERIAL_PORT%" ^
   --pump-serial-baud %PUMP_SERIAL_BAUD% ^
   --pump-serial-retry-interval-s %PUMP_SERIAL_RETRY_INTERVAL_S% ^
+  --pump-serial-protocol %PUMP_SERIAL_PROTOCOL% ^
   --pump-start-command %PUMP_START_COMMAND% ^
   --pump-retract-command %PUMP_RETRACT_COMMAND% ^
-  --pump-stop-command %PUMP_STOP_COMMAND%
+  --pump-stop-command %PUMP_STOP_COMMAND% ^
+  --pump-pulse-direction %PUMP_PULSE_DIRECTION%
 
 pause
 exit /b %errorlevel%

@@ -1,0 +1,32 @@
+const fs = require('fs');
+let harness = fs.readFileSync('tests/js/test_web_request_lifecycle.js','utf8').split('(async () => {\n  await testPumpLifecycle();')[0];
+harness = harness.replace("AutoTitrationAndroid: {},","matchMedia: () => ({ matches: false }),");
+eval(harness + `
+(async()=>{
+ requests.length=0;
+ const body={pump_rate_ml_per_s:.5,titration_type:'weak_acid_strong_base'};
+ context.buildPumpTimelineStartPayload=()=>body;
+ const sync=context.syncRemoteSettings();
+ assert(requests.length===1 && requests[0].url.endsWith('/api/remote/config'),'sync must read shared state');
+ requests[0].resolve({ok:true,config:null});await settle();await settle();
+ assert(requests.length===2 && requests[1].options.method==='POST','missing automatic settings save');
+ assert(JSON.stringify(JSON.parse(requests[1].options.body))===JSON.stringify(body),'wrong shared settings');
+ requests[1].resolve({ok:true});await sync;
+ assert(requests.every(r=>r.url.endsWith('/api/remote/config')),'sync issued motion');
+ requests.length=0;
+ const unchanged=context.syncRemoteSettings();
+ requests[0].resolve({ok:true,config:body});await unchanged;
+ assert(requests.length===1,'unchanged settings unnecessarily written');
+ requests.length=0;
+ context.buildPumpTimelineStartPayload=()=>{throw Error('invalid input');};
+ const invalid=context.syncRemoteSettings();
+ requests[0].resolve({ok:true,config:body});await settle();await settle();
+ assert(JSON.parse(requests[1].options.body).clear===true,'old configuration remained available after invalid input');
+ requests[1].resolve({ok:true});await invalid;
+ requests.length=0;
+ vm.runInContext('latestCsvStatus={recording:true};',context);
+ await context.syncRemoteSettings();
+ assert(requests.length===0,'recording settings were changed');
+ console.log('automatic config sync, dedupe, invalidation, recording freeze OK');
+})().catch(e=>{console.error(e);process.exitCode=1;});
+`);

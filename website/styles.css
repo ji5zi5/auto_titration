@@ -39,6 +39,44 @@ code { color: var(--blue); }
 
 .app-shell { min-height: 100vh; }
 .live-view { max-width: 1500px; margin: 0 auto; padding: .75rem clamp(.75rem, 2vw, 1.25rem) 1.25rem; }
+.live-view > *, .demo-stage > *, .trend-grid > *, .final-result-grid > *, .sensor-grid > * { min-width: 0; }
+
+/* Quiet status strip; live video remains the notebook's primary content. */
+.demo-stage {
+  margin: .7rem 0; padding: .85rem 1rem; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: space-between; gap: .8rem;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 14px;
+}
+.stage-copy { display: flex; flex-wrap: wrap; align-items: baseline; gap: .55rem; min-width: 0; }
+.demo-stage h2 { margin: 0; color: var(--muted); font-size: .9rem; }
+.stage-value { font-size: 1.15rem; font-weight: 750; line-height: 1.4; }
+.stage-note { margin: 0; font-size: .85rem; color: var(--muted); }
+.stage-facts { display: flex; flex-wrap: wrap; gap: 1rem; }
+.stage-facts div { display: flex; align-items: baseline; gap: .3rem; min-width: 0; }
+.stage-facts span, .stage-facts small { color: var(--muted); font-size: .82rem; }
+.stage-facts strong { font-size: 1.1rem; font-weight: 750; }
+.results-view[hidden], #sensorGrid[hidden] { display: none; }
+
+.trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; margin-bottom: .85rem; }
+.trend-card, .final-results { min-width: 0; padding: clamp(1rem, 2vw, 1.4rem); background: var(--card); border: 1px solid var(--line); border-radius: 24px; }
+.trend-card header, .final-results > header { display: flex; align-items: end; justify-content: space-between; gap: .8rem; margin-bottom: .8rem; }
+.trend-card header > span { color: var(--blue); font-size: .8rem; font-weight: 900; }
+.trend-card-thermal header > span { color: #b54708; }
+.trend-canvas { display: block; width: 100%; max-width: 100%; min-width: 0; height: 15rem; border-radius: 14px; background: #fafafc; }
+.trend-empty { margin: .65rem 0 0; color: var(--muted); font-size: .82rem; font-weight: 800; }
+
+.final-results { margin-bottom: .85rem; }
+body:not([data-app-mode="calculator"]) .final-results { display: none; }
+.result-total { margin: .5rem 0 .8rem; color: var(--muted); font-size: .9rem; font-weight: 800; }
+.result-total strong { color: var(--ink); font-size: 1.1rem; }
+.outcome-badge { padding: .45rem .75rem; border-radius: 999px; background: #f5f5f7; color: var(--muted); font-size: .82rem; }
+.outcome-badge[data-outcome="complete"] { background: #ecfdf3; color: #067647; }
+.outcome-badge[data-outcome="safety-stop"], .outcome-badge[data-outcome="manual-stop"] { background: #fffaeb; color: #b54708; }
+.outcome-badge[data-outcome="error"] { background: #fef3f2; color: var(--red); }
+.final-result-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+.final-result-card { min-width: 0; min-height: 9rem; padding: 1rem; display: flex; flex-direction: column; justify-content: center; border-radius: 18px; background: #f5f5f7; }
+.final-result-card span, .final-result-card small { color: var(--muted); font-size: .8rem; font-weight: 850; }
+.final-result-card > strong { margin: .3rem 0; font-size: clamp(2.4rem, 5vw, 5.2rem); line-height: .95; letter-spacing: -.065em; overflow-wrap: anywhere; }
 
 .pill, .badge {
   display: inline-flex; align-items: center; justify-content: center; gap: .35rem; max-width: 100%;
@@ -57,6 +95,13 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
   display: grid; grid-template-columns: minmax(11rem, .48fr) minmax(24rem, 1.52fr); gap: .75rem; align-items: center;
   background: var(--card); border: 1px solid var(--line); border-radius: 24px;
 }
+.settings-drawer { grid-column: 1 / -1; }
+.settings-drawer > summary {
+  min-height: 2.75rem; display: flex; align-items: center; padding: .45rem .85rem;
+  border: 1px solid var(--line); border-radius: 999px; background: #f9fafb; font-weight: 900; cursor: pointer;
+}
+.settings-drawer[open] > summary { margin-bottom: .55rem; }
+.settings-drawer .pump-settings + .pump-settings { margin-top: .55rem; }
 .action-title { min-width: 0; display: grid; gap: .55rem; }
 .action-title p:last-of-type { margin: 0; color: var(--muted); font-size: .95rem; font-weight: 780; line-height: 1.45; }
 .main-actions {
@@ -78,7 +123,7 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 .pump-button { background: white; color: var(--ink); border-color: var(--line); }
 .pump-stop-button { color: var(--red); border-color: #fecdca; background: #fff5f5; }
 .main-actions button:not(:disabled):hover, .download-button:hover, .mode-button:hover, .details-panel summary:hover {
-  transform: translateY(-1px);
+  transform: none;
   box-shadow: 0 8px 22px rgba(29, 29, 31, .08);
 }
 .main-actions button:disabled, .record-button:disabled { opacity: .45; cursor: not-allowed; }
@@ -92,29 +137,6 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 }
 .mode-button.is-active { background: var(--blue); color: white; border-color: var(--blue); }
 .mode-hidden { display: none !important; }
-.calculator-panel {
-  grid-column: 1 / -1; display: grid; gap: .8rem;
-  padding: .9rem; background: #f9fafb; border: 1px solid var(--line); border-radius: 22px;
-}
-.calculator-panel[hidden] { display: none; }
-.result-hero { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: .65rem; }
-.result-card {
-  min-width: 0; display: grid; gap: .18rem; align-content: center;
-  min-height: 10.25rem; padding: 1rem; border: 1px solid var(--line); border-radius: 20px;
-  background: white; color: var(--ink);
-}
-.result-card-primary { background: var(--blue); color: white; border-color: var(--blue); }
-.result-card span { color: var(--muted); font-size: .85rem; font-weight: 900; }
-.result-card-primary span { color: rgba(255,255,255,.82); }
-.result-card strong { font-size: clamp(2.8rem, 8vw, 6.3rem); line-height: .95; letter-spacing: -.075em; word-break: break-word; }
-.result-card small { color: var(--muted); font-size: .85rem; font-weight: 850; }
-.result-card-primary small { color: rgba(255,255,255,.78); }
-.result-meta { display: flex; flex-wrap: wrap; gap: .45rem; }
-.result-meta span {
-  display: inline-flex; align-items: center; gap: .35rem; min-height: 2.15rem; padding: .35rem .68rem;
-  border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--muted); font-size: .82rem; font-weight: 850;
-}
-.result-meta strong { color: var(--ink); font-weight: 950; }
 .result-status { margin: 0; color: var(--muted); font-size: .95rem; font-weight: 850; line-height: 1.45; }
 .pump-settings {
   grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
@@ -122,6 +144,10 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 }
 .pump-settings label { display: grid; gap: .25rem; color: var(--muted); font-size: .8rem; font-weight: 850; }
 .pump-settings input, .pump-settings select { width: 100%; min-width: 0; min-height: 2.75rem; border-radius: 999px; border: 1px solid var(--line); padding: 0 .75rem; background: white; color: var(--ink); font-weight: 900; }
+.pump-safety-settings { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 14px; background: white; padding: .55rem .7rem; }
+.pump-safety-settings summary { cursor: pointer; color: var(--ink); font-size: .82rem; font-weight: 900; }
+.pump-safety-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .5rem; margin-top: .55rem; }
+.pump-safety-settings small { display: block; margin-top: .45rem; color: var(--muted); line-height: 1.4; }
 .pump-settings .checkbox-control {
   min-height: 2.75rem; display: flex; align-items: center; gap: .55rem;
   padding: 0 .75rem; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--ink);
@@ -241,7 +267,11 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
   .android-pump-device-field { grid-column: span 2; }
 }
 @media (max-width: 700px) {
-  .main-actions, .compact-stats, .temperature-panel .compact-stats, .result-hero { grid-template-columns: 1fr; }
+  .demo-stage, .trend-grid, .final-result-grid, .main-actions, .compact-stats, .temperature-panel .compact-stats { grid-template-columns: 1fr; }
+  .demo-stage { min-height: 0; padding: .85rem; }
+  .stage-value { font-size: 1.15rem; }
+  .stage-facts { grid-template-columns: 1fr 1fr; }
+  .trend-canvas { height: 12rem; }
   .android-pump-settings { grid-template-columns: 1fr 1fr; }
   .android-pump-device-field { grid-column: 1 / -1; }
   .metric.wide { grid-column: auto; }
@@ -256,3 +286,62 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
     transition-duration: .01ms !important;
   }
 }
+
+/* Phone remote: reuse the same controls, not a second pump implementation. */
+.remote-only { display: none; }
+.remote-share { grid-column:1 / -1; display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; margin:.6rem 0; font-size:.9rem; }
+.remote-share button { padding:.65rem 1rem; cursor:pointer; border:1px solid var(--line); border-radius:12px; background:var(--soft); color:var(--ink); }
+body.remote-control-mode .remote-only { display:block; }
+body.remote-control-mode .remote-share,
+body.remote-control-mode .settings-drawer,
+body.remote-control-mode #pumpTimelineForm,
+body.remote-control-mode #chemistryModelForm,
+body.remote-control-mode .trend-grid,
+body.remote-control-mode .final-results,
+body.remote-control-mode #sensorGrid,
+body.remote-control-mode .mode-switcher,
+body.remote-control-mode #roiSetupButton,
+body.remote-control-mode #roiAutoSetupButton,
+body.remote-control-mode #roiLockButton,
+body.remote-control-mode #csvDownloadLink { display:none !important; }
+body.remote-control-mode .live-view { max-width:560px; }
+body.remote-control-mode .main-actions { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); }
+body.remote-control-mode .main-actions button { min-height:76px; font-size:1.12rem; }
+body.remote-control-mode #csvStatusStrip > * { display:none; }
+body.remote-control-mode #csvStatusStrip > #previewStatus,
+body.remote-control-mode #csvStatusStrip > .badge:has(#csvStateLabel),
+body.remote-control-mode #csvStatusStrip > .badge:has(#pumpCommandStatus) { display:block; }
+body.remote-control-mode .action-panel { display:block; }
+body.remote-control-mode .remote-help { font-size:.85rem; line-height:1.5; color:var(--muted); }
+body.remote-control-mode #serialPumpStopButton { width:100%; min-height:64px; background:#b42318; color:white; }
+body.remote-control-mode .demo-stage { padding:1rem; min-height:0; gap:.6rem; }
+body.remote-control-mode .stage-value { font-size:2.4rem; }
+body.remote-control-mode .stage-note { margin-top:.5rem; font-size:.9rem; }
+body.remote-control-mode .stage-facts strong { font-size:1.8rem; }
+
+body.remote-control-mode #serialPumpStopButton { grid-column:1 / -1; }
+body.remote-control-mode .stage-copy { display:block; }
+body.remote-control-mode .stage-facts { width:100%; justify-content:space-between; }
+body.remote-control-mode .stage-facts div { display:block; }
+
+.main-actions .pump-stop-button { color:var(--red); border-color:#fecdca; background:#fff5f5; }
+
+/* Demo-facing hierarchy: operational controls, quiet status, two clear results. */
+.action-title h1 { font-size:1.8rem; letter-spacing:-.035em; }
+.main-actions .start-button { background:var(--blue); color:white; border-color:var(--blue); }
+.main-actions .stop-button { background:#fff5f5; color:var(--red); border-color:#fecdca; }
+.status-strip .pill, .status-strip .badge { border:0; background:transparent; color:#475467; font-weight:600; padding:.2rem .4rem; }
+.diagnostics-drawer { grid-column:1 / -1; font-size:.85rem; color:#475467; }
+.diagnostics-drawer summary { cursor:pointer; padding:.25rem; }
+.result-file { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-top:1rem; padding-top:.8rem; border-top:1px solid var(--line); color:#475467; font-size:.9rem; }
+.final-result-card > strong { font-variant-numeric:tabular-nums; }
+.final-results, .trend-card { border-radius:18px; }
+.remote-share { font-size:.85rem; }
+body.remote-control-mode .diagnostics-drawer { display:none; }
+@media(max-width:700px) {
+  .final-result-grid { grid-template-columns:1fr; }
+  .result-file { flex-wrap:wrap; }
+}
+
+body.remote-control-mode .action-title > * { min-width:0; max-width:100%; }
+body.remote-control-mode .remote-help { overflow-wrap:anywhere; white-space:normal; }

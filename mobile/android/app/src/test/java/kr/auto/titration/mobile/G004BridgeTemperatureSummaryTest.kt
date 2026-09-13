@@ -1,5 +1,7 @@
 package kr.auto.titration.mobile
 
+import kr.auto.titration.mobile.thermal.OfficialF2ScalarMeasurementState
+import kr.auto.titration.mobile.thermal.OfficialF2ScalarMeasurementStatus
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -8,7 +10,16 @@ import org.junit.Test
 
 class G004BridgeTemperatureSummaryTest {
     @Test
-    fun liveBridgeCopiesValidatedDeviceGlobalSummaryWithoutMatrixClaim() {
+    fun liveBridgeKeepsDeviceGlobalSummaryDiagnosticUntilCurrentFrameOfficialReady() {
+        val deviceGlobalSummary = fakeJson(
+            "avg_c" to 26.5,
+            "min_c" to 22.25,
+            "max_c" to 31.75,
+            "provenance" to "device_global_summary",
+            "scope" to "device_global_summary",
+            "celsius_allowed" to false,
+            "full_matrix_celsius_allowed" to false,
+        )
         val stream = fakeJson(
             "celsius_allowed" to true,
             "temperature_avg_c" to 26.5,
@@ -18,13 +29,8 @@ class G004BridgeTemperatureSummaryTest {
             "temperature_scope" to "device_global_summary",
             "temperature_requested_display_unit" to "fahrenheit",
             "temperature_requested_display_unit_code" to 1,
-            "temperature_summary" to fakeJson(
-                "avg_c" to 26.5,
-                "min_c" to 22.25,
-                "max_c" to 31.75,
-                "provenance" to "device_global_summary",
-                "scope" to "device_global_summary",
-            ),
+            "temperature_summary" to deviceGlobalSummary,
+            "device_global_summary" to deviceGlobalSummary,
             "full_matrix_celsius_allowed" to false,
             "full_matrix_temperature_status" to "unproved_not_emitted",
             "temperature_conversion_attempt" to fakeJson(
@@ -36,17 +42,48 @@ class G004BridgeTemperatureSummaryTest {
 
         copyMini2TemperatureSummaryFieldsForBridge(live, stream)
 
+        assertFalse(live.getBoolean("celsius_allowed"))
+        assertTrue(live.isNull("temperature_avg_c"))
+        assertTrue(live.isNull("temperature_min_c"))
+        assertTrue(live.isNull("temperature_max_c"))
+        assertTrue(live.isNull("temperature_provenance"))
+        assertTrue(live.isNull("temperature_scope"))
+        assertTrue(live.isNull("temperature_summary"))
+        assertEquals(26.5, live.getJSONObject("device_global_summary").getDouble("avg_c"), 0.0001)
+        assertFalse(live.getJSONObject("device_global_summary").getBoolean("celsius_allowed"))
+        assertFalse(live.getBoolean("full_matrix_celsius_allowed"))
+        assertEquals("unproved_not_emitted", live.getString("full_matrix_temperature_status"))
+
+        appendOfficialMeasurementFieldsForBridge(
+            target = live,
+            state = OfficialF2ScalarMeasurementState(
+                status = OfficialF2ScalarMeasurementStatus.READY,
+                reason = "official_f2_scalar_measurement_ready",
+                frameCounter = 42L,
+                requestedElapsedMs = 100L,
+                completedElapsedMs = 101L,
+                lifecycleGeneration = 1L,
+                calibrationCacheState = "ready",
+                calibrationIdentityKey = "test",
+                calibrationFileName = "F2Data.bin",
+                measuredScope = "RECTANGLE",
+                maxCelsius = 31.75f,
+                minCelsius = 22.25f,
+                centerCelsius = 27.0f,
+                averageCelsius = 26.5f,
+                fullMatrixCelsiusAvailable = false,
+            ),
+            currentRawStreamFrameCounter = 42L,
+        )
+
         assertTrue(live.getBoolean("celsius_allowed"))
         assertEquals(26.5, live.getDouble("temperature_avg_c"), 0.0001)
         assertEquals(22.25, live.getDouble("temperature_min_c"), 0.0001)
         assertEquals(31.75, live.getDouble("temperature_max_c"), 0.0001)
-        assertEquals("device_global_summary", live.getString("temperature_provenance"))
-        assertEquals("device_global_summary", live.getString("temperature_scope"))
-        assertEquals("fahrenheit", live.getString("temperature_requested_display_unit"))
-        assertEquals(1, live.getInt("temperature_requested_display_unit_code"))
-        assertEquals(26.5, live.getJSONObject("temperature_summary").getDouble("avg_c"), 0.0001)
+        assertEquals("official_f2_analyzer_measurement_stats", live.getString("temperature_provenance"))
+        assertEquals("rectangle", live.getString("temperature_scope"))
+        assertEquals("current_frame", live.getString("official_measurement_temporal_scope"))
         assertFalse(live.getBoolean("full_matrix_celsius_allowed"))
-        assertEquals("unproved_not_emitted", live.getString("full_matrix_temperature_status"))
     }
 
     @Test
@@ -89,6 +126,27 @@ class G004BridgeTemperatureSummaryTest {
         assertTrue(live.isNull("temperature_provenance"))
         assertTrue(live.isNull("temperature_summary"))
         assertFalse(live.getBoolean("full_matrix_celsius_allowed"))
+    }
+
+    @Test
+    fun liveBridgeRejectsUnorderedDeviceGlobalSummary() {
+        val stream = fakeJson(
+            "celsius_allowed" to true,
+            "temperature_avg_c" to 35.0,
+            "temperature_min_c" to 20.0,
+            "temperature_max_c" to 30.0,
+            "temperature_provenance" to "device_global_summary",
+            "temperature_scope" to "device_global_summary",
+            "full_matrix_celsius_allowed" to false,
+        )
+        val live = fakeJson()
+
+        copyMini2TemperatureSummaryFieldsForBridge(live, stream)
+
+        assertFalse(live.getBoolean("celsius_allowed"))
+        assertTrue(live.isNull("temperature_avg_c"))
+        assertTrue(live.isNull("temperature_min_c"))
+        assertTrue(live.isNull("temperature_max_c"))
     }
 
 

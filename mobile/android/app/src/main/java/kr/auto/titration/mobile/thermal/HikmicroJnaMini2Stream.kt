@@ -1,6 +1,7 @@
 package kr.auto.titration.mobile.thermal
 
 import android.content.Context
+import android.graphics.Rect
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.SystemClock
@@ -9,12 +10,19 @@ import android.view.SurfaceView
 import android.widget.TextView
 import com.hcusbsdk.Interface.JavaInterface
 import com.hik.f2module.F2StreamFrame
+import com.hik.f2module.F2StageResult
 import com.hik.f2module.F2StreamAttemptDiagnostic
+import com.hik.f2module.F2SessionCloseOutcome
 import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
 import com.hik.viewer.manager.PreviewManagerII
 import kr.auto.titration.mobile.OfficialPreviewBinding
 import java.io.File
+import java.util.LinkedHashSet
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONObject
@@ -28,10 +36,109 @@ private const val HIKMICRO_OFFICIAL_MAX_PROVED_HEIGHT = 288
 private const val HIKMICRO_DEFAULT_DISPLAY_ROTATION_DEGREES = 90
 private const val HIKMICRO_RAW_BYTES_PER_PIXEL = 2
 private const val MAX_PREVIEW_PIXELS = HIKMICRO_OFFICIAL_MAX_PROVED_WIDTH * HIKMICRO_OFFICIAL_MAX_PROVED_HEIGHT
+private const val MAX_REMEMBERED_MEASUREMENT_SCHEDULE_KEYS = 256
 private const val THERMAL_PREVIEW_JSON_KEY = "thermal_preview_data_url"
 
 enum class Mini2OfficialRuntimeMode {
     OFFICIAL_PRIMARY,
+}
+
+internal data class OfficialF2MeasurementRoiKey(
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+) {
+    fun toRect(): Rect = Rect(left, top, right, bottom)
+}
+
+internal data class OfficialF2MeasurementScheduleKey(
+    val frameCounter: Long,
+    val roi: OfficialF2MeasurementRoiKey?,
+)
+
+internal fun isOfficialMeasurementScheduleEligible(
+    frameCounter: Long?,
+    capturedElapsedMs: Long?,
+    nowElapsedMs: Long,
+    managerBound: Boolean,
+): Boolean {
+    if (!managerBound || frameCounter == null || capturedElapsedMs == null) return false
+    val ageMs = nowElapsedMs - capturedElapsedMs
+    return frameCounter > 0L && ageMs in 0L..FRAME_WAIT_TIMEOUT_MS
+}
+
+/** Serial, restart-safe scheduler for the blocking official renderer boundary. */
+internal class OfficialF2MeasurementScheduler(
+    private val executor: Executor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "OfficialF2LatestMeasurementScheduler").apply { isDaemon = true }
+    },
+) {
+    private val lock = Any()
+    private val rememberedKeys = LinkedHashSet<OfficialF2MeasurementScheduleKey>()
+    private var generation = 0L
+    private var activeToken: Any? = null
+
+    fun schedule(
+        key: OfficialF2MeasurementScheduleKey,
+        worker: (Long) -> Unit,
+    ): Boolean {
+        val token = Any()
+        val taskGeneration: Long
+        synchronized(lock) {
+            if (activeToken != null || rememberedKeys.contains(key)) return false
+            activeToken = token
+            rememberedKeys.add(key)
+            trimRememberedKeys()
+            taskGeneration = generation
+        }
+        return try {
+            executor.execute {
+                try {
+                    if (isTaskCurrent(token, taskGeneration)) worker(taskGeneration)
+                } finally {
+                    synchronized(lock) {
+                        if (activeToken === token) activeToken = null
+                    }
+                }
+            }
+            true
+        } catch (_: Throwable) {
+            synchronized(lock) {
+                if (activeToken === token) activeToken = null
+                rememberedKeys.remove(key)
+            }
+            false
+        }
+    }
+
+    fun resetLifecycle() {
+        synchronized(lock) {
+            generation += 1L
+            activeToken = null
+            rememberedKeys.clear()
+        }
+    }
+
+    fun isGenerationCurrent(expectedGeneration: Long): Boolean =
+        synchronized(lock) { generation == expectedGeneration }
+
+    fun <T> runIfGenerationCurrent(expectedGeneration: Long, action: () -> T): T? =
+        synchronized(lock) {
+            if (generation == expectedGeneration) action() else null
+        }
+
+    private fun isTaskCurrent(token: Any, expectedGeneration: Long): Boolean =
+        synchronized(lock) { activeToken === token && generation == expectedGeneration }
+
+    private fun trimRememberedKeys() {
+        while (rememberedKeys.size > MAX_REMEMBERED_MEASUREMENT_SCHEDULE_KEYS) {
+            val iterator = rememberedKeys.iterator()
+            if (!iterator.hasNext()) return
+            iterator.next()
+            iterator.remove()
+        }
+    }
 }
 
 /**
@@ -61,68 +168,322 @@ object HikmicroJnaMini2Stream {
 
     private val f2Api: F2UsbModuleApi = F2UsbModuleApi.INSTANCE
     private val f2Helper: F2UsbModuleHelper = F2UsbModuleHelper.INSTANCE
+    private val officialScalarMeasurementScheduler = OfficialF2MeasurementScheduler()
+
+    @Volatile
     private var officialPreviewManager: PreviewManagerII? = null
+    private var officialPreviewSurfaceAttached = false
+    private var officialPreviewSurfaceView: SurfaceView? = null
+    private val previewSurfaceLifecycleLock = Any()
+    private val terminalShutdownRetryLock = Any()
+    private var terminalShutdownRetryExecutor: java.util.concurrent.ScheduledExecutorService? = null
+    private var terminalShutdownRetryFuture: ScheduledFuture<*>? = null
+    private var terminalShutdownRetryAttempts = 0
+    private var terminalShutdownRetryPending = false
+    private var terminalShutdownRetryEpoch = 0L
+    private var terminalShutdownRetryOwner: TerminalShutdownRetryOwner? = null
+    private val terminalShutdownCompletionCallbacks = mutableListOf<() -> Unit>()
     // startedElapsedMs is owned by F2UsbModuleHelper; this adapter reads activeStartedElapsedMs().
 
     /** Compatibility wrapper for legacy tests; production must use the full official boundary. */
     fun bindOfficialPreviewSurface(surfaceView: SurfaceView) {
-        synchronized(PreviewManagerIIAppBinding::class.java) {
+        synchronized(previewSurfaceLifecycleLock) {
             val manager = PreviewManagerIIAppBinding.manager()
-            closeBoundOfficialPreviewLocked()
-            manager.l0(surfaceView)
-            officialPreviewManager = manager
+            if (officialPreviewManager !== manager) {
+                closeBoundOfficialPreviewLocked()
+            } else if (officialPreviewSurfaceAttached && officialPreviewSurfaceView !== surfaceView) {
+                manager.detachOfficialRenderer()
+                officialPreviewSurfaceAttached = false
+                officialPreviewSurfaceView = null
+            }
+            bindOfficialPreviewManagerLocked(manager, surfaceView) {
+                manager.l0(surfaceView)
+            }
         }
     }
 
     /** Binds the exact official PreviewManagerII.m0/l0 production boundary. */
     fun bindOfficialPreviewSurface(binding: OfficialPreviewBinding) {
-        synchronized(PreviewManagerIIAppBinding::class.java) {
+        synchronized(previewSurfaceLifecycleLock) {
             val manager = PreviewManagerIIAppBinding.manager()
-            closeBoundOfficialPreviewLocked()
-            PreviewManagerII.m0(
-                manager,
-                binding.root,
-                binding.selectedSurface,
-                null as TextView?,
-                binding.visibleLightView,
-                binding.sceneMode,
-                { value: Boolean -> binding.freezeCallback(value); Unit },
-                { value: Boolean -> binding.overlayAvailabilityCallback(value); Unit },
-                null,
-                128,
-                null,
-            )
-            officialPreviewManager = manager
+            if (officialPreviewManager !== manager) {
+                closeBoundOfficialPreviewLocked()
+            } else if (
+                officialPreviewSurfaceAttached &&
+                officialPreviewSurfaceView !== binding.selectedSurface
+            ) {
+                manager.detachOfficialRenderer()
+                officialPreviewSurfaceAttached = false
+                officialPreviewSurfaceView = null
+            }
+            bindOfficialPreviewManagerLocked(manager, binding.selectedSurface) {
+                PreviewManagerII.m0(
+                    manager,
+                    binding.root,
+                    binding.selectedSurface,
+                    null as TextView?,
+                    binding.visibleLightView,
+                    binding.sceneMode,
+                    { value: Boolean -> binding.freezeCallback(value); Unit },
+                    { value: Boolean -> binding.overlayAvailabilityCallback(value); Unit },
+                    null,
+                    128,
+                    null,
+                )
+            }
         }
     }
 
-    fun unbindOfficialPreviewSurface() {
-        synchronized(PreviewManagerIIAppBinding::class.java) {
-            closeBoundOfficialPreviewLocked()
+    fun unbindOfficialPreviewSurface(surfaceView: SurfaceView) {
+        synchronized(previewSurfaceLifecycleLock) {
+            if (
+                !officialPreviewSurfaceAttached ||
+                officialPreviewSurfaceView !== surfaceView
+            ) return
+            // Surface recreation is renderer-only. Keep the manager, callback generation,
+            // processor, scheduler, and native F2 stream alive.
+            officialPreviewManager?.detachOfficialRenderer()
+            officialPreviewSurfaceAttached = false
+            officialPreviewSurfaceView = null
         }
-    }
-
-    fun shutdownOfficialPreviewSession() {
-        synchronized(PreviewManagerIIAppBinding::class.java) {
-            closeBoundOfficialPreviewLocked()
-        }
-        synchronized(this) {
-            latestFrameSnapshot = null
-            lastInvalidPacketDiagnostic = null
-            previewSuccessTimes = 0L
-            f2Helper.closeSession()
-            lastFailureReason = "terminal official preview shutdown"
-            lastStreamStageReport = "${f2Helper.lastStageReport}; terminal_official_preview_shutdown"
-        }
-    }
-
-    private fun closeBoundOfficialPreviewLocked() {
-        val manager = officialPreviewManager ?: return
-        officialPreviewManager = null
-        PreviewManagerIIAppBinding.unbind(manager)
     }
 
     @Synchronized
+    fun shutdownOfficialPreviewSession(): F2StageResult {
+        resetOfficialMeasurementLifecycle()
+        val closeResult = f2Api.closeSession()
+        if (closeResult.closeOutcome == F2SessionCloseOutcome.STREAM_PRESERVED) {
+            lastFailureReason =
+                "terminal official preview shutdown blocked; native stream preserved; ${closeResult.summary}"
+            lastStreamStageReport =
+                "${f2Helper.lastStageReport}; terminal_official_preview_shutdown_failed native_stream_preserved=true"
+            return closeResult
+        }
+        synchronized(previewSurfaceLifecycleLock) {
+            closeBoundOfficialPreviewLocked()
+        }
+        latestFrameSnapshot = null
+        lastInvalidPacketDiagnostic = null
+        previewSuccessTimes = 0L
+        if (closeResult.ok) {
+            lastFailureReason = "terminal official preview shutdown"
+            lastStreamStageReport = "${f2Helper.lastStageReport}; terminal_official_preview_shutdown"
+        } else {
+            lastFailureReason =
+                "terminal official preview stream stopped but native login close remains incomplete; ${closeResult.summary}"
+            lastStreamStageReport =
+                "${f2Helper.lastStageReport}; terminal_official_preview_shutdown_incomplete native_stream_preserved=false"
+        }
+        return closeResult
+    }
+
+    /**
+     * Performs the initial terminal close and publishes any retry before releasing admission.
+     *
+     * Fresh-session claims acquire the same lock first, so an old close result can never be
+     * registered against a session that started after that close returned.
+     */
+    internal fun shutdownOfficialPreviewSessionWithRetryRegistration(
+        shutdown: () -> F2StageResult = ::shutdownOfficialPreviewSession,
+        beforeRetryScheduled: (F2StageResult) -> Unit = {},
+        onRetryClosed: (() -> Unit)? = null,
+    ): F2StageResult = synchronized(terminalShutdownRetryLock) {
+        val result = shutdown()
+        if (result.isTerminalRetryable()) {
+            beforeRetryScheduled(result)
+            scheduleTerminalShutdownRetryLocked(onRetryClosed)
+        }
+        result
+    }
+
+    fun retryPendingTerminalShutdownNow(): F2StageResult? = runTerminalShutdownRetryAttempt()
+
+    internal fun isTerminalShutdownRetryPending(): Boolean =
+        synchronized(terminalShutdownRetryLock) { terminalShutdownRetryPending }
+
+    /**
+     * Claims a preserved session for a replacement Activity before its lifecycle is installed.
+     *
+     * The retry lock is held for the entire close attempt, so this either waits for an already
+     * admitted close to finish or cancels the old retry before the new host can adopt/bind.
+     */
+    internal fun claimPendingTerminalShutdownRetryForReplacementHost(
+        onLoginCloseCompleted: (() -> Unit)? = null,
+    ): Boolean = synchronized(terminalShutdownRetryLock) {
+        if (!terminalShutdownRetryPending) return@synchronized false
+        if (terminalShutdownRetryOwner?.retainedManager == null) {
+            // STREAM_STOPPED_LOGIN_RETAINED has no stream manager for the replacement host to
+            // adopt. Keep its logout retry alive, but transfer renderer-rebind notification.
+            onLoginCloseCompleted?.let(terminalShutdownCompletionCallbacks::add)
+            return@synchronized false
+        }
+        terminalShutdownRetryPending = false
+        terminalShutdownRetryEpoch += 1L
+        terminalShutdownRetryOwner = null
+        terminalShutdownRetryFuture?.cancel(false)
+        terminalShutdownRetryFuture = null
+        terminalShutdownRetryAttempts = 0
+        terminalShutdownCompletionCallbacks.clear()
+        true
+    }
+
+    private fun cancelPendingTerminalShutdownRetry(notifyHostCallbacks: Boolean): Boolean {
+        val callbacks = synchronized(terminalShutdownRetryLock) {
+            if (!terminalShutdownRetryPending) return@synchronized null
+            terminalShutdownRetryPending = false
+            terminalShutdownRetryEpoch += 1L
+            terminalShutdownRetryOwner = null
+            terminalShutdownRetryFuture?.cancel(false)
+            terminalShutdownRetryFuture = null
+            terminalShutdownRetryAttempts = 0
+            terminalShutdownCompletionCallbacks.toList().also {
+                terminalShutdownCompletionCallbacks.clear()
+            }
+        }
+        if (callbacks == null) return false
+        if (notifyHostCallbacks) {
+            callbacks.forEach { callback -> runCatching(callback) }
+        }
+        return true
+    }
+
+    internal fun runTerminalShutdownRetryAttempt(
+        retryEpoch: Long? = null,
+        shutdown: () -> F2StageResult = ::shutdownOfficialPreviewSession,
+    ): F2StageResult? {
+        val attempt = synchronized(terminalShutdownRetryLock) {
+            if (!terminalShutdownRetryPending) return@synchronized null
+            if (retryEpoch != null && retryEpoch != terminalShutdownRetryEpoch) {
+                return@synchronized null
+            }
+            val owner = terminalShutdownRetryOwner
+            if (owner == null || !owner.isCurrent()) {
+                terminalShutdownRetryPending = false
+                terminalShutdownRetryEpoch += 1L
+                terminalShutdownRetryOwner = null
+                terminalShutdownRetryFuture?.cancel(false)
+                terminalShutdownRetryFuture = null
+                terminalShutdownRetryAttempts = 0
+                terminalShutdownCompletionCallbacks.clear()
+                return@synchronized null
+            }
+
+            // Keep retry admission and shutdown atomic with replacement-host/new-session claims.
+            val result = shutdown()
+            terminalShutdownRetryAttempts += 1
+            val callbacks: List<() -> Unit>
+            if (result.closeOutcome == F2SessionCloseOutcome.CLOSED) {
+                terminalShutdownRetryPending = false
+                terminalShutdownRetryOwner = null
+                terminalShutdownRetryFuture?.cancel(false)
+                terminalShutdownRetryFuture = null
+                terminalShutdownRetryAttempts = 0
+                callbacks = terminalShutdownCompletionCallbacks.toList().also {
+                    terminalShutdownCompletionCallbacks.clear()
+                }
+            } else {
+                terminalShutdownRetryOwner =
+                    currentTerminalShutdownRetryOwner(terminalShutdownRetryEpoch)
+                if (terminalShutdownRetryAttempts >= 60) {
+                    terminalShutdownRetryFuture?.cancel(false)
+                    terminalShutdownRetryFuture = null
+                }
+                callbacks = emptyList()
+            }
+            result to callbacks
+        }
+        if (attempt == null) return null
+        val (result, callbacks) = attempt
+        callbacks.forEach { callback -> runCatching(callback) }
+        return result
+    }
+
+    private fun currentTerminalShutdownRetryOwner(epoch: Long): TerminalShutdownRetryOwner =
+        TerminalShutdownRetryOwner(
+            epoch = epoch,
+            userId = f2Helper.activeUserId(),
+            channel = f2Helper.activeChannel(),
+            fd = f2Helper.activeSelectedFd(),
+            startedElapsedMs = f2Helper.activeStartedElapsedMs(),
+            retainedManager = runCatching { PreviewManagerIIAppBinding.manager() }
+                .getOrNull()
+                ?.takeIf(PreviewManagerIIAppBinding::isManagerRetainedForTerminalCloseRetry),
+        )
+
+    private fun scheduleTerminalShutdownRetryLocked(onClosed: (() -> Unit)?) {
+        onClosed?.let(terminalShutdownCompletionCallbacks::add)
+        terminalShutdownRetryPending = true
+        if (terminalShutdownRetryFuture?.isDone == false) {
+            terminalShutdownRetryAttempts = 0
+            terminalShutdownRetryOwner =
+                currentTerminalShutdownRetryOwner(terminalShutdownRetryEpoch)
+            return
+        }
+        terminalShutdownRetryAttempts = 0
+        terminalShutdownRetryEpoch += 1L
+        val retryEpoch = terminalShutdownRetryEpoch
+        terminalShutdownRetryOwner = currentTerminalShutdownRetryOwner(retryEpoch)
+        val executor = terminalShutdownRetryExecutor
+            ?: Executors.newSingleThreadScheduledExecutor { runnable ->
+                Thread(runnable, "OfficialF2TerminalShutdownRetry").apply { isDaemon = true }
+            }.also { terminalShutdownRetryExecutor = it }
+        terminalShutdownRetryFuture = executor.scheduleWithFixedDelay(
+            { runTerminalShutdownRetryAttempt(retryEpoch = retryEpoch) },
+            250L,
+            1_000L,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
+    private fun F2StageResult.isTerminalRetryable(): Boolean =
+        closeOutcome == F2SessionCloseOutcome.STREAM_PRESERVED ||
+            closeOutcome == F2SessionCloseOutcome.STREAM_STOPPED_LOGIN_RETAINED
+
+    private fun bindOfficialPreviewManagerLocked(
+        manager: PreviewManagerII,
+        surfaceView: SurfaceView,
+        bindRenderer: () -> Unit,
+    ) {
+        if (
+            officialPreviewManager === manager &&
+            officialPreviewSurfaceAttached &&
+            officialPreviewSurfaceView === surfaceView
+        ) return
+        if (officialPreviewManager !== manager) {
+            closeBoundOfficialPreviewLocked()
+        }
+        bindRenderer()
+        officialPreviewManager = manager
+        officialPreviewSurfaceAttached = true
+        officialPreviewSurfaceView = surfaceView
+    }
+
+    private fun closeBoundOfficialPreviewLocked() {
+        val manager = officialPreviewManager
+        officialPreviewManager = null
+        officialPreviewSurfaceAttached = false
+        officialPreviewSurfaceView = null
+        if (manager == null) return
+        PreviewManagerIIAppBinding.unbind(manager)
+        latestFrameSnapshot = null
+    }
+
+    private fun currentOfficialPreviewSurface(): PreviewSurfaceSnapshot? =
+        synchronized(previewSurfaceLifecycleLock) {
+            val manager = officialPreviewManager ?: return@synchronized null
+            if (!officialPreviewSurfaceAttached) return@synchronized null
+            val rendererEpoch = manager.currentRendererEpoch()
+            if (!manager.isOfficialRendererEpochCurrent(rendererEpoch)) return@synchronized null
+            PreviewSurfaceSnapshot(manager, rendererEpoch)
+        }
+
+    private fun isOfficialPreviewSurfaceCurrent(expected: PreviewSurfaceSnapshot): Boolean =
+        synchronized(previewSurfaceLifecycleLock) {
+            officialPreviewSurfaceAttached &&
+                officialPreviewManager === expected.manager &&
+                expected.manager.isOfficialRendererEpochCurrent(expected.rendererEpoch)
+        }
+
     fun ensureStreaming(
         context: Context,
         usbManager: UsbManager,
@@ -131,21 +492,53 @@ object HikmicroJnaMini2Stream {
         nativeReport: NativeLibraryLoadReport,
         runtimeMode: Mini2OfficialRuntimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
     ): Mini2RawStreamStatus {
+        // A fresh explicit start owns the next session. Cancel/wait for any close retry from the
+        // previous session before entering the stream object's synchronized start boundary.
+        cancelPendingTerminalShutdownRetry(notifyHostCallbacks = true)
+        return ensureStreamingLocked(
+            context = context,
+            usbManager = usbManager,
+            device = device,
+            nativeLibraryDir = nativeLibraryDir,
+            nativeReport = nativeReport,
+            runtimeMode = runtimeMode,
+        )
+    }
+
+    @Synchronized
+    private fun ensureStreamingLocked(
+        context: Context,
+        usbManager: UsbManager,
+        device: UsbDevice,
+        nativeLibraryDir: String,
+        nativeReport: NativeLibraryLoadReport,
+        runtimeMode: Mini2OfficialRuntimeMode,
+    ): Mini2RawStreamStatus {
         val route = HikmicroMini2ModuleType.routeReason(device.vendorId, device.productId)
         val now = SystemClock.elapsedRealtime()
         val modeLabel = runtimeMode.name
 
-        latestFrameSnapshot?.let { snapshot ->
+        var currentSnapshot = currentFrameSnapshotOrNull()
+        while (currentSnapshot != null) {
+            val snapshot = currentSnapshot
             if (now - snapshot.capturedElapsedMs <= FRAME_WAIT_TIMEOUT_MS) {
                 return snapshot.toStatus(
                     "Mini2 F2 raw preview frame observed through official F2 module callback; mode=$modeLabel; route=$route; stages=$lastStreamStageReport; device-reported Celsius summary is allowed only when provenance=device_global_summary; full-matrix Celsius remains unproved and blocked",
                     route = route,
                 )
             }
+            if (!clearFrameSnapshotIfSame(snapshot)) {
+                currentSnapshot = currentFrameSnapshotOrNull()
+                continue
+            }
             lastFailureReason = "restart stalled HIKMICRO stream attempt after stale frame ${now - snapshot.capturedElapsedMs}ms old"
             lastStreamStageReport = "$lastStreamStageReport; restart stalled HIKMICRO stream attempt stale_frame"
-            latestFrameSnapshot = null
-            f2Helper.closeSession()
+            resetOfficialMeasurementLifecycle()
+            closeSessionForFreshOpenOrBlocked(
+                route = route,
+                reason = "stale_frame",
+            )?.let { return it }
+            break
         }
 
         if (!nativeReport.coreUsbLoaded) {
@@ -159,13 +552,21 @@ object HikmicroJnaMini2Stream {
             val elapsed = now - f2Helper.activeStartedElapsedMs()
             lastFailureReason = "explicit manual confirm forces fresh official retry after ${elapsed}ms without F2 frame callback"
             lastStreamStageReport = "${f2Helper.lastStageReport}; explicit_manual_confirm_full_cleanup_before_fresh_start elapsedMs=$elapsed"
-            f2Helper.closeSession()
+            resetOfficialMeasurementLifecycle()
+            closeSessionForFreshOpenOrBlocked(
+                route = route,
+                reason = "explicit_retry",
+            )?.let { return it }
         }
 
         return try {
+            resetOfficialMeasurementLifecycle()
             lastInvalidPacketDiagnostic = null
             previewSuccessTimes = 0L
-            f2Helper.closeSession()
+            closeSessionForFreshOpenOrBlocked(
+                route = route,
+                reason = "pre_open_cleanup",
+            )?.let { return it }
             val open = f2Api.openUsbModule(
                 context = context,
                 usbManager = usbManager,
@@ -181,8 +582,15 @@ object HikmicroJnaMini2Stream {
             val start = f2Api.startStreamPreview(
                 context = context,
                 callback = { frame ->
-                    captureOfficialF2Frame(frame)
-                    onOfficialPreviewSuccess(context.cacheDir)
+                    if (captureOfficialF2Frame(frame)) {
+                        val successCount = onOfficialPreviewSuccess()
+                        f2Helper.onPreviewFrameForCalibrationPrefetch(
+                            cacheDir = officialF2DataDirectory(context),
+                            previewFrameCounter = successCount,
+                            diagnoseMode = false,
+                            previewPathEligible = true,
+                        )
+                    }
                 },
                 onInvalidPacketSizeTimeout = { packetSize, elapsedMs ->
                     lastInvalidPacketDiagnostic = Mini2InvalidPacketDiagnostic(
@@ -207,6 +615,8 @@ object HikmicroJnaMini2Stream {
                     attemptDiagnostics = start.attemptDiagnostics,
                     callbackEntryCount = javaCallbackEntryCount(),
                     callbackEntryDetail = javaCallbackEntryDetail(),
+                    streamProcessingFailure = streamProcessingFailure(),
+                    managerIngressDiagnostic = managerIngressDiagnostic(),
                     invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
                     fd = failedAttempt?.fd ?: f2Helper.activeSelectedFd(),
                     userId = failedAttempt?.userId ?: f2Helper.activeUserId(),
@@ -217,9 +627,16 @@ object HikmicroJnaMini2Stream {
 
             waitingForFrameStatus(start.reason, start.stageReport, route, start.attemptDiagnostics)
         } catch (error: Throwable) {
-            f2Helper.closeSession()
-            lastFailureReason = "${error.javaClass.simpleName}: ${error.message ?: "no message"}"
-            lastStreamStageReport = "exception=$lastFailureReason"
+            val closeResult = f2Api.closeSession()
+            val exceptionReason = "${error.javaClass.simpleName}: ${error.message ?: "no message"}"
+            lastFailureReason = if (closeResult.closeOutcome == F2SessionCloseOutcome.STREAM_PRESERVED) {
+                "$exceptionReason; exception cleanup blocked with native stream preserved and exact prior binding retained"
+            } else {
+                exceptionReason
+            }
+            lastStreamStageReport =
+                "exception=$exceptionReason; exception_cleanup=${closeResult.summary} " +
+                    "close_outcome=${closeResult.closeOutcome.name}"
             blockedNativeStreamWithStage(lastFailureReason, lastStreamStageReport, route)
         }
     }
@@ -240,7 +657,9 @@ object HikmicroJnaMini2Stream {
         val modeLabel = runtimeMode.name
         var staleFrameReason = ""
 
-        latestFrameSnapshot?.let { snapshot ->
+        var currentSnapshot = currentFrameSnapshotOrNull()
+        while (currentSnapshot != null) {
+            val snapshot = currentSnapshot
             val frameAgeMs = now - snapshot.capturedElapsedMs
             if (frameAgeMs <= FRAME_WAIT_TIMEOUT_MS) {
                 return snapshot.toStatus(
@@ -248,10 +667,14 @@ object HikmicroJnaMini2Stream {
                     route = route,
                 )
             }
+            if (!clearFrameSnapshotIfSame(snapshot)) {
+                currentSnapshot = currentFrameSnapshotOrNull()
+                continue
+            }
             lastFailureReason = "passive_status_peek found stale HIKMICRO frame ${frameAgeMs}ms old; no new stream opened"
             lastStreamStageReport = "$lastStreamStageReport; passive_status_peek stale_frame ageMs=$frameAgeMs"
             staleFrameReason = lastFailureReason
-            latestFrameSnapshot = null
+            break
         }
 
         if (!f2Helper.isStreamingForDevice(device.deviceName)) {
@@ -265,6 +688,8 @@ object HikmicroJnaMini2Stream {
                     deviceRoute = route,
                     callbackEntryCount = javaCallbackEntryCount(),
                     callbackEntryDetail = javaCallbackEntryDetail(),
+                    streamProcessingFailure = streamProcessingFailure(),
+                    managerIngressDiagnostic = managerIngressDiagnostic(),
                     invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
                 )
             }
@@ -287,6 +712,8 @@ object HikmicroJnaMini2Stream {
                 channel = channel,
                 callbackEntryCount = javaCallbackEntryCount(),
                 callbackEntryDetail = javaCallbackEntryDetail(),
+                streamProcessingFailure = streamProcessingFailure(),
+                managerIngressDiagnostic = managerIngressDiagnostic(),
                 invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
             )
         }
@@ -305,13 +732,15 @@ object HikmicroJnaMini2Stream {
             channel = channel,
             callbackEntryCount = javaCallbackEntryCount(),
             callbackEntryDetail = javaCallbackEntryDetail(),
+            streamProcessingFailure = streamProcessingFailure(),
+            managerIngressDiagnostic = managerIngressDiagnostic(),
             invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
         )
     }
 
     @Synchronized
     fun latestRawFrameSummary(device: UsbDevice): ThermalRawFrameSummary? {
-        val snapshot = latestFrameSnapshot ?: return null
+        val snapshot = currentFrameSnapshotOrNull() ?: return null
         val ageMs = SystemClock.elapsedRealtime() - snapshot.capturedElapsedMs
         if (ageMs > FRAME_WAIT_TIMEOUT_MS) return null
         if (!f2Helper.isStreamingForDevice(device.deviceName)) return null
@@ -355,6 +784,230 @@ object HikmicroJnaMini2Stream {
 
     fun activePreviewRotationDegrees(): Int = thermalPreviewRotationDegrees
 
+    /**
+     * Enqueues the blocking official renderer capture and scalar request on the
+     * dedicated daemon worker. No renderer/native measurement work runs on the
+     * caller, preview callback, or status-polling thread.
+     */
+    fun scheduleLatestOfficialScalarMeasurement(
+        context: Context,
+        measurementRoi: Rect? = null,
+    ): Boolean {
+        val snapshot = currentFrameSnapshotOrNull()
+        val previewSurface = currentOfficialPreviewSurface()
+        val now = SystemClock.elapsedRealtime()
+        if (!isOfficialMeasurementScheduleEligible(
+                frameCounter = snapshot?.frameCounter,
+                capturedElapsedMs = snapshot?.capturedElapsedMs,
+                nowElapsedMs = now,
+                managerBound = previewSurface != null,
+            )
+        ) {
+            return false
+        }
+        val scheduledSnapshot = snapshot ?: return false
+        val scheduledSurface = previewSurface ?: return false
+        val roiKey = measurementRoi?.let {
+            OfficialF2MeasurementRoiKey(it.left, it.top, it.right, it.bottom)
+        }
+        val scheduleKey = OfficialF2MeasurementScheduleKey(scheduledSnapshot.frameCounter, roiKey)
+        return officialScalarMeasurementScheduler.schedule(scheduleKey) worker@{ scheduleGeneration ->
+            if (!officialScalarMeasurementScheduler.isGenerationCurrent(scheduleGeneration)) return@worker
+            requestLatestOfficialScalarMeasurementInternal(
+                context = context,
+                measurementRoi = roiKey?.toRect(),
+                expectedFrameCounter = scheduledSnapshot.frameCounter,
+                expectedManager = scheduledSurface.manager,
+                expectedRendererEpoch = scheduledSurface.rendererEpoch,
+                expectedScheduleGeneration = scheduleGeneration,
+            )
+        }
+    }
+
+    /**
+     * Blocking/manual boundary. This may spend up to 50 x 10 ms waiting for the
+     * official renderer timestamp and must not be called from preview or status
+     * threads. Production callers should use scheduleLatestOfficialScalarMeasurement.
+     */
+    fun requestLatestOfficialScalarMeasurement(
+        context: Context,
+        measurementRoi: Rect? = null,
+    ): OfficialF2ScalarMeasurementState = requestLatestOfficialScalarMeasurementInternal(
+        context = context,
+        measurementRoi = measurementRoi,
+        expectedFrameCounter = null,
+        expectedManager = null,
+        expectedRendererEpoch = null,
+        expectedScheduleGeneration = null,
+    )
+
+    private fun requestLatestOfficialScalarMeasurementInternal(
+        context: Context,
+        measurementRoi: Rect?,
+        expectedFrameCounter: Long?,
+        expectedManager: PreviewManagerII?,
+        expectedRendererEpoch: Long?,
+        expectedScheduleGeneration: Long?,
+    ): OfficialF2ScalarMeasurementState {
+        if (expectedScheduleGeneration != null &&
+            !officialScalarMeasurementScheduler.isGenerationCurrent(expectedScheduleGeneration)
+        ) {
+            return officialMeasurementFailure(
+                frameCounter = expectedFrameCounter ?: -1L,
+                reason = "official_f2_measurement_schedule_lifecycle_changed_before_worker_start",
+                generation = expectedScheduleGeneration,
+            )
+        }
+        val snapshot = currentFrameSnapshotOrNull()
+            ?: return officialMeasurementFailure(
+                frameCounter = -1L,
+                reason = "official_f2_measurement_requires_completed_preview_frame",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        if (expectedFrameCounter != null && snapshot.frameCounter != expectedFrameCounter) {
+            return officialMeasurementFailure(
+                frameCounter = expectedFrameCounter,
+                reason = "official_f2_measurement_scheduled_frame_replaced expected=$expectedFrameCounter current=${snapshot.frameCounter}",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        }
+        val ageMs = SystemClock.elapsedRealtime() - snapshot.capturedElapsedMs
+        if (ageMs > FRAME_WAIT_TIMEOUT_MS) {
+            return officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_measurement_snapshot_stale ageMs=$ageMs",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        }
+        val previewSurface = currentOfficialPreviewSurface()
+            ?: return officialMeasurementFailure(
+            frameCounter = snapshot.frameCounter,
+            reason = "official_f2_measurement_requires_attached_preview_renderer",
+            generation = expectedScheduleGeneration ?: -1L,
+        )
+        val manager = previewSurface.manager
+        if (expectedManager != null && manager !== expectedManager) {
+            return officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_measurement_bound_preview_manager_changed",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        }
+        if (expectedRendererEpoch != null && previewSurface.rendererEpoch != expectedRendererEpoch) {
+            return officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_measurement_renderer_changed expected=$expectedRendererEpoch current=${previewSurface.rendererEpoch}",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        }
+        val measurementSurface = PreviewSurfaceSnapshot(
+            manager = manager,
+            rendererEpoch = expectedRendererEpoch ?: previewSurface.rendererEpoch,
+        )
+        val calibrationDir = try {
+            officialF2DataDirectory(context)
+        } catch (error: Throwable) {
+            return officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_persistent_calibration_directory_unavailable_fail_closed: ${error.message ?: error.javaClass.simpleName}",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        }
+        val officialFrame = try {
+            val displaySize = Z2.g.a.E()
+            PreviewManagerIIAppBinding.latestOfficialProcessedFrameWithOfflineCapture(
+                manager,
+                snapshot.frameCounter,
+                displaySize.width,
+                displaySize.height,
+                measurementSurface.rendererEpoch,
+            )
+        } catch (error: Throwable) {
+            return officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_renderer_capture_failed_closed: ${error.javaClass.simpleName}: ${error.message ?: "no message"}",
+                generation = expectedScheduleGeneration ?: -1L,
+            )
+        } ?: return officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_measurement_requires_completed_official_packet_processor_snapshot",
+                generation = expectedScheduleGeneration ?: -1L,
+        )
+        val enqueueMeasurement = {
+            if (!isOfficialPreviewSurfaceCurrent(measurementSurface)) {
+                officialMeasurementFailure(
+                    frameCounter = snapshot.frameCounter,
+                    reason = "official_f2_measurement_renderer_changed_after_capture",
+                    generation = expectedScheduleGeneration ?: -1L,
+                )
+            } else {
+                OfficialF2MeasurementCoordinator.requestMeasurement(
+                    context = context,
+                    officialFrame = officialFrame,
+                    calibrationDir = calibrationDir,
+                    measurementRoi = measurementRoi,
+                    requestLifecycleGuard = {
+                        isOfficialPreviewSurfaceCurrent(measurementSurface)
+                    },
+                )
+            }
+        }
+        return if (expectedScheduleGeneration == null) {
+            enqueueMeasurement()
+        } else {
+            officialScalarMeasurementScheduler.runIfGenerationCurrent(
+                expectedScheduleGeneration,
+                enqueueMeasurement,
+            ) ?: officialMeasurementFailure(
+                frameCounter = snapshot.frameCounter,
+                reason = "official_f2_measurement_schedule_lifecycle_changed_after_renderer_capture",
+                generation = expectedScheduleGeneration,
+            )
+        }
+    }
+
+    fun latestOfficialScalarMeasurement(): OfficialF2ScalarMeasurementState =
+        OfficialF2MeasurementCoordinator.latest()
+
+    private fun officialMeasurementFailure(
+        frameCounter: Long,
+        reason: String,
+        generation: Long,
+    ): OfficialF2ScalarMeasurementState = OfficialF2ScalarMeasurementState.failed(
+        frameCounter = frameCounter,
+        reason = reason,
+        calibration = f2Helper.latestCalibrationAcquisitionResult(),
+        identity = f2Helper.activeCalibrationIdentitySummary(),
+        generation = generation,
+    )
+
+    private fun resetOfficialMeasurementLifecycle() {
+        officialScalarMeasurementScheduler.resetLifecycle()
+        OfficialF2MeasurementCoordinator.resetLifecycle()
+    }
+
+
+    internal fun officialF2DataDirectory(context: Context): File {
+        return try {
+            A5.y.c.b().u().also { directory ->
+                if (!directory.exists() && !directory.mkdirs()) {
+                    error("unable_to_create_official_f2data_directory path=${directory.absolutePath}")
+                }
+            }
+        } catch (_: Throwable) {
+            officialF2DataDirectoryFromExternalFilesRoot(context.getExternalFilesDir(null))
+        }
+    }
+
+    internal fun officialF2DataDirectoryFromExternalFilesRoot(externalRoot: File?): File {
+        val root = externalRoot ?: error("official_f2data_external_files_dir_unavailable_fail_closed")
+        return File(root, "F2Data").also { directory ->
+            if (!directory.exists() && !directory.mkdirs()) {
+                error("unable_to_create_official_f2data_directory path=${directory.absolutePath}")
+            }
+        }
+    }
+
     private fun waitingForFrameStatus(
         reason: String,
         stageReport: String,
@@ -373,6 +1026,8 @@ object HikmicroJnaMini2Stream {
             attemptDiagnostics = attemptDiagnostics.map { it.toJson() },
             callbackEntryCount = javaCallbackEntryCount(),
             callbackEntryDetail = javaCallbackEntryDetail(),
+            streamProcessingFailure = streamProcessingFailure(),
+            managerIngressDiagnostic = managerIngressDiagnostic(),
             invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
         )
 
@@ -386,6 +1041,8 @@ object HikmicroJnaMini2Stream {
         channel: Int = f2Helper.activeChannel(),
         callbackEntryCount: Long = javaCallbackEntryCount(),
         callbackEntryDetail: String = javaCallbackEntryDetail(),
+        streamProcessingFailure: String? = streamProcessingFailure(),
+        managerIngressDiagnostic: Mini2ManagerIngressDiagnostic? = managerIngressDiagnostic(),
         invalidPacketDiagnostic: Mini2InvalidPacketDiagnostic? = lastInvalidPacketDiagnostic,
     ): Mini2RawStreamStatus =
         Mini2RawStreamStatus(
@@ -401,6 +1058,8 @@ object HikmicroJnaMini2Stream {
             attemptDiagnostics = attemptDiagnostics.map { it.toJson() },
             callbackEntryCount = callbackEntryCount,
             callbackEntryDetail = callbackEntryDetail,
+            streamProcessingFailure = streamProcessingFailure,
+            managerIngressDiagnostic = managerIngressDiagnostic,
             invalidPacketDiagnostic = invalidPacketDiagnostic,
         )
 
@@ -408,10 +1067,74 @@ object HikmicroJnaMini2Stream {
 
     private fun javaCallbackEntryDetail(): String = JavaInterface.getInstance().lastStreamCallbackEntryDetail
 
+    private fun streamProcessingFailure(): String? =
+        officialPreviewManager?.lastStreamProcessingFailure?.takeIf { it.isNotBlank() }
+
+    private fun managerIngressDiagnostic(): Mini2ManagerIngressDiagnostic? {
+        val diagnostic = runCatching {
+            PreviewManagerIIAppBinding.manager().streamIngressDiagnostic
+        }.getOrNull() ?: return null
+        if (diagnostic.reason == "not_observed") return null
+        return Mini2ManagerIngressDiagnostic(
+            reason = diagnostic.reason,
+            userId = diagnostic.userId,
+            packetSize = diagnostic.packetSize,
+            streamType = diagnostic.streamType,
+            frameNumber = diagnostic.frameNumber,
+            allowedPacketSizes = diagnostic.allowedPacketSizes,
+            streamClosedCount = diagnostic.streamClosedCount,
+            packetSizeNotAllowedCount = diagnostic.packetSizeNotAllowedCount,
+            mailboxAcceptedCount = diagnostic.mailboxAcceptedCount,
+            processorAcceptedCount = diagnostic.processorAcceptedCount,
+            appHandoffCount = diagnostic.appHandoffCount,
+        )
+    }
+
+    private fun closeSessionForFreshOpenOrBlocked(
+        route: String,
+        reason: String,
+    ): Mini2RawStreamStatus? {
+        val closeResult = f2Api.closeSessionForFreshOpen(reason)
+        lastStreamStageReport =
+            "${closeResult.summary}; fresh_open_cleanup=$reason " +
+                "close_outcome=${closeResult.closeOutcome.name}"
+        if (closeResult.closeOutcome != F2SessionCloseOutcome.STREAM_PRESERVED) return null
+
+        lastFailureReason =
+            "fresh official open blocked after $reason cleanup; native stream preserved and " +
+                "exact prior binding ownership retained"
+        return blockedNativeStreamWithStage(
+            reason = lastFailureReason,
+            stageReport = lastStreamStageReport,
+            route = route,
+        )
+    }
+
     private fun closeSessionAfterStartFailure(reason: String): String {
-        f2Helper.closeSession()
-        lastStreamStageReport = "${f2Helper.lastStageReport}; full_session_reset_after_start_failure=$reason"
+        val closeResult = f2Api.closeSession()
+        lastStreamStageReport =
+            "${closeResult.summary}; full_session_reset_after_start_failure=$reason " +
+                "close_outcome=${closeResult.closeOutcome.name}"
         return lastStreamStageReport
+    }
+
+    private data class TerminalShutdownRetryOwner(
+        val epoch: Long,
+        val userId: Int,
+        val channel: Int,
+        val fd: Int,
+        val startedElapsedMs: Long,
+        val retainedManager: PreviewManagerII?,
+    ) {
+        fun isCurrent(): Boolean {
+            if (epoch != HikmicroJnaMini2Stream.terminalShutdownRetryEpoch) return false
+            if (userId != HikmicroJnaMini2Stream.f2Helper.activeUserId()) return false
+            if (channel != HikmicroJnaMini2Stream.f2Helper.activeChannel()) return false
+            if (fd != HikmicroJnaMini2Stream.f2Helper.activeSelectedFd()) return false
+            if (startedElapsedMs != HikmicroJnaMini2Stream.f2Helper.activeStartedElapsedMs()) return false
+            return retainedManager == null ||
+                PreviewManagerIIAppBinding.isManagerRetainedForTerminalCloseRetry(retainedManager)
+        }
     }
 
     private fun F2StreamAttemptDiagnostic.toJson(): JSONObject = JSONObject()
@@ -433,7 +1156,10 @@ object HikmicroJnaMini2Stream {
         .put("profile_firmware_date", profileFirmwareDate)
         .put("profile_allowed_sizes", org.json.JSONArray(profileAllowedSizes.toList()))
 
-    private fun captureOfficialF2Frame(frame: F2StreamFrame) {
+    private fun captureOfficialF2Frame(frame: F2StreamFrame): Boolean {
+        if (!PreviewManagerIIAppBinding.isCurrentLifecycleGeneration(frame.lifecycleGeneration)) {
+            return false
+        }
         val bytes = frame.bytes.copyOf(frame.bytes.size.coerceIn(0, MAX_CAPTURE_BYTES))
         val previewRotation = thermalPreviewRotationDegrees
         val officialFrame = PreviewManagerIIAppBinding.latestOfficialProcessedFrame(PreviewManagerIIAppBinding.manager(), frame.frameCounter)
@@ -449,7 +1175,8 @@ object HikmicroJnaMini2Stream {
                 packetEvidencePrefixHex = bytes.prefixHexForStatus(),
             )
         }
-        latestFrameSnapshot = StreamFrameSnapshot(
+        val snapshot = StreamFrameSnapshot(
+            lifecycleGeneration = frame.lifecycleGeneration,
             frameCounter = max(1L, frame.frameCounter),
             callbackUserId = frame.callbackUserId,
             width = preview.width,
@@ -474,14 +1201,39 @@ object HikmicroJnaMini2Stream {
             packetEvidencePrefixHex = preview.packetEvidencePrefixHex,
             capturedElapsedMs = SystemClock.elapsedRealtime(),
         )
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            if (!PreviewManagerIIAppBinding.isCurrentLifecycleGeneration(frame.lifecycleGeneration)) {
+                return false
+            }
+            latestFrameSnapshot = snapshot
+        }
+        return true
     }
 
-    @Synchronized
-    internal fun onOfficialPreviewSuccess(cacheDir: File): Long {
-        previewSuccessTimes += 1L
-        if (previewSuccessTimes == 10L) {
-            f2Helper.onPreviewFrameForCalibrationPrefetch(cacheDir, previewSuccessTimes)
+    private fun currentFrameSnapshotOrNull(): StreamFrameSnapshot? =
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            val snapshot = latestFrameSnapshot ?: return@synchronized null
+            if (!PreviewManagerIIAppBinding.isCurrentLifecycleGeneration(snapshot.lifecycleGeneration)) {
+                latestFrameSnapshot = null
+                null
+            } else {
+                snapshot
+            }
         }
+
+    private fun clearFrameSnapshotIfSame(snapshot: StreamFrameSnapshot): Boolean =
+        synchronized(PreviewManagerIIAppBinding::class.java) {
+            if (latestFrameSnapshot !== snapshot) {
+                false
+            } else {
+                latestFrameSnapshot = null
+                true
+            }
+        }
+
+    @Synchronized
+    internal fun onOfficialPreviewSuccess(): Long {
+        previewSuccessTimes += 1L
         return previewSuccessTimes
     }
 
@@ -704,7 +1456,13 @@ object HikmicroJnaMini2Stream {
         val packetEvidencePrefixHex: String = "",
     )
 
+    private data class PreviewSurfaceSnapshot(
+        val manager: PreviewManagerII,
+        val rendererEpoch: Long,
+    )
+
     private data class StreamFrameSnapshot(
+        val lifecycleGeneration: Long,
         val frameCounter: Long,
         val callbackUserId: Int,
         val width: Int,
@@ -752,6 +1510,8 @@ object HikmicroJnaMini2Stream {
             deviceTemperatureSummary = deviceTemperatureSummary,
             callbackEntryCount = javaCallbackEntryCount(),
             callbackEntryDetail = javaCallbackEntryDetail(),
+            streamProcessingFailure = streamProcessingFailure(),
+            managerIngressDiagnostic = managerIngressDiagnostic(),
             invalidPacketDiagnostic = lastInvalidPacketDiagnostic,
         )
     }
@@ -777,6 +1537,8 @@ object HikmicroJnaMini2Stream {
         val avgC = global.avgTemperatureCelsius ?: return null
         val minC = global.minTemperatureCelsius ?: return null
         val maxC = global.maxTemperatureCelsius ?: return null
+        if (!avgC.isFinite() || !minC.isFinite() || !maxC.isFinite()) return null
+        if (minC > avgC || avgC > maxC) return null
         return Mini2DeviceTemperatureSummary(
             avgC = avgC.toDouble(),
             minC = minC.toDouble(),

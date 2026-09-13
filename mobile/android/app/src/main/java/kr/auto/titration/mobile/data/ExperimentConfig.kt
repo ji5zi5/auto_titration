@@ -55,6 +55,10 @@ data class ExperimentConfig(
         }
 
         fun fromJson(payload: JSONObject): ExperimentConfig {
+            requireAndroidAutoStopDisabled(
+                autoStopEnabled = payload.optBoolean("auto_stop_enabled", false),
+                pulseEnabled = payload.optBoolean("auto_stop_pulse_enabled", false),
+            )
             val sampleConcentration = requirePositiveDouble(payload, "sample_concentration_M", "시료 농도")
             val sampleVolume = requirePositiveDouble(payload, "sample_volume_ml", "시료 부피")
             val sampleValence = optionalPositiveDouble(payload, "sample_valence", "시료 반응가수") ?: 1.0
@@ -86,6 +90,12 @@ data class ExperimentConfig(
                 equivalenceFormula = payload.optString("equivalence_formula").trim().ifBlank { "nMV=n'M'V'" },
                 pumpRunRateMlPerS = requirePositiveDouble(payload, "pump_rate_ml_per_s", "펌프 유량"),
             )
+        }
+
+        internal fun requireAndroidAutoStopDisabled(autoStopEnabled: Boolean, pulseEnabled: Boolean) {
+            require(!autoStopEnabled && !pulseEnabled) {
+                "자동 정지·미세 주입은 Windows 수집기에서만 지원됩니다"
+            }
         }
 
         private fun requireNonBlank(payload: JSONObject, key: String, label: String): String {

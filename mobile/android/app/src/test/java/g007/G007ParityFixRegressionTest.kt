@@ -106,11 +106,16 @@ class G007ParityFixRegressionTest {
         val appAdapter = sources.getValue(
             "app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt"
         )
-        assertFalse(appAdapter.substringBefore("private fun captureOfficialF2Frame").contains("onPreviewFrameForCalibrationPrefetch"))
+        val previewCallback = appAdapter.substringAfter("callback = { frame ->")
+            .substringBefore("onInvalidPacketSizeTimeout =")
+        assertTrue(previewCallback.contains("f2Helper.onPreviewFrameForCalibrationPrefetch("))
+        assertFalse(previewCallback.contains("acquireThermometryCalibrationFileOnce("))
+        assertFalse(previewCallback.contains("renderAndMeasure("))
+        assertFalse(Regex("""\bUSB_Get\w*\(""").containsMatchIn(previewCallback))
         val successCallback = appAdapter.substringAfter("internal fun onOfficialPreviewSuccess")
             .substringBefore("internal fun resetOfficialPreviewSuccessCounter")
-        assertEquals(1, Regex("previewSuccessTimes == 10L").findAll(successCallback).count())
-        assertEquals(1, Regex("onPreviewFrameForCalibrationPrefetch").findAll(successCallback).count())
+        assertFalse(successCallback.contains("previewSuccessTimes == 10L"))
+        assertFalse(successCallback.contains("onPreviewFrameForCalibrationPrefetch"))
     }
 
     @Test fun officialF2ApiAndHelperExcludeCandidateAndFallbackMachinery() {
@@ -142,5 +147,37 @@ class G007ParityFixRegressionTest {
 
         val api = sources.getValue("app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt")
         assertFalse(api.contains("fun latestCalibrationAcquisitionResult("))
+    }
+
+    @Test fun g010MeasurementBoundaryDoesNotRunCalibrationOrRadiometricChainPerPreviewFrame() {
+        val root = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
+            .flatMap { sequenceOf(it, File(it, "mobile/android")) }
+            .first { File(it, "app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt").exists() }
+        val stream = File(root, "app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt").readText()
+        val helper = File(root, "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt").readText()
+        val coordinator = File(root, "app/src/main/java/kr/auto/titration/mobile/thermal/OfficialF2MeasurementCoordinator.kt").readText()
+
+        val successCallback = stream.substringAfter("internal fun onOfficialPreviewSuccess")
+            .substringBefore("internal fun resetOfficialPreviewSuccessCounter")
+        assertFalse(successCallback.contains("acquireThermometryCalibrationFileOnce"))
+        assertFalse(successCallback.contains("OfficialF2RadiometricBridge"))
+        assertFalse(successCallback.contains("renderAndMeasure"))
+        assertFalse(stream.substringAfter("private fun captureOfficialF2Frame").substringBefore("@Synchronized\n    internal fun onOfficialPreviewSuccess").contains("renderAndMeasure"))
+
+        val prefetchBody = helper.substringAfter("fun onPreviewFrameForCalibrationPrefetch")
+            .substringBefore("fun activeCalibrationIdentitySummary")
+        assertTrue(prefetchBody.contains("previewFrameCounter != 10L"))
+        assertTrue(prefetchBody.contains("calibrationPrefetchAttemptedGeneration"))
+        assertTrue(prefetchBody.contains("executor.submit"))
+        assertFalse(prefetchBody.contains("USB_GetThermometryCalibrationFile"))
+        assertFalse(prefetchBody.contains("calibrationPrefetchExecutor.execute"))
+
+        assertTrue(coordinator.contains("helper.acquireThermometryCalibrationFileOnce(calibrationDir, sessionToken)"))
+        assertTrue(coordinator.contains("helper.acquireOfficialF2MeasurementSettingsOnce(sessionToken)"))
+        assertTrue(coordinator.contains("helper.isSessionTokenCurrent(sessionToken)"))
+        assertTrue(coordinator.contains("requireOfficialF2CalibrationDirectory(calibrationDir)"))
+        assertFalse(coordinator.contains("context.cacheDir"))
+        assertTrue(coordinator.contains("bridge.renderAndMeasure(appContext, request)"))
+        assertTrue(coordinator.contains("fullMatrixCelsiusAvailable = false"))
     }
 }

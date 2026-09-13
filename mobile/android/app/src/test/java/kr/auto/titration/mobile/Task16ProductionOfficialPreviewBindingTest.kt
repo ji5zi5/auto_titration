@@ -13,6 +13,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.hik.f2module.F2SessionCloseOutcome
+import com.hik.f2module.F2StageResult
 
 class Task16ProductionOfficialPreviewBindingTest {
     @Test
@@ -27,6 +29,17 @@ class Task16ProductionOfficialPreviewBindingTest {
 
         val host = source("app/src/main/java/kr/auto/titration/mobile/OfficialPreviewHost.kt")
         assertTrue("host destroy must route to terminal native session shutdown", host.contains("HikmicroJnaMini2Stream::shutdownOfficialPreviewSession"))
+        assertTrue(
+            "replacement host must cancel/wait for old retry before adopting its lifecycle",
+            host.indexOf("claimPendingTerminalShutdownRetryForReplacementHost") <
+                host.indexOf("PreviewManagerIIAppBinding.installLifecycle(activity)"),
+        )
+        assertTrue(
+            "a login-only retry must notify the replacement host to clear stale bound state",
+            host.contains("onLoginCloseCompleted = retryRebindCallback()") &&
+                host.contains("host.bound = false") &&
+                host.contains("host.maybeBindOfficialPreview()"),
+        )
     }
 
     @Test
@@ -53,20 +66,82 @@ class Task16ProductionOfficialPreviewBindingTest {
         assertTrue("valid repeated layout/surfaceChanged callbacks must not rebind", source.contains("destroyed || bound || !holderCreated"))
         assertTrue(source.contains("override fun surfaceDestroyed"))
         assertTrue(source.contains("if (bound)"))
-        assertEquals("ordinary surface teardown should have exactly one renderer-only unbind call site", 1, Regex("unbindPreview\\(\\)").findAll(source).count())
+        assertEquals(
+            "ordinary surface teardown should have exactly one renderer-only unbind call site",
+            1,
+            Regex("unbindPreview\\(selectedSurfaceView\\)").findAll(source).count(),
+        )
         assertTrue(source.contains("selectedHolder?.removeCallback(this)"))
     }
 
     @Test
     fun nativeHostSeparatesSurfaceRebindUnbindFromTerminalSessionShutdown() {
         val source = source("app/src/main/java/kr/auto/titration/mobile/OfficialPreviewHost.kt")
-        val surfaceDestroyed = functionSlice(source, "override fun surfaceDestroyed", "    private fun terminalShutdownPreviewSession")
+        val surfaceDestroyed = functionSlice(source, "override fun surfaceDestroyed", "    private fun retryRebindCallback")
         val destroy = functionSlice(source, "fun destroy()", "    override fun surfaceCreated")
 
-        assertTrue("surface recreation may unbind only the renderer", surfaceDestroyed.contains("unbindPreview()"))
+        assertTrue(
+            "surface recreation may unbind only the exact renderer owner",
+            surfaceDestroyed.contains("unbindSelectedSurface()"),
+        )
         assertFalse("surface recreation must not close the native F2 session", surfaceDestroyed.contains("shutdownPreviewSession()"))
-        assertTrue("terminal host destroy must run the full native close path", destroy.contains("terminalShutdownPreviewSession()"))
+        assertTrue(
+            "terminal host destroy must atomically close and publish any retry",
+            destroy.contains("shutdownOfficialPreviewSessionWithRetryRegistration("),
+        )
         assertFalse("destroy must not rely on bound renderer state to close native session", destroy.contains("if (bound)"))
+        assertTrue(
+            "host destruction must decide before irreversibly committing view ownership",
+            destroy.indexOf("shutdownOfficialPreviewSessionWithRetryRegistration(") <
+                destroy.indexOf("commitHostDestruction()"),
+        )
+        assertTrue(
+            "a stop-failed owner must leave the dying Activity lifecycle inside retry admission",
+            destroy.indexOf("beforeRetryScheduled") <
+                destroy.indexOf("PreviewManagerIIAppBinding.transferTerminalCloseRetryManagerToExternalOwner()"),
+        )
+        assertTrue(
+            "the dead UI host must commit only after the retained manager leaves its lifecycle",
+            destroy.indexOf("PreviewManagerIIAppBinding.transferTerminalCloseRetryManagerToExternalOwner()") <
+                destroy.indexOf("commitHostDestruction()"),
+        )
+        assertTrue(
+            "the stale surface must be detached before the dead UI host commits",
+            destroy.indexOf("unbindSelectedSurface()") <
+                destroy.indexOf("commitHostDestruction()"),
+        )
+        assertTrue(source.contains("val hostRef = WeakReference(this)"))
+    }
+
+    @Test
+    fun terminalHostClosePolicyPreservesFailedStreamOwnerAndRetriesStoppedLogin() {
+        val preserved = officialPreviewHostCloseAction(
+            F2StageResult(
+                false,
+                "stop failed",
+                F2SessionCloseOutcome.STREAM_PRESERVED,
+            ),
+            terminalDestroy = true,
+        )
+        val loginRetained = officialPreviewHostCloseAction(
+            F2StageResult(
+                false,
+                "logout failed",
+                F2SessionCloseOutcome.STREAM_STOPPED_LOGIN_RETAINED,
+            ),
+            terminalDestroy = true,
+        )
+        val closed = officialPreviewHostCloseAction(
+            F2StageResult(true, "closed", F2SessionCloseOutcome.CLOSED),
+            terminalDestroy = true,
+        )
+
+        assertEquals(
+            OfficialPreviewHostCloseAction.TRANSFER_OWNER_AND_COMMIT_DESTROYED_HOST,
+            preserved,
+        )
+        assertEquals(OfficialPreviewHostCloseAction.KEEP_HOST_UNBOUND_AND_RETRY, loginRetained)
+        assertEquals(OfficialPreviewHostCloseAction.COMMIT_DESTROYED_HOST, closed)
     }
 
 
@@ -104,12 +179,30 @@ class Task16ProductionOfficialPreviewBindingTest {
     @Test
     fun streamHasDistinctIdempotentTerminalShutdownThatClearsStaleAppFrameState() {
         val source = source("app/src/main/java/kr/auto/titration/mobile/thermal/HikmicroJnaMini2Stream.kt")
-        val unbind = functionSlice(source, "fun unbindOfficialPreviewSurface()", "    fun shutdownOfficialPreviewSession()")
+        val unbind = functionSlice(source, "fun unbindOfficialPreviewSurface(", "    fun shutdownOfficialPreviewSession()")
         val shutdown = functionSlice(source, "fun shutdownOfficialPreviewSession()", "    private fun closeBoundOfficialPreviewLocked()")
 
         assertFalse("ordinary renderer unbind must not close the native F2 session", unbind.contains("f2Helper.closeSession()"))
         assertTrue("terminal shutdown must close any bound PreviewManager renderer", shutdown.contains("closeBoundOfficialPreviewLocked()"))
-        assertTrue("terminal shutdown must close the native F2 USB session", shutdown.contains("f2Helper.closeSession()"))
+        assertTrue(
+            "terminal shutdown must close the native F2 USB session through the API-owned lifecycle",
+            shutdown.contains("f2Api.closeSession()"),
+        )
+        assertFalse(
+            "terminal shutdown must not bypass API callback cleanup",
+            shutdown.contains("f2Helper.closeSession()"),
+        )
+        assertTrue(
+            "native close must complete before terminal renderer teardown commits",
+            shutdown.indexOf("f2Api.closeSession()") < shutdown.indexOf("closeBoundOfficialPreviewLocked()"),
+        )
+        assertTrue(
+            "a failed close with an active native stream must preserve the renderer and return",
+            shutdown.contains(
+                "if (closeResult.closeOutcome == F2SessionCloseOutcome.STREAM_PRESERVED)",
+            ) &&
+                shutdown.indexOf("return closeResult") < shutdown.indexOf("closeBoundOfficialPreviewLocked()"),
+        )
         assertTrue("terminal shutdown must clear stale raw frame snapshots", shutdown.contains("latestFrameSnapshot = null"))
         assertTrue("terminal shutdown must reset preview success state", shutdown.contains("previewSuccessTimes = 0L"))
         assertTrue("terminal shutdown must clear invalid-packet diagnostics from the dead session", shutdown.contains("lastInvalidPacketDiagnostic = null"))

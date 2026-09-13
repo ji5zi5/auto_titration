@@ -24,6 +24,12 @@ object HikmicroF2TemperatureMetadataParser {
         if (header.size != OFFLINE_UPLOAD_HEADER_BYTES) {
             return blocked("unexpected_offline_upload_header_size", "${header.size} bytes is not the exact proved 7368-byte OFFLINE_UPLOAD_HEADER")
         }
+        if (header.all { it == 0.toByte() }) {
+            return blocked(
+                "uninitialized_zero_offline_upload_header",
+                "the exact-length OFFLINE_UPLOAD_HEADER is entirely zero and has no initialized packet identity",
+            )
+        }
         if (OUTCOME_UPLOAD_OFFSET + OUTCOME_UPLOAD_BYTES > header.size) {
             return blocked("outcome_upload_info_out_of_bounds", "IFR_REALTIME_TM_OUTCOME_UPLOAD_INFO exceeds header bounds")
         }
@@ -242,7 +248,7 @@ data class HikmicroF2TemperatureMetadata(
     val deviceExpertRoiSummary: List<HikmicroF2DeviceExpertRoiSummary>,
     val blockedInvalidMetadata: HikmicroF2BlockedInvalidMetadata?,
 ) {
-    val hasValidatedDeviceCelsiusSummaries: Boolean
+    val hasDeviceCelsiusDiagnostics: Boolean
         get() = deviceGlobalSummary?.hasCelsius == true || deviceExpertRoiSummary.any { it.hasCelsius }
 
     val provesFullMatrixCelsius: Boolean get() = false

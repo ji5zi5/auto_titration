@@ -1,0 +1,191 @@
+{
+  "schema_version": "next_frozen_sensor_ranker_search_v1",
+  "run_count": 12,
+  "frozen_union": {
+    "repo_source": "/home/jio/code/auto_titration/tools/sensor_transition_candidate_union.py",
+    "source_sha256": "51c7f3399827cf5f80049ca1ae42d1a924d15a00da25b877ea4438e83fe42efa",
+    "signature": "68c260454d67c0c71a786c53cf29e34faf1a10726da10381df3dc4e60b52dc2c",
+    "candidate_counts": {
+      "auto-titration-live-20260601-201548-session-4.csv": 128,
+      "auto-titration-live-20260601-202035-session-5.csv": 121,
+      "auto-titration-live-20260601-202744-session-6.csv": 128,
+      "auto-titration-live-20260601-203711-session-7.csv": 119,
+      "auto-titration-live-20260601-204506-session-8.csv": 128,
+      "auto-titration-live-20260601-205048-session-9.csv": 128,
+      "auto-titration-live-20260601-213431-session-11.csv": 91,
+      "auto-titration-live-20260601-213925-session-12.csv": 128,
+      "auto-titration-live-20260601-214538-session-13.csv": 128,
+      "auto-titration-live-20260601-215437-session-14.csv": 89,
+      "auto-titration-live-20260601-220325-session-15.csv": 111,
+      "auto-titration-live-20260601-220652-session-16.csv": 128
+    }
+  },
+  "search": {
+    "spec_count": 1242,
+    "families": [
+      "kernel_ridge_poly2",
+      "kernel_ridge_rbf",
+      "lda",
+      "pairwise_ridge",
+      "pls",
+      "prototype",
+      "qda",
+      "svr_rbf"
+    ],
+    "aggregation_count": 81,
+    "failed_spec_count": 0,
+    "family_best_single_type_mape_percent": {
+      "pls": 0.24859749999999378,
+      "lda": 0.3156827777777791,
+      "qda": 0.3156827777777791,
+      "prototype": 0.3156827777777791,
+      "pairwise_ridge": 0.4858052777777782,
+      "kernel_ridge_rbf": 0.24859749999999378,
+      "kernel_ridge_poly2": 0.4200108333333297,
+      "svr_rbf": 0.2655252777777722
+    }
+  },
+  "result": {
+    "reference_mape_percent": 0.775124652778,
+    "typewise_development_mape_percent": 0.3597911805555541,
+    "improvement_percentage_points": 0.41533347222244593,
+    "target_passed": true,
+    "selected_configs": [
+      {
+        "titration_type": "strong_acid_strong_base",
+        "mape_percent": 0.24859749999999378,
+        "config_id": "2761c1ba1e158dd3",
+        "spec": {
+          "family": "pls",
+          "subset": "state",
+          "transform": "signed_log1p",
+          "parameter": "exp_rank@2"
+        },
+        "normalization": "zscore",
+        "global_weight": 1.0,
+        "same_type_weight": 0.0,
+        "top_k": "all",
+        "temperature": 1.0,
+        "top_blend": 0.0
+      },
+      {
+        "titration_type": "weak_acid_strong_base",
+        "mape_percent": 0.42191999999999413,
+        "config_id": "53614e5d70098d63",
+        "spec": {
+          "family": "lda",
+          "subset": "shift_terminal",
+          "transform": "raw",
+          "parameter": "5@svd"
+        },
+        "normalization": "rank",
+        "global_weight": 0.75,
+        "same_type_weight": 0.25,
+        "top_k": 20,
+        "temperature": 1.0,
+        "top_blend": 0.0
+      },
+      {
+        "titration_type": "strong_acid_weak_base",
+        "mape_percent": 0.3156827777777791,
+        "config_id": "125328077230ea01",
+        "spec": {
+          "family": "kernel_ridge_rbf",
+          "subset": "shift_terminal",
+          "transform": "signed_log1p",
+          "parameter": "rank@1,0.05"
+        },
+        "normalization": "rank",
+        "global_weight": 1.0,
+        "same_type_weight": 0.0,
+        "top_k": "all",
+        "temperature": 0.1,
+        "top_blend": 0.0
+      },
+      {
+        "titration_type": "weak_acid_weak_base",
+        "mape_percent": 0.45296444444444955,
+        "config_id": "02067b019afb7c79",
+        "spec": {
+          "family": "qda",
+          "subset": "shift_terminal",
+          "transform": "raw",
+          "parameter": "5@0.9"
+        },
+        "normalization": "zscore",
+        "global_weight": 1.0,
+        "same_type_weight": 0.0,
+        "top_k": 5,
+        "temperature": 0.1,
+        "top_blend": 0.0
+      }
+    ]
+  },
+  "determinism": {
+    "seeds": [
+      42,
+      1729,
+      20260728
+    ],
+    "identical_predictions": true
+  },
+  "leakage_audit": {
+    "passed": true,
+    "active_feature_names": [
+      "candidate_consensus",
+      "color_orthogonal_state",
+      "color_shift_w12",
+      "color_shift_w16",
+      "color_shift_w2",
+      "color_shift_w3",
+      "color_shift_w5",
+      "color_shift_w8",
+      "color_source_consensus",
+      "color_state_w12",
+      "color_state_w16",
+      "color_state_w2",
+      "color_state_w3",
+      "color_state_w5",
+      "color_state_w8",
+      "color_terminal_change",
+      "color_terminal_coordinate",
+      "thermal_availability",
+      "thermal_orthogonal_state",
+      "thermal_shift_w12",
+      "thermal_shift_w16",
+      "thermal_shift_w2",
+      "thermal_shift_w3",
+      "thermal_shift_w5",
+      "thermal_shift_w8",
+      "thermal_source_consensus",
+      "thermal_state_w12",
+      "thermal_state_w16",
+      "thermal_state_w2",
+      "thermal_state_w3",
+      "thermal_state_w5",
+      "thermal_state_w8",
+      "thermal_terminal_change",
+      "thermal_terminal_coordinate"
+    ],
+    "forbidden_feature_names": [],
+    "known_context": [
+      "titration_type"
+    ],
+    "training_label_only": [
+      "injected_volume_ml",
+      "theoretical_equivalence_volume_ml"
+    ],
+    "final_audit_mapping_only": [
+      "selected boundary -> injected_volume_ml",
+      "theoretical_equivalence_volume_ml"
+    ],
+    "outer_test_excluded_from_fit": true
+  },
+  "validation_caveat": "Outer-LORO predictions exclude each test run from fit, but per-type ranker/config selection minimizes error on these same 12 development outcomes. This is post-hoc development selection, not nested model-selection validation and not independent external validation.",
+  "runtime_seconds": 1140.9255512719992,
+  "versions": {
+    "python": "3.12.3",
+    "numpy": "2.4.6",
+    "scikit_learn": "1.8.0"
+  }
+}

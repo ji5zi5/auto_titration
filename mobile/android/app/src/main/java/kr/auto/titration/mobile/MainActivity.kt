@@ -2,14 +2,20 @@ package kr.auto.titration.mobile
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
@@ -27,6 +33,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
+import com.hik.f2module.F2UsbModuleHelper
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
@@ -40,8 +47,11 @@ import kr.auto.titration.mobile.data.ExperimentConfig
 import kr.auto.titration.mobile.export.SessionExporter
 import kr.auto.titration.mobile.pump.BluetoothPumpTransport
 import kr.auto.titration.mobile.pump.ManualPumpController
+import kr.auto.titration.mobile.pump.PcRelayPumpTransport
 import kr.auto.titration.mobile.pump.PumpCommand
 import kr.auto.titration.mobile.pump.PumpSnapshot
+import kr.auto.titration.mobile.pump.PumpTransportMode
+import kr.auto.titration.mobile.pump.SelectablePumpTransport
 import kr.auto.titration.mobile.roi.RoiAutoCandidateResponse
 import kr.auto.titration.mobile.session.PhoneRunSession
 import kr.auto.titration.mobile.session.SessionState
@@ -72,64 +82,154 @@ private const val HIKMICRO_THERMAL_PREVIEW_WIDTH = 256
 private const val HIKMICRO_THERMAL_PREVIEW_HEIGHT = 192
 private const val TRUSTED_WEBVIEW_ASSET_PREFIX = "file:///android_asset/"
 
-internal fun copyMini2TemperatureSummaryFieldsForBridge(live: JSONObject, stream: JSONObject) {
-    val summaryIsValid = hasValidMini2DeviceGlobalSummaryForBridge(stream)
-    live.put("celsius_allowed", summaryIsValid)
-    if (summaryIsValid) {
-        putFiniteOrNullForBridge(live, "temperature_avg_c", stream, "temperature_avg_c")
-        putFiniteOrNullForBridge(live, "temperature_min_c", stream, "temperature_min_c")
-        putFiniteOrNullForBridge(live, "temperature_max_c", stream, "temperature_max_c")
-        putStringOrNullForBridge(live, "temperature_provenance", stream, "temperature_provenance")
-        putStringOrNullForBridge(live, "temperature_scope", stream, "temperature_scope")
-        putStringOrNullForBridge(live, "temperature_requested_display_unit", stream, "temperature_requested_display_unit")
-        if (stream.has("temperature_requested_display_unit_code") && !stream.isNull("temperature_requested_display_unit_code")) {
-            live.put("temperature_requested_display_unit_code", stream.optInt("temperature_requested_display_unit_code"))
-        } else {
-            live.put("temperature_requested_display_unit_code", JSONObject.NULL)
-        }
-        live.put("temperature_summary", stream.optJSONObject("temperature_summary") ?: JSONObject.NULL)
+
+@Suppress("DEPRECATION")
+private fun Intent.usbDeviceExtraForMainActivity(): UsbDevice? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
     } else {
-        live.put("temperature_avg_c", JSONObject.NULL)
-        live.put("temperature_min_c", JSONObject.NULL)
-        live.put("temperature_max_c", JSONObject.NULL)
-        live.put("temperature_provenance", JSONObject.NULL)
-        live.put("temperature_scope", JSONObject.NULL)
-        live.put("temperature_requested_display_unit", JSONObject.NULL)
-        live.put("temperature_requested_display_unit_code", JSONObject.NULL)
-        live.put("temperature_summary", JSONObject.NULL)
+        getParcelableExtra(UsbManager.EXTRA_DEVICE) as? UsbDevice
     }
+
+internal fun copyMini2TemperatureSummaryFieldsForBridge(live: JSONObject, stream: JSONObject) {
+    live.put("celsius_allowed", false)
+    live.put("temperature_avg_c", JSONObject.NULL)
+    live.put("temperature_min_c", JSONObject.NULL)
+    live.put("temperature_max_c", JSONObject.NULL)
+    live.put("temperature_center_c", JSONObject.NULL)
+    live.put("temperature_provenance", JSONObject.NULL)
+    live.put("temperature_scope", JSONObject.NULL)
+    live.put("temperature_source", JSONObject.NULL)
+    live.put("temperature_requested_display_unit", JSONObject.NULL)
+    live.put("temperature_requested_display_unit_code", JSONObject.NULL)
+    live.put("temperature_summary", JSONObject.NULL)
+    live.put("device_global_summary", stream.optJSONObject("device_global_summary") ?: JSONObject.NULL)
     live.put("full_matrix_celsius_allowed", false)
     live.put("full_matrix_temperature_status", stream.optString("full_matrix_temperature_status", "unproved_not_emitted"))
 }
 
-private fun hasValidMini2DeviceGlobalSummaryForBridge(stream: JSONObject): Boolean {
-    val summary = stream.optJSONObject("temperature_summary")
-    val provenance = stream.optString("temperature_provenance", summary?.optString("provenance").orEmpty())
-    val scope = stream.optString("temperature_scope", summary?.optString("scope").orEmpty())
-    return stream.optBoolean("celsius_allowed", false) &&
-        !stream.optBoolean("full_matrix_celsius_allowed", false) &&
-        provenance == "device_global_summary" &&
-        scope == "device_global_summary" &&
-        finiteDoubleOrNullForBridge(stream, "temperature_avg_c") != null &&
-        finiteDoubleOrNullForBridge(stream, "temperature_min_c") != null &&
-        finiteDoubleOrNullForBridge(stream, "temperature_max_c") != null
+
+internal fun officialMeasurementRectFromMaskForBridge(mask: RoiMask?, frameWidth: Int, frameHeight: Int): Rect? {
+    val coordinates = officialMeasurementRectCoordinatesForBridge(mask, frameWidth, frameHeight) ?: return null
+    return Rect().apply {
+        left = coordinates.left
+        top = coordinates.top
+        right = coordinates.right
+        bottom = coordinates.bottom
+    }
 }
 
-private fun putFiniteOrNullForBridge(target: JSONObject, targetKey: String, source: JSONObject, sourceKey: String) {
-    target.put(targetKey, finiteDoubleOrNullForBridge(source, sourceKey) ?: JSONObject.NULL)
+internal fun appendOfficialMeasurementFieldsForBridge(
+    target: JSONObject,
+    state: kr.auto.titration.mobile.thermal.OfficialF2ScalarMeasurementState,
+    currentRawStreamFrameCounter: Long?,
+): JSONObject {
+    val fields = officialMeasurementFieldsForBridge(state, currentRawStreamFrameCounter)
+    target.put("official_measurement_status", fields.status)
+    target.put("official_measurement_reason", fields.reason)
+    target.put("official_measurement_frame_counter", fields.frameCounter ?: JSONObject.NULL)
+    target.put("official_temperature_avg_c", fields.averageCelsius ?: JSONObject.NULL)
+    target.put("official_temperature_min_c", fields.minCelsius ?: JSONObject.NULL)
+    target.put("official_temperature_max_c", fields.maxCelsius ?: JSONObject.NULL)
+    target.put("official_temperature_center_c", fields.centerCelsius ?: JSONObject.NULL)
+    target.put("official_temperature_provenance", fields.provenance ?: JSONObject.NULL)
+    target.put("official_temperature_scope", fields.scope ?: JSONObject.NULL)
+    target.put("official_measurement_matches_current_frame", fields.matchesCurrentFrame)
+    target.put("official_measurement_temporal_scope", fields.temporalScope ?: JSONObject.NULL)
+    target.put("official_measurement_age_frames", fields.ageFrames ?: JSONObject.NULL)
+    target.put("official_full_matrix_celsius_allowed", fields.fullMatrixCelsiusAllowed)
+    val publishCurrentOfficialCelsius = fields.status == "READY" &&
+        fields.matchesCurrentFrame &&
+        fields.temporalScope == "current_frame" &&
+        fields.ageFrames == 0L &&
+        fields.provenance == OFFICIAL_F2_MEASUREMENT_STATS_PROVENANCE &&
+        fields.scope in setOf("fullscreen", "rectangle") &&
+        fields.averageCelsius != null &&
+        fields.minCelsius != null &&
+        fields.maxCelsius != null &&
+        fields.minCelsius <= fields.averageCelsius &&
+        fields.averageCelsius <= fields.maxCelsius &&
+        (fields.centerCelsius == null || fields.centerCelsius in fields.minCelsius..fields.maxCelsius)
+    target.put("celsius_allowed", publishCurrentOfficialCelsius)
+    target.put("temperature_avg_c", fields.averageCelsius.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("temperature_min_c", fields.minCelsius.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("temperature_max_c", fields.maxCelsius.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("temperature_center_c", fields.centerCelsius.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("temperature_provenance", fields.provenance.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("temperature_scope", fields.scope.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("temperature_source", fields.provenance.takeIf { publishCurrentOfficialCelsius } ?: JSONObject.NULL)
+    target.put("full_matrix_celsius_allowed", false)
+    return target
 }
 
-private fun finiteDoubleOrNullForBridge(json: JSONObject, key: String): Double? {
-    if (!json.has(key) || json.isNull(key)) return null
-    val value = json.optDouble(key, Double.NaN)
-    return value.takeIf { it.isFinite() }
+internal fun enrichedThermalRawStreamSnapshotForSession(
+    rawStream: JSONObject?,
+    state: kr.auto.titration.mobile.thermal.OfficialF2ScalarMeasurementState,
+): JSONObject? {
+    val snapshot = rawStream ?: return null
+    return appendOfficialMeasurementFieldsForBridge(
+        snapshot,
+        state,
+        rawStreamFrameCounterForOfficialMeasurement(snapshot),
+    )
 }
 
-private fun putStringOrNullForBridge(target: JSONObject, targetKey: String, source: JSONObject, sourceKey: String) {
-    if (source.has(sourceKey) && !source.isNull(sourceKey)) {
-        target.put(targetKey, source.optString(sourceKey).takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-    } else {
-        target.put(targetKey, JSONObject.NULL)
+private fun rawStreamFrameCounterForOfficialMeasurement(rawStream: JSONObject?): Long? {
+    if (rawStream == null || !rawStream.has("frame_counter") || rawStream.isNull("frame_counter")) return null
+    return rawStream.optLong("frame_counter")
+}
+
+
+internal enum class OfficialF2UsbLifecycleAction {
+    NONE,
+    RESET_STALE_ACTIVE_SESSION,
+}
+
+internal data class OfficialF2UsbLifecycleSnapshot(
+    val activeUserId: Int,
+    val activeChannel: Int,
+    val currentDeviceName: String?,
+    val isActiveForCurrentDevice: Boolean,
+) {
+    val hasActiveSession: Boolean get() = activeUserId != -1 || activeChannel != -1
+}
+
+internal class OfficialF2UsbLifecycleReconciler(
+    private val snapshot: () -> OfficialF2UsbLifecycleSnapshot,
+    private val isActiveForDeviceName: (String) -> Boolean,
+    private val resetStaleSession: (String) -> Unit,
+) {
+    fun onResume(): OfficialF2UsbLifecycleAction = reconcile("activity_onResume") { state ->
+        state.hasActiveSession && (state.currentDeviceName == null || !state.isActiveForCurrentDevice)
+    }
+
+    fun onUsbAttached(attachedDeviceName: String?): OfficialF2UsbLifecycleAction = reconcile("usb_attached") { state ->
+        state.hasActiveSession && (
+            if (state.currentDeviceName == null) {
+                attachedDeviceName != null && !isActiveForDeviceName(attachedDeviceName)
+            } else {
+                !state.isActiveForCurrentDevice && (attachedDeviceName == null || attachedDeviceName == state.currentDeviceName)
+            }
+            )
+    }
+
+    fun onUsbDetached(detachedDeviceName: String?): OfficialF2UsbLifecycleAction = reconcile("usb_detached") { state ->
+        state.hasActiveSession && (
+            detachedDeviceName == null ||
+                isActiveForDeviceName(detachedDeviceName) ||
+                state.currentDeviceName == null ||
+                !state.isActiveForCurrentDevice
+            )
+    }
+
+    private fun reconcile(
+        reason: String,
+        shouldReset: (OfficialF2UsbLifecycleSnapshot) -> Boolean,
+    ): OfficialF2UsbLifecycleAction {
+        val state = snapshot()
+        if (!shouldReset(state)) return OfficialF2UsbLifecycleAction.NONE
+        resetStaleSession(reason)
+        return OfficialF2UsbLifecycleAction.RESET_STALE_ACTIVE_SESSION
     }
 }
 
@@ -154,7 +254,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var officialPreviewHost: OfficialPreviewHost
     private lateinit var mini2Probe: Mini2UsbProbe
+    private lateinit var officialF2UsbLifecycleReconciler: OfficialF2UsbLifecycleReconciler
+    private var usbLifecycleReceiverRegistered = false
     private lateinit var pumpTransport: BluetoothPumpTransport
+    private lateinit var pcRelayPumpTransport: PcRelayPumpTransport
+    private lateinit var selectablePumpTransport: SelectablePumpTransport
     private lateinit var pumpController: ManualPumpController
     private var lockedVisibleRoi: Roi? = null
     private var previousVisibleFeatures: VisibleFeatures? = null
@@ -203,6 +307,17 @@ class MainActivity : ComponentActivity() {
     @Volatile
     private var bluetoothPermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
 
+
+    private val usbLifecycleReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val device = intent.usbDeviceExtraForMainActivity()
+            when (intent.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> reconcileOfficialF2UsbLifecycleAttach(device)
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> reconcileOfficialF2UsbLifecycleDetach(device)
+            }
+        }
+    }
+
     private val cameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -238,11 +353,19 @@ class MainActivity : ComponentActivity() {
         d2.a.b(applicationContext)
         AndroidCrashLogStore.install(applicationContext)
         mini2Probe = Mini2UsbProbe(this)
+        officialF2UsbLifecycleReconciler = buildOfficialF2UsbLifecycleReconciler()
         pumpTransport = BluetoothPumpTransport(this)
-        pumpController = ManualPumpController(pumpTransport)
+        pcRelayPumpTransport = PcRelayPumpTransport(this)
+        selectablePumpTransport = SelectablePumpTransport(
+            this,
+            pumpTransport,
+            pcRelayPumpTransport,
+        )
+        pumpController = ManualPumpController(selectablePumpTransport)
         yoloDetector = YoloSegmentationDetector(this)
         autoRoiWorker = AndroidAutoRoiWorker(yoloDetector, androidRoiState)
         mini2Probe.startMonitoring()
+        registerUsbLifecycleReceiver()
         runSession.startSetup()
         runSession.updatePumpSnapshot(pumpController.snapshot())
         webView = buildWebView()
@@ -253,6 +376,12 @@ class MainActivity : ComponentActivity() {
         requestBluetoothPermissionIfNeeded()
     }
 
+    override fun onResume() {
+        super.onResume()
+        HikmicroJnaMini2Stream.retryPendingTerminalShutdownNow()
+        reconcileOfficialF2UsbLifecycleResume()
+    }
+
     override fun onStop() {
         stopRunningPumpForLifecycle("activity_onStop")
         super.onStop()
@@ -260,10 +389,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         stopRunningPumpForLifecycle("activity_onDestroy")
-        if (::pumpTransport.isInitialized) {
-            pumpTransport.close()
+        if (::selectablePumpTransport.isInitialized) {
+            selectablePumpTransport.close()
         }
         cameraExecutor.shutdown()
+        unregisterUsbLifecycleReceiver()
         if (::mini2Probe.isInitialized) {
             mini2Probe.stopMonitoring()
         }
@@ -275,6 +405,79 @@ class MainActivity : ComponentActivity() {
             webView.destroy()
         }
         super.onDestroy()
+    }
+
+
+    private fun buildOfficialF2UsbLifecycleReconciler(): OfficialF2UsbLifecycleReconciler {
+        val helper = F2UsbModuleHelper.INSTANCE
+        return OfficialF2UsbLifecycleReconciler(
+            snapshot = {
+                val currentDeviceName = mini2Probe.findMini2Device()?.deviceName
+                OfficialF2UsbLifecycleSnapshot(
+                    activeUserId = helper.activeUserId(),
+                    activeChannel = helper.activeChannel(),
+                    currentDeviceName = currentDeviceName,
+                    isActiveForCurrentDevice = currentDeviceName?.let(helper::isStreamingForDevice) == true,
+                )
+            },
+            isActiveForDeviceName = helper::isStreamingForDevice,
+            resetStaleSession = { reason -> resetOfficialF2SessionForUsbLifecycle(reason) },
+        )
+    }
+
+    private fun registerUsbLifecycleReceiver() {
+        if (usbLifecycleReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        ContextCompat.registerReceiver(
+            this,
+            usbLifecycleReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        usbLifecycleReceiverRegistered = true
+    }
+
+    private fun unregisterUsbLifecycleReceiver() {
+        if (!usbLifecycleReceiverRegistered) return
+        try {
+            unregisterReceiver(usbLifecycleReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered by Android lifecycle; reconciliation is idempotent.
+        } finally {
+            usbLifecycleReceiverRegistered = false
+        }
+    }
+
+    private fun reconcileOfficialF2UsbLifecycleResume() {
+        officialF2UsbLifecycleReconciler.onResume()
+    }
+
+    private fun reconcileOfficialF2UsbLifecycleAttach(device: UsbDevice?) {
+        if (device != null && !kr.auto.titration.mobile.thermal.HikmicroMini2ModuleType.isHikmicroCandidate(device)) return
+        officialF2UsbLifecycleReconciler.onUsbAttached(device?.deviceName)
+    }
+
+    private fun reconcileOfficialF2UsbLifecycleDetach(device: UsbDevice?) {
+        if (device != null && !kr.auto.titration.mobile.thermal.HikmicroMini2ModuleType.isHikmicroCandidate(device)) return
+        officialF2UsbLifecycleReconciler.onUsbDetached(device?.deviceName)
+    }
+
+    private fun resetOfficialF2SessionForUsbLifecycle(reason: String) {
+        val closeResult = if (::officialPreviewHost.isInitialized) {
+            officialPreviewHost.resetOfficialF2SessionForUsbLifecycle(reason)
+        } else {
+            HikmicroJnaMini2Stream.shutdownOfficialPreviewSession()
+        }
+        lastExplicitMini2Probe = null
+        statusMessage = if (closeResult.ok) {
+            "Mini2 USB lifecycle reset · $reason · press Mini2 USB 확인 for an explicit stream probe"
+        } else {
+            "Mini2 USB lifecycle reset blocked · $reason · ${closeResult.summary}"
+        }
+        notifyWebStatus()
     }
 
     private fun requestBluetoothPermissionIfNeeded() {
@@ -434,7 +637,7 @@ class MainActivity : ComponentActivity() {
                 if (::pumpController.isInitialized) {
                     runSession.updatePumpSnapshot(pumpController.snapshot())
                 }
-                runSession.updateThermalStreamSnapshot(currentThermalRawStreamJson())
+                runSession.updateThermalStreamSnapshot(currentEnrichedThermalRawStreamJson())
                 runSession.recordFrame(frame)
             }
             if (shouldPublishVisibleStatus(id, nowMs)) {
@@ -474,6 +677,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun currentEnrichedThermalRawStreamJson(): JSONObject? =
+        enrichedThermalRawStreamSnapshotForSession(
+            currentThermalRawStreamJson(),
+            HikmicroJnaMini2Stream.latestOfficialScalarMeasurement(),
+        )
+
     private fun refreshPumpStatusFromUserAction(): String {
         if (!::pumpController.isInitialized) return ""
         val response = pumpController.sendUserCommand(PumpCommand.Status)
@@ -492,15 +701,30 @@ class MainActivity : ComponentActivity() {
                 warning = "pump controller not initialized",
             )
         }
-        val transportStatus = if (::pumpTransport.isInitialized) pumpTransport.statusSnapshot() else null
-        val transportWarning = transportStatus?.message.orEmpty().takeIf {
+        val usePcRelay = ::selectablePumpTransport.isInitialized &&
+            selectablePumpTransport.activeMode() == PumpTransportMode.PC_RELAY
+        val bluetoothStatus = if (!usePcRelay && ::pumpTransport.isInitialized) {
+            pumpTransport.statusSnapshot()
+        } else {
+            null
+        }
+        val relayStatus = if (usePcRelay && ::pcRelayPumpTransport.isInitialized) {
+            pcRelayPumpTransport.statusSnapshot()
+        } else {
+            null
+        }
+        val transportMessage = relayStatus?.message ?: bluetoothStatus?.message.orEmpty()
+        val transportWarning = transportMessage.takeIf {
             it.startsWith("ERROR", ignoreCase = true) || it.startsWith("BLOCKED", ignoreCase = true)
         }.orEmpty()
-        val transportDeviceName = transportStatus?.let { status ->
+        val transportDeviceName = relayStatus?.baseUrl?.takeIf { it.isNotBlank() }?.let {
+            "Windows PC $it"
+        } ?: bluetoothStatus?.let { status ->
             status.deviceName.ifBlank { status.selectedName }
         }.orEmpty()
         val snapshot = controllerSnapshot.copy(
-            connected = transportStatus?.connected ?: controllerSnapshot.connected,
+            mode = if (usePcRelay) "android_windows_pc_relay" else "android_manual_bluetooth",
+            connected = relayStatus?.connected ?: bluetoothStatus?.connected ?: controllerSnapshot.connected,
             bluetoothDeviceName = transportDeviceName.ifBlank { controllerSnapshot.bluetoothDeviceName },
             warning = transportWarning.ifBlank { controllerSnapshot.warning },
         )
@@ -653,9 +877,24 @@ class MainActivity : ComponentActivity() {
             runtimeMode = Mini2OfficialRuntimeMode.OFFICIAL_PRIMARY,
         ).withLastExplicitMini2Probe()
         val rawStream = mini2.optJSONObject("raw_stream")
-        runSession.updateThermalStreamSnapshot(rawStream)
         val thermalPreviewWidth = rawStream?.optInt("frame_width")?.takeIf { it > 0 } ?: HIKMICRO_THERMAL_PREVIEW_WIDTH
         val thermalPreviewHeight = rawStream?.optInt("frame_height")?.takeIf { it > 0 } ?: HIKMICRO_THERMAL_PREVIEW_HEIGHT
+        val hasFreshObservedThermalFrame = rawStream != null &&
+            rawStream.optLong("frame_counter", 0L) > 0L &&
+            rawStream.optInt("frame_width", 0) > 0 &&
+            rawStream.optInt("frame_height", 0) > 0
+        if (hasFreshObservedThermalFrame) {
+            val rect = officialMeasurementRectFromMaskForBridge(
+                latestThermalRoiMask,
+                rawStream.optInt("frame_width"),
+                rawStream.optInt("frame_height"),
+            )
+            HikmicroJnaMini2Stream.scheduleLatestOfficialScalarMeasurement(this, rect)
+        }
+        val latestOfficialMeasurement = HikmicroJnaMini2Stream.latestOfficialScalarMeasurement()
+        val sessionRawStream = enrichedThermalRawStreamSnapshotForSession(rawStream, latestOfficialMeasurement)
+        val currentRawStreamFrameCounter = rawStreamFrameCounterForOfficialMeasurement(sessionRawStream)
+        runSession.updateThermalStreamSnapshot(sessionRawStream)
         val thermalRoi = defaultThermalPreviewRoi(thermalPreviewWidth, thermalPreviewHeight)
         val pumpSnapshot = currentPumpSnapshot()
         val pumpTransportStatus = if (::pumpTransport.isInitialized) pumpTransport.statusSnapshot() else null
@@ -750,6 +989,8 @@ class MainActivity : ComponentActivity() {
             .put("pump_step_count", pumpSnapshot.confirmedStepCount ?: JSONObject.NULL)
             .put("pump_firmware_volume_ml", pumpSnapshot.firmwareVolumeMl ?: JSONObject.NULL)
             .put("pump_last_status", pumpSnapshot.lastStatusLine)
+
+        runSession.finalPredictionFields.forEach { (key, value) -> csvJson.put(key, value) }
 
         val live = JSONObject()
             .put("frame_id", if (runSession.frameCount > 0) runSession.frameCount else JSONObject.NULL)
@@ -850,6 +1091,7 @@ class MainActivity : ComponentActivity() {
             live.put("converter_validation_state", stream.optJSONObject("converter_validation_state") ?: JSONObject.NULL)
             copyMini2TemperatureSummaryFields(live, stream)
         }
+        appendOfficialMeasurementFieldsForBridge(live, latestOfficialMeasurement, currentRawStreamFrameCounter)
 
         if (latestVisiblePreviewDataUrl.isNotBlank()) {
             live.put("visible_preview_data_url", latestVisiblePreviewDataUrl)
@@ -1223,17 +1465,56 @@ class MainActivity : ComponentActivity() {
         return buildStatusJson()
     }
 
+    fun endpointWorkerSourceFromBridge(): String = assets.open("portable-endpoint.js").bufferedReader().use { it.readText() }
+
+    // Android asset merging expands the checked-in .json.gz to .json.
+    fun endpointModelJsonFromBridge(): String = assets.open("models/endpoint-portable.json")
+        .bufferedReader().use { it.readText() }
+
+    @Synchronized
+    fun beginEndpointAnalysisFromBridge(): JSONObject {
+        val generation = runSession.beginFinalPrediction()
+        val rows = JSONArray()
+        val columns = listOf("time_s", "injected_volume_ml", "visible_H_mean", "visible_S_mean", "visible_V_mean", "thermal_raw_roi_p50", "thermal_raw_roi_p95")
+        for (row in runSession.rows) {
+            val values = row.toCsvMap(runSession.config)
+            val json = JSONObject()
+            for (key in columns) json.put(key, values[key]?.toDoubleOrNull()?.takeIf { it.isFinite() } ?: JSONObject.NULL)
+            rows.put(json)
+        }
+        return JSONObject().put("ok", true).put("generation", generation)
+            .put("run_id", runSession.runId).put("titration_type", runSession.config.titrationType).put("rows", rows)
+    }
+
+    @Synchronized
+    fun finishEndpointAnalysisFromBridge(payloadJson: String): JSONObject {
+        val payload = JSONObject(payloadJson)
+        val status = payload.optString("predicted_equivalence_status", "unavailable")
+        val accepted = runSession.finishFinalPrediction(
+            generation = payload.getLong("generation"), resultRunId = payload.getString("run_id"), status = status,
+            volumeMl = payload.optDouble("predicted_equivalence_volume_ml", Double.NaN).takeIf { it.isFinite() },
+            confidence = payload.optDouble("predicted_equivalence_confidence", Double.NaN).takeIf { it.isFinite() },
+            source = payload.optString("predicted_equivalence_source"),
+            reason = payload.optString("predicted_equivalence_evidence", payload.optString("predicted_equivalence_reason")),
+        )
+        if (accepted) statusMessage = if (status == "available") "휴대폰 당량점·농도 분석 완료" else "분석 결과 없음 · ${payload.optString("predicted_equivalence_reason")}"
+        notifyWebStatus()
+        return buildStatusJson().put("prediction_result_accepted", accepted)
+    }
+
     @Synchronized
     fun csvPreviewJsonFromBridge(): JSONObject {
         return JSONObject()
             .put("ok", true)
             .put("row_count", runSession.recordedRowCount)
-            .put("csv", SessionExporter.buildCsv(runSession.config, runSession.rows))
+            .put("csv", SessionExporter.buildCsv(runSession.config, runSession.rows, runSession.finalPredictionFields))
     }
 
     @Synchronized
     fun saveCsvToDownloadsFromBridge(): JSONObject {
-        val csvText = SessionExporter.buildCsv(runSession.config, runSession.rows)
+        require(runSession.state == SessionState.STOPPED || runSession.state == SessionState.EXPORTED) { "CSV 저장은 녹화 종료 후 가능합니다" }
+        require(runSession.finalPredictionFields["predicted_equivalence_status"] != "pending") { "예측 계산이 완료될 때까지 기다려 주세요" }
+        val csvText = SessionExporter.buildCsv(runSession.config, runSession.rows, runSession.finalPredictionFields)
         val fileName = buildCsvExportFileName()
         val uri = writeCsvTextToDownloads(fileName, csvText)
         statusMessage = "CSV 저장 완료 · Downloads/$fileName · rows=${runSession.recordedRowCount}"
@@ -1318,7 +1599,7 @@ class MainActivity : ComponentActivity() {
             runtimeMode = runtimeMode,
         ).put("mini2_last_stream_probe_mode", bridgeModeLabel)
         lastExplicitMini2Probe = mini2
-        val result = safeBuildStatusJson().put("mini2", mini2)
+        val result = safeBuildStatusJson()
         val moduleType = mini2.optString("mini2_official_module_type", "-")
         val rawStatus = mini2.optString("raw_stream_status", mini2.optString("mini2_status", "-"))
         statusMessage = "Mini2 $moduleType · $rawStatus · $bridgeModeLabel · ${mini2.optString("mini2_reason", "Mini2 probe updated")}"
@@ -1547,6 +1828,11 @@ class MainActivity : ComponentActivity() {
             live.put("raw_delta", stream.rawMax - stream.rawMin)
         }
         copyMini2TemperatureSummaryFields(live, stream.toJson())
+        appendOfficialMeasurementFieldsForBridge(
+            live,
+            HikmicroJnaMini2Stream.latestOfficialScalarMeasurement(),
+            stream.frameCounter,
+        )
         return live
     }
 
@@ -1700,28 +1986,15 @@ class MainActivity : ComponentActivity() {
         val explicitRawStream = explicit.optJSONObject("last_stream_attempt")
             ?: explicit.optJSONObject("raw_stream")
             ?: return this
-        val rawStream = if (isActiveMini2Peek(currentRawStream)) currentRawStream else explicitRawStream
-        put("raw_stream", rawStream)
         put("last_stream_attempt", explicitRawStream)
         put("current_usb_presence", currentPresence)
-        put("raw_stream_status", rawStream.optString("raw_stream_status", explicit.optString("raw_stream_status")))
-        put("raw_frame_status", rawStream.optString("raw_frame_status", explicit.optString("raw_frame_status")))
         put("mini2_last_stream_probe_mode", explicit.optString("mini2_last_stream_probe_mode", "OFFICIAL_PRIMARY native_stream_manual_one_shot"))
-        put("mini2_last_stream_probe_reason", rawStream.optString("reason"))
+        put("mini2_last_stream_probe_reason", explicitRawStream.optString("reason"))
+        if (currentRawStream != null) {
+            put("raw_stream_status", currentRawStream.optString("raw_stream_status", optString("raw_stream_status")))
+            put("raw_frame_status", currentRawStream.optString("raw_frame_status", optString("raw_frame_status")))
+        }
         return this
-    }
-
-    private fun isActiveMini2Peek(rawStream: JSONObject?): Boolean {
-        if (rawStream == null) return false
-        val status = rawStream.optString("raw_stream_status")
-        val discovery = rawStream.optString("native_symbol_discovery")
-        val statusCanReplaceExplicitAttempt =
-            status == "raw_streaming_unverified" ||
-                status == "stream_attempt_started" ||
-                discovery.contains("passive_peek_stalled")
-        return discovery.contains("hikmicro_official_f2_module") &&
-            !discovery.contains("passive_poll_crash_guard") &&
-            statusCanReplaceExplicitAttempt
     }
 
     private fun sensorRoiToDisplayRoi(

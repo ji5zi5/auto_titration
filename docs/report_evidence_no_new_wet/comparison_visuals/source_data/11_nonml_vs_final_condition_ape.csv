@@ -1,0 +1,25 @@
+﻿condition,titration_type,volume_ml,method,method_label,ape_percent
+강-강 20,strong_acid_strong_base,20,color_major_slope,색상 기울기 (비ML),1.9999999999999927
+강-강 20,strong_acid_strong_base,20,current_final_model,최종 선택 모델 (현재),0.29977499999999324
+강-강 30,strong_acid_strong_base,30,color_major_slope,색상 기울기 (비ML),1.6666666666666667
+강-강 30,strong_acid_strong_base,30,current_final_model,최종 선택 모델 (현재),0.3391199999999964
+강-강 40,strong_acid_strong_base,40,color_major_slope,색상 기울기 (비ML),0.25000000000000355
+강-강 40,strong_acid_strong_base,40,current_final_model,최종 선택 모델 (현재),0.10689749999999165
+강-약 20,strong_acid_weak_base,20,color_major_slope,색상 기울기 (비ML),7.5
+강-약 20,strong_acid_weak_base,20,current_final_model,최종 선택 모델 (현재),0.5704449999999994
+강-약 30,strong_acid_weak_base,30,color_major_slope,색상 기울기 (비ML),4.333333333333336
+강-약 30,strong_acid_weak_base,30,current_final_model,최종 선택 모델 (현재),0.25349333333333374
+강-약 40,strong_acid_weak_base,40,color_major_slope,색상 기울기 (비ML),3.499999999999996
+강-약 40,strong_acid_weak_base,40,current_final_model,최종 선택 모델 (현재),0.12311000000000405
+약-강 20,weak_acid_strong_base,20,color_major_slope,색상 기울기 (비ML),23.000000000000007
+약-강 20,weak_acid_strong_base,20,current_final_model,최종 선택 모델 (현재),0.03717999999999222
+약-강 30,weak_acid_strong_base,30,color_major_slope,색상 기울기 (비ML),9.333333333333336
+약-강 30,weak_acid_strong_base,30,current_final_model,최종 선택 모델 (현재),0.40386666666666576
+약-강 40,weak_acid_strong_base,40,color_major_slope,색상 기울기 (비ML),1.750000000000007
+약-강 40,weak_acid_strong_base,40,current_final_model,최종 선택 모델 (현재),0.04721999999999227
+약-약 20,weak_acid_weak_base,20,color_major_slope,색상 기울기 (비ML),0.5000000000000071
+약-약 20,weak_acid_weak_base,20,current_final_model,최종 선택 모델 (현재),0.7806350000000073
+약-약 30,weak_acid_weak_base,30,color_major_slope,색상 기울기 (비ML),1.0000000000000024
+약-약 30,weak_acid_weak_base,30,current_final_model,최종 선택 모델 (현재),0.4823433333333326
+약-약 40,weak_acid_weak_base,40,color_major_slope,색상 기울기 (비ML),1.25
+약-약 40,weak_acid_weak_base,40,current_final_model,최종 선택 모델 (현재),0.09591500000000863

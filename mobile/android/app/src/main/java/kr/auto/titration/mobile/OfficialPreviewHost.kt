@@ -7,9 +7,12 @@ import android.view.View
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import com.hik.viewercommon.data.bean.SceneModeBean
+import com.hik.f2module.F2SessionCloseOutcome
+import com.hik.f2module.F2StageResult
 import hik.common.yyrj.uicommon.widget.FloatTextureView
 import kr.auto.titration.mobile.thermal.HikmicroJnaMini2Stream
 import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
+import java.lang.ref.WeakReference
 
 /**
  * Native host for the official HIKMICRO PreviewManagerII graph.
@@ -22,8 +25,8 @@ import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
 internal class OfficialPreviewHost(
     activity: ComponentActivity,
     private val bindPreview: (OfficialPreviewBinding) -> Unit = HikmicroJnaMini2Stream::bindOfficialPreviewSurface,
-    private val unbindPreview: () -> Unit = HikmicroJnaMini2Stream::unbindOfficialPreviewSurface,
-    private val shutdownPreviewSession: () -> Unit = HikmicroJnaMini2Stream::shutdownOfficialPreviewSession,
+    private val unbindPreview: (SurfaceView) -> Unit = HikmicroJnaMini2Stream::unbindOfficialPreviewSurface,
+    private val shutdownPreviewSession: () -> F2StageResult = HikmicroJnaMini2Stream::shutdownOfficialPreviewSession,
 ) : SurfaceHolder.Callback {
     val rootView: FrameLayout = FrameLayout(activity)
     private val previewRoot: FrameLayout = FrameLayout(activity)
@@ -37,6 +40,9 @@ internal class OfficialPreviewHost(
     private var destroyed = false
 
     init {
+        HikmicroJnaMini2Stream.claimPendingTerminalShutdownRetryForReplacementHost(
+            onLoginCloseCompleted = retryRebindCallback(),
+        )
         PreviewManagerIIAppBinding.installLifecycle(activity)
         rootView.layoutParams = matchParentLayoutParams()
         previewRoot.layoutParams = matchParentLayoutParams()
@@ -62,14 +68,84 @@ internal class OfficialPreviewHost(
         }
     }
 
-    fun destroy() {
-        if (destroyed) return
+    fun resetOfficialF2SessionForUsbLifecycle(@Suppress("UNUSED_PARAMETER") reason: String): F2StageResult {
+        if (destroyed) {
+            return F2StageResult(false, "official_preview_host_destroyed")
+        }
+        val wasBound = bound
+        val result = HikmicroJnaMini2Stream.shutdownOfficialPreviewSessionWithRetryRegistration(
+            shutdown = shutdownPreviewSession,
+            beforeRetryScheduled = { failed ->
+                when (officialPreviewHostCloseAction(failed, terminalDestroy = false)) {
+                    OfficialPreviewHostCloseAction.PRESERVE_HOST_AND_BINDING -> bound = wasBound
+                    OfficialPreviewHostCloseAction.KEEP_HOST_UNBOUND_AND_RETRY -> bound = false
+                    else -> error("non-retry close action reached retry registration")
+                }
+            },
+            onRetryClosed = retryRebindCallback(),
+        )
+        when (officialPreviewHostCloseAction(result, terminalDestroy = false)) {
+            OfficialPreviewHostCloseAction.PRESERVE_HOST_AND_BINDING -> Unit
+            OfficialPreviewHostCloseAction.KEEP_HOST_UNBOUND_AND_RETRY -> Unit
+            OfficialPreviewHostCloseAction.REBIND_CLOSED_HOST -> {
+                bound = false
+                maybeBindOfficialPreview()
+            }
+            OfficialPreviewHostCloseAction.TRANSFER_OWNER_AND_COMMIT_DESTROYED_HOST -> error(
+                "terminal owner transfer is invalid during USB lifecycle reset",
+            )
+            OfficialPreviewHostCloseAction.COMMIT_DESTROYED_HOST -> error(
+                "terminal destroy action is invalid during USB lifecycle reset",
+            )
+        }
+        return result
+    }
+
+    fun destroy(): F2StageResult {
+        if (destroyed) {
+            return F2StageResult(
+                ok = true,
+                summary = "official_preview_host_already_destroyed",
+                closeOutcome = F2SessionCloseOutcome.CLOSED,
+            )
+        }
+        val result = HikmicroJnaMini2Stream.shutdownOfficialPreviewSessionWithRetryRegistration(
+            shutdown = shutdownPreviewSession,
+            beforeRetryScheduled = { failed ->
+                when (officialPreviewHostCloseAction(failed, terminalDestroy = true)) {
+                    OfficialPreviewHostCloseAction.TRANSFER_OWNER_AND_COMMIT_DESTROYED_HOST -> {
+                        PreviewManagerIIAppBinding.transferTerminalCloseRetryManagerToExternalOwner()
+                        unbindSelectedSurface()
+                        commitHostDestruction()
+                    }
+                    OfficialPreviewHostCloseAction.KEEP_HOST_UNBOUND_AND_RETRY ->
+                        commitHostDestruction()
+                    else -> error("non-retry terminal action reached retry registration")
+                }
+            },
+        )
+        when (officialPreviewHostCloseAction(result, terminalDestroy = true)) {
+            OfficialPreviewHostCloseAction.TRANSFER_OWNER_AND_COMMIT_DESTROYED_HOST -> return result
+            OfficialPreviewHostCloseAction.PRESERVE_HOST_AND_BINDING -> {
+                error("reset-only preserve action is invalid during terminal host destroy")
+            }
+            OfficialPreviewHostCloseAction.KEEP_HOST_UNBOUND_AND_RETRY -> return result
+            OfficialPreviewHostCloseAction.COMMIT_DESTROYED_HOST -> {
+                commitHostDestruction()
+                return result
+            }
+            OfficialPreviewHostCloseAction.REBIND_CLOSED_HOST -> error(
+                "reset-only rebind action is invalid during terminal host destroy",
+            )
+        }
+    }
+
+    private fun commitHostDestruction() {
         destroyed = true
         selectedHolder?.removeCallback(this)
         selectedHolder = null
         holderCreated = false
         bound = false
-        terminalShutdownPreviewSession()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -85,13 +161,28 @@ internal class OfficialPreviewHost(
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         holderCreated = false
         if (bound) {
-            bound = false
-            unbindPreview()
+            unbindSelectedSurface()
         }
     }
 
-    private fun terminalShutdownPreviewSession() {
-        shutdownPreviewSession()
+    private fun unbindSelectedSurface() {
+        bound = false
+        unbindPreview(selectedSurfaceView)
+    }
+
+    private fun retryRebindCallback(): () -> Unit {
+        val hostRef = WeakReference(this)
+        return {
+            val host = hostRef.get()
+            if (host != null) {
+                host.rootView.post {
+                    if (!host.destroyed) {
+                        host.bound = false
+                        host.maybeBindOfficialPreview()
+                    }
+                }
+            }
+        }
     }
 
     private fun selectOfficialSurface() {
@@ -139,6 +230,42 @@ internal class OfficialPreviewHost(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT,
     )
+}
+
+internal enum class OfficialPreviewHostCloseAction {
+    PRESERVE_HOST_AND_BINDING,
+    TRANSFER_OWNER_AND_COMMIT_DESTROYED_HOST,
+    KEEP_HOST_UNBOUND_AND_RETRY,
+    REBIND_CLOSED_HOST,
+    COMMIT_DESTROYED_HOST,
+}
+
+internal fun officialPreviewHostCloseAction(
+    result: F2StageResult,
+    terminalDestroy: Boolean,
+): OfficialPreviewHostCloseAction = when (result.closeOutcome) {
+    F2SessionCloseOutcome.STREAM_PRESERVED ->
+        if (terminalDestroy) {
+            OfficialPreviewHostCloseAction.TRANSFER_OWNER_AND_COMMIT_DESTROYED_HOST
+        } else {
+            OfficialPreviewHostCloseAction.PRESERVE_HOST_AND_BINDING
+        }
+    F2SessionCloseOutcome.STREAM_STOPPED_LOGIN_RETAINED ->
+        OfficialPreviewHostCloseAction.KEEP_HOST_UNBOUND_AND_RETRY
+    F2SessionCloseOutcome.CLOSED ->
+        if (terminalDestroy) {
+            OfficialPreviewHostCloseAction.COMMIT_DESTROYED_HOST
+        } else {
+            OfficialPreviewHostCloseAction.REBIND_CLOSED_HOST
+        }
+    F2SessionCloseOutcome.NOT_APPLICABLE ->
+        if (result.ok && terminalDestroy) {
+            OfficialPreviewHostCloseAction.COMMIT_DESTROYED_HOST
+        } else if (result.ok) {
+            OfficialPreviewHostCloseAction.REBIND_CLOSED_HOST
+        } else {
+            OfficialPreviewHostCloseAction.PRESERVE_HOST_AND_BINDING
+        }
 }
 
 data class OfficialPreviewBinding(

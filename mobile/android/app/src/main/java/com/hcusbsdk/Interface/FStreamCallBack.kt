@@ -1,5 +1,7 @@
 package com.hcusbsdk.Interface
 
-fun interface FStreamCallBack {
-    fun fStreamCallback(userId: Int, frameInfo: USB_FRAME_INFO?)
+import com.sun.jna.Callback
+
+fun interface FStreamCallBack : Callback {
+    fun invoke(userId: Int, frameInfo: USB_FRAME_INFO?)
 }

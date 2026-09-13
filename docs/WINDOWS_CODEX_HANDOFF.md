@@ -1,10 +1,16 @@
 # Windows Codex 인수인계 문서
 
-작성 기준: 2026-07-13
+작성 기준: 2026-07-14
 대상: 이 프로젝트를 처음 보는 Windows 쪽 Codex 또는 새 개발자
 목적: 프로젝트가 무엇인지, 어떤 파일을 실행해야 하는지, 어디를 수정해야 하는지 한 번에 이해하게 하는 문서
 
 더 긴 전체 현황은 `docs/PROJECT_STATUS_AND_REMAINING_WORK.md`에 있다. 이 문서는 먼저 읽는 빠른 인수인계 문서다.
+25 fps 수집 구조와 검증 수치는 `docs/LIVE_PERFORMANCE_VALIDATION.md`에 정리되어 있다.
+자동정지 구조와 재생 검증은 `docs/AUTO_STOP_VALIDATION.md`에 정리되어 있다.
+
+### 2026-07-14 자동정지 추가
+
+Windows 웹 앱에는 기본 OFF인 지속 색 변화 자동정지가 추가되었다. 구현은 `auto_titrator/auto_stop.py`, 서버 연결은 `tools/windows_live_collect.py`, UI는 `website/index.html`과 `website/app.js`에 있다. 일반 카메라 ROI의 초기색을 1초간 보정하고, 실시간 구간 분류기 점수와 실제 색 변화가 함께 확인된 뒤 색 변화가 0.4초 유지되면 펌프에 `c`를 보낸다. 감지·정지 시점과 명령 결과는 CSV에 남으며 이론 당량점은 정지 조건으로 사용하지 않는다.
 
 ## 0. 가장 먼저 알아야 할 결론
 
@@ -21,7 +27,7 @@
 - 녹화 종료 후 live 머신러닝 모델이 예측 당량점 부피를 계산한다.
 - 예측 당량점 부피로 농도와 예측 pH를 계산한다.
 
-현재 설계는 자동정지 장치가 아니다. 앱은 예측과 기록을 돕고, 펌프 시작과 정지는 사람이 버튼으로 한다.
+자동정지는 선택 기능이며 기본값은 꺼짐이다. 체크하지 않으면 펌프 시작과 정지는 사람이 버튼으로 수행한다. 체크하면 지속 색 변화가 확인될 때 앱이 정지 명령을 보내지만, 실제 습식 정지 정확도와 PC 장애 시 안전성은 아직 별도 검증 대상이다.
 
 ## 1. 현재 작업 폴더
 
@@ -450,32 +456,36 @@ weak_acid_weak_base
 
 ## 8. 머신러닝 상태
 
-현재 live 앱이 우선 사용하는 모델은 다음 파일이다.
+현재 실험 종료 후 최종 당량점 계산이 우선 사용하는 모델은 다음 파일이다.
 
 ```text
-data/labeled/typewise-current-volume-classifier.pkl
+data/labeled/type-conditioned-sensor-endpoint-ranker.pkl
 ```
 
 관련 코드:
 
 ```text
+auto_titrator/type_conditioned_sensor_live_model.py
 auto_titrator/typewise_live_model.py
+tools/export_type_conditioned_sensor_live_model.py
 tools/export_live_typewise_model.py
-tools/train_equivalence_current_volume.py
+tools/validate_optimized_endpoint_research.py
 tools/windows_live_collect.py
 ```
 
 현재 source 이름은 다음이다.
 
 ```text
-predicted_equivalence_source = typewise_frame_zone_classifier
+predicted_equivalence_source = type_conditioned_sensor_endpoint_ranker
 ```
 
 웹 UI에서는 이를 다음처럼 표시한다.
 
 ```text
-적정 종류별 분류 모델
+적정 종류별 시계열 모델
 ```
+
+완료된 CSV의 점 추정은 12개 leave-one-run-out 모델의 예측 중앙값으로 계산한다. 고밀도 25 fps 입력은 적정 종류별 학습 부피 간격으로 두 위상 재표본화한다. 색상·열화상 중 하나가 부족하거나 신호가 평탄하면 이 모델은 예측을 보류하고 기존 `typewise-current-volume-classifier.pkl` 또는 peak 추정으로 넘어간다. 선택형 자동 정지는 사후 시계열 모델이 아니라 기존 causal classifier를 계속 사용한다.
 
 현재 문서화된 개발셋 결과:
 
@@ -645,7 +655,7 @@ Android에서 Python pickle을 직접 쓰기는 어렵다. Mini2 호출 경로�
 - 포트가 collector 실행 후에 연결되었는지
 - collector가 재연결 중인지
 - 웹 버튼이 `a`, `b`, `c` 중 맞는 명령을 보내는지
-- `PUMP_START_COMMAND=b`, `PUMP_STOP_COMMAND=c` 설정이 맞는지
+- `PUMP_START_COMMAND=b`, `PUMP_RETRACT_COMMAND=a`, `PUMP_STOP_COMMAND=c` 설정이 맞는지
 
 ## 10.4 농도 계산창이 이상함
 

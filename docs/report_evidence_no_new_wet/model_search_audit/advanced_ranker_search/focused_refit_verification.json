@@ -1,0 +1,13 @@
+{
+  "seeds": [
+    42,
+    1729,
+    20260728
+  ],
+  "all_predictions_identical": true,
+  "matches_search_artifact": true,
+  "outer_test_excluded_each_refit": true,
+  "typewise_mape_percent": 0.3597911805555541,
+  "source_sha256": "51c7f3399827cf5f80049ca1ae42d1a924d15a00da25b877ea4438e83fe42efa",
+  "union_signature": "68c260454d67c0c71a786c53cf29e34faf1a10726da10381df3dc4e60b52dc2c"
+}

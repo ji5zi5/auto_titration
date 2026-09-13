@@ -1,0 +1,41 @@
+{
+  "status": "pass",
+  "strict": true,
+  "report_image_link_count": 24,
+  "figure_caption_count": 23,
+  "required_comparison_visual_count": 17,
+  "metrics": {
+    "final_model": {
+      "run_count": 12,
+      "mae_ml": 0.07754258333333297,
+      "rmse_ml": 0.09077263817592096,
+      "mape_percent": 0.2950000694444431
+    },
+    "manual_current": {
+      "run_count": 12,
+      "mae_ml": 0.6416666666666663,
+      "rmse_ml": 0.7499999999999994,
+      "mape_percent": 1.9999999999999993
+    },
+    "non_ml": {
+      "color_major_slope_mape_percent": 4.673611,
+      "color_thermal_threshold_mape_percent": 5.645833
+    },
+    "modality": {
+      "machine_learning_color": 1.552056,
+      "machine_learning_thermal": 3.661547,
+      "machine_learning_fusion": 1.524496
+    },
+    "repeatability": {
+      "n": 3,
+      "mean_M": 0.09351034000000001,
+      "sample_sd_M": 0.0008987749783316157,
+      "cv_percent": 0.9611503693940324,
+      "min_M": 0.09247738500000001,
+      "max_M": 0.094113705,
+      "range_M": 0.0016363199999999967
+    }
+  },
+  "errors": [],
+  "warnings": []
+}

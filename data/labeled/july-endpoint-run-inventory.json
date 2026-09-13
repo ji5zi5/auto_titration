@@ -1,0 +1,143 @@
+{
+  "schema_version": "july_endpoint_run_inventory_v1",
+  "archive": "Downloads.zip",
+  "archive_sha256": "1df438860117331df7b71317a9a1f14c4ae5b15ffe5a009b2b91593b20d4516b",
+  "loadable_run_count": 11,
+  "participant_designated_repeat_count": 3,
+  "selection_policy": "Sessions 5, 7, and 8 preserve the participant-designated same-solution set. No July run or prediction is used to select the deployed model.",
+  "accuracy_claim_allowed": false,
+  "runs": [
+    {
+      "source_file": "auto-titration-live-20260726-143037-session-2.csv",
+      "sha256": "6481b9a053a3f36b90fd180c10c0bcd2b32aafd9a5b4ce785839b7622fda453b",
+      "row_count": 333,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 31.695604,
+      "recorded_old_prediction_M_audit_only": "0.13360865",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-143757-session-3.csv",
+      "sha256": "e5b1bb3675c61cbf650f7391afc70f8d603671c22c5cb42aadbf9c6683c6a27e",
+      "row_count": 221,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 26.031216,
+      "recorded_old_prediction_M_audit_only": "0.10467191",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-145044-session-4.csv",
+      "sha256": "c584235cf0133430d62b6f4d05a1707e6e82d5ca00b887a1ddb9cd47c194e36c",
+      "row_count": 125,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 18.893486,
+      "recorded_old_prediction_M_audit_only": "0.05611216",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-150424-session-5.csv",
+      "sha256": "0d6c1ed610f9e2980fdecdb7bdeb1a128a1f72df3aa4fdbdd5871f4a49bdcd49",
+      "row_count": 131,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 22.931937,
+      "recorded_old_prediction_M_audit_only": "0.0823572",
+      "participant_designated_same_solution_repeat": true,
+      "analysis_scope": "descriptive_repeatability_only"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-150730-session-6.csv",
+      "sha256": "808df711311bfe80ae673dd7ced40a7aff587d52307d7780a7cf7489b92a4d1e",
+      "row_count": 144,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 26.759849,
+      "recorded_old_prediction_M_audit_only": "0.09677804",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-151233-session-7.csv",
+      "sha256": "7766babb2d5fb82ffbf7b317786d952afdbc48d83be2dd0973b4c427c51fefca",
+      "row_count": 130,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 24.915734,
+      "recorded_old_prediction_M_audit_only": "0.08891732",
+      "participant_designated_same_solution_repeat": true,
+      "analysis_scope": "descriptive_repeatability_only"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-151632-session-8.csv",
+      "sha256": "0682127be52ad8c412b107cc814bed0c0cfc648529a5ea427e6c0a2227430954",
+      "row_count": 132,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 24.731001,
+      "recorded_old_prediction_M_audit_only": "0.08511097",
+      "participant_designated_same_solution_repeat": true,
+      "analysis_scope": "descriptive_repeatability_only"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-152320-session-9.csv",
+      "sha256": "623118a863361cbddf0834d501767e6604a563ab893a7b8002b9868841996875",
+      "row_count": 39,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 9.371924,
+      "recorded_old_prediction_M_audit_only": "0.02866305",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-152654-session-10.csv",
+      "sha256": "f9bbbf416a9d55c2e3c5327f8323b7ccc2f0e3e00b1692a0ed0a00c82de3e28c",
+      "row_count": 64,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 13.156714,
+      "recorded_old_prediction_M_audit_only": "0.07471511",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-163815-session-11.csv",
+      "sha256": "42c9f7bbd3d936cc62f8cada293033e5cb18d1adea05fe1350528cc66386ff03",
+      "row_count": 57,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 19.604482,
+      "recorded_old_prediction_M_audit_only": "0.06059008",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    },
+    {
+      "source_file": "auto-titration-live-20260726-164113-session-12.csv",
+      "sha256": "88759bcfd24e598d933596529431be5fe10380ed78d396fdc60ba59fa09b55a7",
+      "row_count": 76,
+      "titration_type": "strong_acid_strong_base",
+      "recorded_indicator": "phenolphthalein",
+      "recorded_nominal_concentration_M": "0.1",
+      "recorded_max_injected_volume_ml": 22.637971,
+      "recorded_old_prediction_M_audit_only": "0.06940794",
+      "participant_designated_same_solution_repeat": false,
+      "analysis_scope": "inventory_only_not_used_for_model_selection_or_accuracy"
+    }
+  ]
+}

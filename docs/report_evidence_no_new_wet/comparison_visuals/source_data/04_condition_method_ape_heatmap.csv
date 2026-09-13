@@ -1,0 +1,85 @@
+﻿method,method_label,column,mape_or_ape_percent
+manual_current,수동 적정 (현재 기록),강-강 20,0.5000000000000071
+manual_current,수동 적정 (현재 기록),강-강 30,2.9999999999999956
+manual_current,수동 적정 (현재 기록),강-강 40,3.2499999999999933
+manual_current,수동 적정 (현재 기록),강-약 20,1.9999999999999927
+manual_current,수동 적정 (현재 기록),강-약 30,0.6666666666666643
+manual_current,수동 적정 (현재 기록),강-약 40,3.000000000000007
+manual_current,수동 적정 (현재 기록),약-강 20,2.5
+manual_current,수동 적정 (현재 기록),약-강 30,1.6666666666666667
+manual_current,수동 적정 (현재 기록),약-강 40,2.2499999999999964
+manual_current,수동 적정 (현재 기록),약-약 20,0.5000000000000071
+manual_current,수동 적정 (현재 기록),약-약 30,2.6666666666666687
+manual_current,수동 적정 (현재 기록),약-약 40,1.9999999999999927
+color_major_slope,색상 기울기 (비ML),강-강 20,1.9999999999999927
+color_major_slope,색상 기울기 (비ML),강-강 30,1.6666666666666667
+color_major_slope,색상 기울기 (비ML),강-강 40,0.25000000000000355
+color_major_slope,색상 기울기 (비ML),강-약 20,7.5
+color_major_slope,색상 기울기 (비ML),강-약 30,4.333333333333336
+color_major_slope,색상 기울기 (비ML),강-약 40,3.499999999999996
+color_major_slope,색상 기울기 (비ML),약-강 20,23.000000000000007
+color_major_slope,색상 기울기 (비ML),약-강 30,9.333333333333336
+color_major_slope,색상 기울기 (비ML),약-강 40,1.750000000000007
+color_major_slope,색상 기울기 (비ML),약-약 20,0.5000000000000071
+color_major_slope,색상 기울기 (비ML),약-약 30,1.0000000000000024
+color_major_slope,색상 기울기 (비ML),약-약 40,1.25
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),강-강 20,0.9999999999999963
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),강-강 30,3.9999999999999973
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),강-강 40,10.500000000000007
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),강-약 20,1.9999999999999927
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),강-약 30,0.0
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),강-약 40,22.000000000000004
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),약-강 20,7.5
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),약-강 30,0.3333333333333381
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),약-강 40,6.750000000000007
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),약-약 20,0.5000000000000071
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),약-약 30,0.6666666666666643
+color_thermal_adaptive_threshold,색상+열 임계값 (비ML),약-약 40,12.5
+machine_learning_color,색상 ML (이전 파이프라인),강-강 20,0.05969000000000335
+machine_learning_color,색상 ML (이전 파이프라인),강-강 30,1.6855133333333328
+machine_learning_color,색상 ML (이전 파이프라인),강-강 40,2.097832499999992
+machine_learning_color,색상 ML (이전 파이프라인),강-약 20,0.363509999999998
+machine_learning_color,색상 ML (이전 파이프라인),강-약 30,1.5276033333333316
+machine_learning_color,색상 ML (이전 파이프라인),강-약 40,3.523704999999992
+machine_learning_color,색상 ML (이전 파이프라인),약-강 20,0.9089849999999977
+machine_learning_color,색상 ML (이전 파이프라인),약-강 30,1.7379399999999972
+machine_learning_color,색상 ML (이전 파이프라인),약-강 40,1.306067500000001
+machine_learning_color,색상 ML (이전 파이프라인),약-약 20,0.0511000000000017
+machine_learning_color,색상 ML (이전 파이프라인),약-약 30,1.0486933333333326
+machine_learning_color,색상 ML (이전 파이프라인),약-약 40,4.3140350000000005
+machine_learning_thermal,열 ML (이전 파이프라인),강-강 20,0.29977499999999324
+machine_learning_thermal,열 ML (이전 파이프라인),강-강 30,3.4404666666666612
+machine_learning_thermal,열 ML (이전 파이프라인),강-강 40,0.10689749999999165
+machine_learning_thermal,열 ML (이전 파이프라인),강-약 20,2.668324999999996
+machine_learning_thermal,열 ML (이전 파이프라인),강-약 30,0.43888000000000227
+machine_learning_thermal,열 ML (이전 파이프라인),강-약 40,2.6472550000000084
+machine_learning_thermal,열 ML (이전 파이프라인),약-강 20,11.929925000000008
+machine_learning_thermal,열 ML (이전 파이프라인),약-강 30,1.621853333333334
+machine_learning_thermal,열 ML (이전 파이프라인),약-강 40,1.554897499999992
+machine_learning_thermal,열 ML (이전 파이프라인),약-약 20,11.363415000000003
+machine_learning_thermal,열 ML (이전 파이프라인),약-약 30,7.6585000000000045
+machine_learning_thermal,열 ML (이전 파이프라인),약-약 40,0.20837249999999585
+machine_learning_fusion,융합 ML (이전 파이프라인),강-강 20,0.29977499999999324
+machine_learning_fusion,융합 ML (이전 파이프라인),강-강 30,0.3391199999999964
+machine_learning_fusion,융합 ML (이전 파이프라인),강-강 40,0.10689749999999165
+machine_learning_fusion,융합 ML (이전 파이프라인),강-약 20,0.8482000000000055
+machine_learning_fusion,융합 ML (이전 파이프라인),강-약 30,0.29243999999999676
+machine_learning_fusion,융합 ML (이전 파이프라인),강-약 40,1.7650350000000081
+machine_learning_fusion,융합 ML (이전 파이프라인),약-강 20,0.1945850000000071
+machine_learning_fusion,융합 ML (이전 파이프라인),약-강 30,8.440306666666663
+machine_learning_fusion,융합 ML (이전 파이프라인),약-강 40,1.0091949999999983
+machine_learning_fusion,융합 ML (이전 파이프라인),약-약 20,0.5724149999999995
+machine_learning_fusion,융합 ML (이전 파이프라인),약-약 30,3.122770000000005
+machine_learning_fusion,융합 ML (이전 파이프라인),약-약 40,1.3032175000000024
+current_final_model,최종 선택 모델 (현재),강-강 20,0.29977499999999324
+current_final_model,최종 선택 모델 (현재),강-강 30,0.3391199999999964
+current_final_model,최종 선택 모델 (현재),강-강 40,0.10689749999999165
+current_final_model,최종 선택 모델 (현재),강-약 20,0.5704449999999994
+current_final_model,최종 선택 모델 (현재),강-약 30,0.25349333333333374
+current_final_model,최종 선택 모델 (현재),강-약 40,0.12311000000000405
+current_final_model,최종 선택 모델 (현재),약-강 20,0.03717999999999222
+current_final_model,최종 선택 모델 (현재),약-강 30,0.40386666666666576
+current_final_model,최종 선택 모델 (현재),약-강 40,0.04721999999999227
+current_final_model,최종 선택 모델 (현재),약-약 20,0.7806350000000073
+current_final_model,최종 선택 모델 (현재),약-약 30,0.4823433333333326
+current_final_model,최종 선택 모델 (현재),약-약 40,0.09591500000000863

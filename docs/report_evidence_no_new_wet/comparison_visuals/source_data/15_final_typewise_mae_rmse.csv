@@ -1,0 +1,5 @@
+﻿titration_type,titration_type_ko,mae_ml,rmse_ml,run_count
+strong_acid_strong_base,강산-강염기,0.06815,0.07251,3
+strong_acid_weak_base,강산-약염기,0.079794,0.084112,3
+weak_acid_strong_base,약산-강염기,0.049161,0.070927,3
+weak_acid_weak_base,약산-약염기,0.113065,0.124882,3

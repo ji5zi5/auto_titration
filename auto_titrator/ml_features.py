@@ -49,6 +49,63 @@ DERIVED_ML_COLUMNS = [
 _HUE_COLUMNS = {"visible_H_mean"}
 
 
+def select_online_history_rows(
+    history_rows: Sequence[Mapping[str, Any]],
+    current_row: Mapping[str, Any],
+    *,
+    window_s: float = 1.0,
+    baseline_s: float = 1.0,
+) -> list[Mapping[str, Any]]:
+    """Return only history needed by :func:`derive_ml_features`.
+
+    Live runs can contain thousands of rows.  The derived features only use the
+    first baseline window and the most recent rolling window, so rescanning and
+    sorting the complete run on every frame is unnecessary quadratic work.
+    ``history_rows`` is expected in capture order, as produced by the collector.
+    """
+
+    if not history_rows:
+        return []
+    current_time = _row_time(current_row)
+    if current_time is None:
+        return list(history_rows[-2:])
+
+    first_time: float | None = None
+    baseline: list[Mapping[str, Any]] = []
+    baseline_limit = max(0.0, float(baseline_s))
+    for row in history_rows:
+        row_time = _row_time(row)
+        if row_time is None:
+            continue
+        if first_time is None:
+            first_time = row_time
+        if row_time <= first_time + baseline_limit:
+            baseline.append(row)
+            continue
+        break
+
+    recent: list[Mapping[str, Any]] = []
+    window_start = current_time - max(0.0, float(window_s))
+    for row in reversed(history_rows):
+        row_time = _row_time(row)
+        if row_time is None:
+            continue
+        if row_time < window_start:
+            break
+        recent.append(row)
+    recent.reverse()
+
+    selected: list[Mapping[str, Any]] = []
+    seen: set[int] = set()
+    for row in [*baseline, *recent]:
+        identity = id(row)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        selected.append(row)
+    return selected
+
+
 def derive_ml_features(
     history_rows: Sequence[Mapping[str, Any]],
     current_row: Mapping[str, Any],

@@ -26,10 +26,22 @@ class G007PreviewInitClosureTest {
     }
 
     @Test
-    fun l0UsesDirectSupportApisAndRegistersLifecycleAfterPlaybackListener() {
+    fun l0UsesOfficialSupportApisAndRevalidatesSnapshotsBeforeLifecycleDispatch() {
         val l0 = body(preview, "    public final void l0(View viewerRootView", "    private V2.f bindOfficialRenderer")
         assertTrue(l0.contains("F1UsbModuleHelper.INSTANCE.USB_SetYuvSize(t);"))
-        assertOrdered(l0, "E.b(new PreviewManagerII\$f(this))", "a.addObserver(B)")
+        assertFalse(l0.contains("E.b("))
+        assertOrdered(
+            l0,
+            "bindOfficialRenderer(viewerSurfaceView, useM4);",
+            "renderer = E;",
+            "selectedRendererEpoch = rendererEpoch;",
+            "lifecycle = a;",
+            "if (renderer != null && isRendererCurrent(selectedRendererEpoch, renderer))",
+            "if (isRendererCurrent(selectedRendererEpoch, renderer))",
+            "renderer.b(new PreviewManagerII\$f(this));",
+            "if (initializeGraph && lifecycle != null && isLifecycleCurrent(lifecycle))",
+            "lifecycle.addObserver(B);",
+        )
         val playbackListener = source("com/hik/viewer/manager/PreviewManagerII\$f.java")
         assertTrue(playbackListener.contains("implements com.hik.library.player.b"))
         assertTrue(playbackListener.contains("@Override public void a(){}"))
@@ -62,10 +74,17 @@ class G007PreviewInitClosureTest {
     @Test
     fun u0KeepsTheOfficialReleaseAndStateClearingOrder() {
         val u0 = body(preview, "    public final void u0()", "    void G(byte[] packet)")
+        assertFalse(u0.contains("E.c()"))
+        assertFalse(u0.contains("E.release()"))
         assertOrdered(
             u0,
-            "if (E != null) E.c();",
-            "if (E != null) E.release();",
+            "synchronized (lifecycleLock)",
+            "processingEpoch++;",
+            "streamClosed = true;",
+            "usbTransitionSuspended = false;",
+            "rendererEpoch++;",
+            "lifecycleBindingEpoch++;",
+            "renderer = E;",
             "E = null;",
             "B0 = null",
             "C0 = null",
@@ -73,24 +92,38 @@ class G007PreviewInitClosureTest {
             "Y = null",
             "Z = null",
             "a0 = null",
+            "invalidPacketSizeTimeoutCallback = null",
             "b0 = null",
             "c0 = null",
             "d0 = null",
             "e0 = null",
             "f0 = null",
             "h0 = null",
-            "if (D != null) D.k();",
+            "processor = D;",
             "D = null;",
-            "if (C != null) C.shutdownNow();",
+            "captureProcessorProfile(null);",
+            "callbackExecutor = C;",
             "C = null;",
-            "e1();",
+            "scheduler = x0;",
+            "x0 = null;",
             "q0 = true;",
             "m0 = true;",
+            "previewGraphInitialized = false;",
             "G = null",
             "H = null",
             "I = null",
             "J = null",
-            "K.removeCallbacksAndMessages(null);",
+            "firstCallbackAtMs = 0L;",
+            "lastCallbackAtMs = 0L;",
+            "handler = K;",
+            "if (renderer != null)",
+            "renderer.c();",
+            "renderer.release();",
+            "if (processor != null) processor.k();",
+            "if (callbackExecutor != null) callbackExecutor.shutdownNow();",
+            "if (scheduler != null) scheduler.shutdownNow();",
+            "if (handler != null)",
+            "handler.removeCallbacksAndMessages(null);",
         )
     }
 
@@ -100,8 +133,54 @@ class G007PreviewInitClosureTest {
         listOf("officialFloatTexturePosition", "moveBy", "moveTo", "updateParentBounds", "currentGravity(): Int").forEach {
             assertFalse(floatView.contains(it))
         }
-        assertEquals(1, Regex("rendererOrNullJ\\(renderer, transformedNv12,").findAll(preview).count())
-        assertEquals(1, Regex("renderer\\.h\\(null, transformedNv12,").findAll(preview).count())
+        assertTrue(floatView.contains("override fun performClick(): Boolean"))
+        assertTrue(floatView.contains("return super.performClick()"))
+        assertOrdered(
+            floatView,
+            "MotionEvent.ACTION_UP -> {",
+            "val targetGravity = gravity()",
+            "d(targetGravity, true)",
+            "e?.invoke(targetGravity)",
+            "performClick()",
+            "true",
+        )
+        val handoff = body(preview, "    private void handOffOfficialFrame(", "    private void recordOfficialPacket")
+        assertFalse(handoff.contains("rendererOrNullJ"))
+        assertFalse(handoff.contains("rendererOrNullH"))
+        assertOrdered(
+            handoff,
+            "synchronized (lifecycleLock)",
+            "if (!isProcessingEpochCurrentLocked(frame.processingEpoch)) return;",
+            "handoff = new FrameHandoff(",
+            "E,",
+            "rendererEpoch,",
+            "if (isRendererDispatchCurrent(",
+            "frame.processingEpoch,",
+            "handoff.rendererEpoch,",
+            "handoff.renderer))",
+            "if (handoff.directRendererPath)",
+            "handoff.renderer.j(",
+            "} else {",
+            "handoff.renderer.h(",
+            "if (handoff.frameNumberCallback != null",
+            "&& isProcessingEpochCurrent(frame.processingEpoch))",
+            "handoff.frameNumberCallback.invoke(handoff.frameNumStamp);",
+        )
+        assertEquals(1, Regex("handoff\\.renderer\\.j\\(").findAll(handoff).count())
+        assertEquals(1, Regex("handoff\\.renderer\\.h\\(").findAll(handoff).count())
+        val rendererGuard = body(
+            preview,
+            "    private boolean isRendererDispatchCurrent(",
+            "    private boolean isRendererCurrent(",
+        )
+        assertOrdered(
+            rendererGuard,
+            "synchronized (lifecycleLock)",
+            "isProcessingEpochCurrentLocked(expectedProcessingEpoch)",
+            "rendererEpoch == expectedRendererEpoch",
+            "E == expectedRenderer",
+            "expectedRenderer != null",
+        )
     }
 
     @Test

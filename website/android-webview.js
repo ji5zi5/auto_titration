@@ -7,6 +7,7 @@
   const MAX_VISIBLE_MINI2_DIAGNOSTIC_CHARS = 420;
   const MINI2_OFFICIAL_PRIMARY_MODE = 'OFFICIAL_PRIMARY';
   const MINI2_MANUAL_PROBE_MIN_INTERVAL_MS = 10000;
+  const ANDROID_AUTO_STOP_UNSUPPORTED_MESSAGE = '자동 정지·미세 주입은 Windows 수집기에서만 지원';
   let mini2ManualProbePromptShown = false;
   let mini2ManualProbeInFlight = false;
   let lastMini2ManualProbeAt = 0;
@@ -77,10 +78,100 @@
   }
 
   function androidFiniteNumberOrNull(value) {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'string' && value.trim() === '') return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  function androidSafeFrameCounterOrNull(value) {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
+  function androidOfficialTemperatureSummaryFrom(source = {}, sourceFrameCounter) {
+    if (!isAndroidPlainObject(source)) return null;
+    const status = firstAndroidValue(source.official_measurement_status);
+    const provenance = firstAndroidValue(source.official_temperature_provenance);
+    const scope = firstAndroidValue(source.official_temperature_scope);
+    const fullMatrixAllowed = firstAndroidValue(source.official_full_matrix_celsius_allowed);
+    const avg = androidFiniteNumberOrNull(source.official_temperature_avg_c);
+    const min = androidFiniteNumberOrNull(source.official_temperature_min_c);
+    const max = androidFiniteNumberOrNull(source.official_temperature_max_c);
+    const center = androidFiniteNumberOrNull(source.official_temperature_center_c);
+    const sourceCounter = androidSafeFrameCounterOrNull(sourceFrameCounter);
+    const measurementCounter = androidSafeFrameCounterOrNull(source.official_measurement_frame_counter);
+    if (
+      status !== 'READY' ||
+      provenance !== 'official_f2_analyzer_measurement_stats' ||
+      !['fullscreen', 'rectangle'].includes(scope) ||
+      fullMatrixAllowed !== false ||
+      avg === null ||
+      min === null ||
+      max === null ||
+      min > avg ||
+      avg > max ||
+      (center !== null && (center < min || center > max)) ||
+      sourceCounter === null ||
+      measurementCounter === null ||
+      measurementCounter > sourceCounter
+    ) {
+      return null;
+    }
+
+    const computedAgeFrames = sourceCounter - measurementCounter;
+    const publishedMatchesCurrentFrame = source.official_measurement_matches_current_frame;
+    const publishedTemporalScope = firstAndroidValue(source.official_measurement_temporal_scope);
+    const publishedAgeFrames = androidSafeFrameCounterOrNull(source.official_measurement_age_frames);
+    const isCurrentFrame = computedAgeFrames === 0
+      && publishedMatchesCurrentFrame === true
+      && publishedTemporalScope === 'current_frame'
+      && publishedAgeFrames === 0;
+    const isLastCompletedMeasurement = computedAgeFrames > 0
+      && publishedMatchesCurrentFrame === false
+      && publishedTemporalScope === 'last_completed_measurement'
+      && publishedAgeFrames === computedAgeFrames;
+    if (!isCurrentFrame && !isLastCompletedMeasurement) return null;
+
+    const officialFields = {
+      official_measurement_status: status,
+      official_measurement_reason: firstAndroidValue(source.official_measurement_reason),
+      official_measurement_frame_counter: measurementCounter,
+      official_temperature_avg_c: avg,
+      official_temperature_min_c: min,
+      official_temperature_max_c: max,
+      official_temperature_center_c: center,
+      official_temperature_provenance: 'official_f2_analyzer_measurement_stats',
+      official_temperature_scope: scope,
+      official_measurement_matches_current_frame: isCurrentFrame,
+      official_measurement_temporal_scope: isCurrentFrame ? 'current_frame' : 'last_completed_measurement',
+      official_measurement_age_frames: computedAgeFrames,
+      official_full_matrix_celsius_allowed: false,
+    };
+    if (!isCurrentFrame) return officialFields;
+    return {
+      ...officialFields,
+      celsius_allowed: true,
+      temperature_avg_c: avg,
+      temperature_min_c: min,
+      temperature_max_c: max,
+      temperature_center_c: center,
+      temperature_delta_c: max - min,
+      temperature_provenance: 'official_f2_analyzer_measurement_stats',
+      temperature_scope: scope,
+      temperature_source: 'official_f2_analyzer_measurement_stats',
+      full_matrix_celsius_allowed: false,
+      full_matrix_temperature_status: 'unproved_not_emitted',
+    };
+  }
+
+  function androidCurrentOfficialTemperatureSummaryFrom(source = {}, sourceFrameCounter) {
+    const parsed = androidOfficialTemperatureSummaryFrom(source, sourceFrameCounter);
+    if (
+      !parsed ||
+      parsed.official_measurement_matches_current_frame !== true ||
+      parsed.official_measurement_temporal_scope !== 'current_frame' ||
+      parsed.official_measurement_age_frames !== 0
+    ) {
+      return null;
+    }
+    return parsed;
   }
 
   function androidTemperatureSummaryFrom(source = {}) {
@@ -100,7 +191,9 @@
       celsiusAllowed !== true ||
       fullMatrixAllowed === true ||
       provenance !== 'device_global_summary' ||
-      scope !== 'device_global_summary'
+      scope !== 'device_global_summary' ||
+      min > avg ||
+      avg > max
     ) {
       return null;
     }
@@ -122,14 +215,16 @@
     };
   }
 
-  function trustedAndroidDeviceGlobalTemperature(payload = {}) {
+  function trustedAndroidTemperature(payload = {}) {
     const mini2 = payload.mini2 || {};
     const rawStream = isAndroidPlainObject(mini2.raw_stream) ? mini2.raw_stream : {};
     const live = isAndroidPlainObject(payload.live) ? payload.live : {};
-    return androidTemperatureSummaryFrom(live)
-      || androidTemperatureSummaryFrom(rawStream)
-      || androidTemperatureSummaryFrom(rawStream.temperature_summary)
-      || androidTemperatureSummaryFrom(mini2.temperature_summary);
+    return androidCurrentOfficialTemperatureSummaryFrom(live, live.thermal_frame_counter)
+      || androidCurrentOfficialTemperatureSummaryFrom(rawStream, rawStream.frame_counter);
+  }
+
+  function trustedAndroidDeviceGlobalTemperature(payload = {}) {
+    return trustedAndroidTemperature(payload);
   }
 
   function androidRegexValue(text, pattern) {
@@ -172,7 +267,7 @@
     const live = isAndroidPlainObject(payload.live) ? { ...payload.live } : payload.live;
     const roi = isAndroidPlainObject(payload.roi) ? { ...payload.roi } : payload.roi;
     const rawMatrixReady = hasProvenAndroidRawMatrix(payload);
-    const trustedGlobalTemperature = trustedAndroidDeviceGlobalTemperature(payload);
+    const trustedGlobalTemperature = trustedAndroidTemperature(payload);
     if (isAndroidPlainObject(live)) {
       if (!rawMatrixReady) {
         live.thermal_roi_ready = false;
@@ -199,8 +294,14 @@
     return clean;
   }
 
-  function classifyMini2StageReport(stageReport, reason = '') {
+  function classifyMini2StageReport(stageReport, reason = '', structuredEvidence = {}) {
     const text = `${stageReport || ''} ${reason || ''}`;
+    const nativeStartSucceeded = /USB_StartStreamCallback=ok|startStreamPreview resultCode=1 channel=\d+/i.test(text);
+    const dispatchedCallbackCount = Number(structuredEvidence.dispatchedCallbackCount || 0);
+    const callbackEntryDetail = String(structuredEvidence.callbackEntryDetail || '');
+    const frameCounter = Number(structuredEvidence.frameCounter || 0);
+    const postStartState = String(structuredEvidence.postStartState || '');
+    const invalidPacketSizeTimeout = structuredEvidence.invalidPacketSizeTimeout;
     if (/USB permission denied|mini2_usb_permission["']?\\s*[:=]\\s*false|permission_state["']?\\s*[:=]\\s*denied/i.test(text)) {
       return 'usb_permission_denied_before_native_stream';
     }
@@ -209,6 +310,33 @@
     }
     if (/passive status polling|official HCUSBSDK\/JNI stream is not started/i.test(text)) {
       return 'manual_probe_not_run_passive_status_guard';
+    }
+    if (nativeStartSucceeded && frameCounter > 0) {
+      return 'official_frame_observed';
+    }
+    if (
+      nativeStartSucceeded
+      && frameCounter <= 0
+      && (
+        Boolean(invalidPacketSizeTimeout)
+        || postStartState === 'native_start_accepted_callback_invalid_packet_size_timeout'
+      )
+    ) {
+      return 'native_start_accepted_callback_invalid_packet_size_timeout';
+    }
+    if (
+      nativeStartSucceeded
+      && frameCounter <= 0
+      && dispatchedCallbackCount > 0
+      && /(?:^|\s)disposition=dispatched(?:\s|$)/.test(callbackEntryDetail)
+    ) {
+      return 'callback_packet_observed_official_handoff_missing';
+    }
+    if (nativeStartSucceeded && /no_callback_entry/i.test(text) && /blocked_native_stream|stalled_without_frame|timed out|no frame callback/i.test(text)) {
+      return 'native_start_succeeded_no_java_callback';
+    }
+    if (nativeStartSucceeded && /no_callback_entry|waiting for (?:first )?(?:USB_FRAME_INFO|Java|JNI)?\s*callback|stream_attempt_started/i.test(text)) {
+      return 'native_start_succeeded_waiting_for_java_callback';
     }
     if (/USB_SET_THERMAL_STREAM_PARAM=failed_nonfatal.*official_continue_after_thermal_param_result/i.test(text)) {
       return 'thermal_stream_param_nonfatal_waiting_for_frame';
@@ -240,20 +368,59 @@
     const rawStream = isAndroidPlainObject(mini2.raw_stream) ? mini2.raw_stream : {};
     const explicitLastStreamAttempt = isAndroidPlainObject(mini2.last_stream_attempt) ? mini2.last_stream_attempt : {};
     const hasExplicitLastStreamAttempt = Object.keys(explicitLastStreamAttempt).length > 0;
-    const lastAttempt = hasExplicitLastStreamAttempt ? explicitLastStreamAttempt : rawStream;
+    const hasCurrentRawStream = Object.keys(rawStream).length > 0;
+    const diagnosticStream = hasCurrentRawStream ? rawStream : explicitLastStreamAttempt;
+    const lastAttempt = hasExplicitLastStreamAttempt ? explicitLastStreamAttempt : diagnosticStream;
     const currentPresence = isAndroidPlainObject(mini2.current_usb_presence) ? mini2.current_usb_presence : {};
-    const streamDiagnostics = lastAttempt.stream_diagnostics || rawStream.stream_diagnostics || {};
-    const stageReport = lastAttempt.stage_report || lastAttempt.raw_stage_report || rawStream.stage_report || rawStream.raw_stage_report || live.mini2_stage_report || '';
-    const attempt = lastAttempt.attempt_diagnostics?.[0]
+    const streamDiagnostics = diagnosticStream.stream_diagnostics || {};
+    const stageReport = diagnosticStream.stage_report || diagnosticStream.raw_stage_report || live.mini2_stage_report || '';
+    const attempt = diagnosticStream.attempt_diagnostics?.[0]
       || streamDiagnostics.attempt_diagnostics?.[0]
-      || rawStream.attempt_diagnostics?.[0]
-      || rawStream.stream_diagnostics?.attempt_diagnostics?.[0]
       || {};
     const lastAttemptRoute = lastAttempt.device_route || rawStream.device_route || live.mini2_device_route || '';
     const currentPresenceRoute = currentPresence.device_route || currentPresence.route_reason || mini2.mini2_route_reason || '';
-    const route = lastAttemptRoute || currentPresenceRoute;
+    const route = diagnosticStream.device_route || live.mini2_device_route || lastAttemptRoute || currentPresenceRoute;
     const routeMatch = String(route).match(/(\d+)\s*[:/]\s*(\d+)/);
-    const classification = classifyMini2StageReport(stageReport, lastAttempt.reason || rawStream.reason || mini2.mini2_reason || live.mini2_reason);
+    const callbackEntryDetail = firstAndroidValue(
+      diagnosticStream.java_interface_callback_entry_detail,
+      streamDiagnostics.java_interface_callback_entry_detail,
+    );
+    const classificationReason = [
+      diagnosticStream.reason || mini2.mini2_reason || live.mini2_reason,
+      callbackEntryDetail,
+    ].filter(Boolean).join(' ');
+    const callbackEntryCount = Number(firstAndroidValue(
+      diagnosticStream.java_interface_dispatched_callback_count,
+      streamDiagnostics.java_interface_dispatched_callback_count,
+      diagnosticStream.java_interface_callback_entry_count,
+      streamDiagnostics.java_interface_callback_entry_count,
+      0,
+    ));
+    const postStartState = firstAndroidValue(
+      diagnosticStream.post_start_state,
+      diagnosticStream.stream_post_start_state,
+      streamDiagnostics.post_start_state,
+      streamDiagnostics.stream_post_start_state,
+    );
+    const frameCounter = Number(firstAndroidValue(
+      diagnosticStream.frame_counter,
+      live.thermal_frame_counter,
+      0,
+    ));
+    const invalidPacketSizeTimeout = firstAndroidValue(
+      diagnosticStream.invalid_packet_size_timeout,
+      streamDiagnostics.invalid_packet_size_timeout,
+    );
+    const diagnosticClassification = classifyMini2StageReport(stageReport, classificationReason, {
+      dispatchedCallbackCount: callbackEntryCount,
+      callbackEntryDetail,
+      postStartState,
+      frameCounter,
+      invalidPacketSizeTimeout,
+    });
+    const classification = hasCurrentRawStream
+      ? diagnosticClassification
+      : (hasExplicitLastStreamAttempt ? 'historical_last_attempt_only' : diagnosticClassification);
     const selectedProfile = firstAndroidValue(
       attempt.profile_class,
       attempt.selected_profile,
@@ -263,16 +430,14 @@
       androidRegexValue(stageReport, /selectedProfile=([^;\s]+)/i),
     );
     const packetClassification = firstAndroidValue(
-      lastAttempt.packet_classification,
-      rawStream.packet_classification,
+      diagnosticStream.packet_classification,
       live.packet_classification,
-      androidRegexValue(lastAttempt.reason || rawStream.reason || live.mini2_reason || stageReport, /packet_classification=([^;\s]+)/i),
+      androidRegexValue(diagnosticStream.reason || live.mini2_reason || stageReport, /packet_classification=([^;\s]+)/i),
     );
     const packetStatus = firstAndroidValue(
-      lastAttempt.packet_status,
-      rawStream.packet_status,
+      diagnosticStream.packet_status,
       live.packet_status,
-      androidRegexValue(lastAttempt.reason || rawStream.reason || live.mini2_reason || stageReport, /packet_status=([^;\s]+)/i),
+      androidRegexValue(diagnosticStream.reason || live.mini2_reason || stageReport, /packet_status=([^;\s]+)/i),
     );
     const converterValidation = {
       celsiusAllowed: firstAndroidValue(live.celsius_allowed, rawStream.celsius_allowed, mini2.celsius_allowed),
@@ -287,26 +452,32 @@
       currentPresenceRoute,
       vid: mini2.vid || mini2.vendor_id || currentPresence.vid || currentPresence.vendor_id || routeMatch?.[1] || '',
       pid: mini2.pid || mini2.product_id || currentPresence.pid || currentPresence.product_id || routeMatch?.[2] || '',
-      fd: attempt.fd ?? lastAttempt.fd ?? rawStream.fd ?? '',
-      userId: attempt.userId ?? attempt.user_id ?? lastAttempt.userId ?? lastAttempt.user_id ?? rawStream.userId ?? rawStream.user_id ?? '',
-      channel: attempt.channel ?? lastAttempt.channel ?? rawStream.channel ?? '',
+      fd: attempt.fd ?? diagnosticStream.fd ?? '',
+      userId: attempt.userId ?? attempt.user_id ?? diagnosticStream.userId ?? diagnosticStream.user_id ?? '',
+      channel: attempt.channel ?? diagnosticStream.channel ?? '',
       startMode: attempt.startMode || attempt.start_mode || '',
       videoFormat: attempt.videoFormat ?? attempt.video_format ?? '',
       callbackStreamType: attempt.callbackStreamType ?? attempt.callback_stream_type ?? '',
       setVideoStatus: attempt.setVideoStatus || attempt.set_video_status || '',
-      startStatus: attempt.startStatus || attempt.start_status || lastAttempt.raw_stream_status || rawStream.raw_stream_status || '',
+      startStatus: attempt.startStatus || attempt.start_status || diagnosticStream.raw_stream_status || '',
       lastError: attempt.lastError ?? attempt.last_error ?? '',
       selectedProfile,
       packetClassification,
       packetStatus,
+      callbackEntryCount,
+      postStartState,
+      invalidPacketSizeTimeout,
       converterValidation,
-      error84_after_video_ok: Boolean(lastAttempt.error84_after_video_ok || streamDiagnostics.error84_after_video_ok || classification === 'callback_start_failed_error84_after_video_ok'),
-      official_wrapper_parity_ok: lastAttempt.official_wrapper_parity_ok ?? streamDiagnostics.official_wrapper_parity_ok ?? false,
-      official_wrapper_parity: lastAttempt.official_wrapper_parity || streamDiagnostics.official_wrapper_parity || {},
-      converterStatus: lastAttempt.converter_status || streamDiagnostics.converter_status || rawStream.converter_status || rawStream.stream_diagnostics?.converter_status || 'converter_status_secondary_not_raw_stream_blocker',
+      error84_after_video_ok: Boolean(diagnosticStream.error84_after_video_ok || streamDiagnostics.error84_after_video_ok || classification === 'callback_start_failed_error84_after_video_ok'),
+      official_wrapper_parity_ok: diagnosticStream.official_wrapper_parity_ok ?? streamDiagnostics.official_wrapper_parity_ok ?? false,
+      official_wrapper_parity: diagnosticStream.official_wrapper_parity || streamDiagnostics.official_wrapper_parity || {},
+      converterStatus: diagnosticStream.converter_status || streamDiagnostics.converter_status || 'converter_status_secondary_not_raw_stream_blocker',
       rawStageReport: stageReport,
       currentUsbPresence: currentPresence,
       lastStreamAttempt: lastAttempt,
+      diagnosticStream,
+      diagnosticClassification,
+      diagnosticStreamIsCurrent: hasCurrentRawStream,
       hasExplicitLastStreamAttempt,
       runtimeMode: mini2.mini2_last_stream_probe_mode || mini2.mini2_runtime_mode || MINI2_OFFICIAL_PRIMARY_MODE,
     };
@@ -475,8 +646,35 @@
     return number;
   }
 
+  function stripUnsupportedAndroidAutoStopConfig(payload = {}) {
+    return Object.fromEntries(
+      Object.entries(payload).filter(([key]) => !key.startsWith('auto_stop_')),
+    );
+  }
+
+  function configureAndroidUnsupportedAutoStop() {
+    const input = $android('autoStopEnabledInput');
+    if (input) {
+      input.checked = false;
+      input.disabled = true;
+      input.setAttribute?.('aria-describedby', 'autoStopSupportNotice');
+      const controlLabel = input.closest?.('label');
+      if (controlLabel?.dataset) controlLabel.dataset.androidUnsupported = 'true';
+      const optionLabel = controlLabel?.querySelector?.('strong');
+      if (optionLabel) optionLabel.textContent = 'Android에서 사용할 수 없음';
+      let notice = $android('autoStopSupportNotice');
+      if (!notice && controlLabel?.appendChild) {
+        notice = document.createElement('small');
+        notice.id = 'autoStopSupportNotice';
+        controlLabel.appendChild(notice);
+      }
+      if (notice) notice.textContent = ANDROID_AUTO_STOP_UNSUPPORTED_MESSAGE;
+    }
+    setAndroidText('autoStopStatus', 'Windows 수집기에서만 지원');
+  }
+
   function buildAndroidRecordingConfig() {
-    const payload = typeof buildPumpTimelineStartPayload === 'function'
+    const sharedPayload = typeof buildPumpTimelineStartPayload === 'function'
       ? buildPumpTimelineStartPayload()
       : {
           titration_type: $android('titrationTypeSelect')?.value,
@@ -488,6 +686,7 @@
           theoretical_equivalence_volume_ml: $android('theoryEquivalenceInput')?.value,
           pump_rate_ml_per_s: $android('pumpRateInput')?.value,
         };
+    const payload = stripUnsupportedAndroidAutoStopConfig(sharedPayload);
     const config = {
       ...payload,
       titration_type: requireAndroidNonBlank(payload.titration_type, '적정 종류'),
@@ -613,6 +812,7 @@
       if (button) button.disabled = false;
     });
     simplifyAndroidRoiControls();
+    configureAndroidUnsupportedAutoStop();
   }
 
   function applyAndroidVisiblePreview(live) {
@@ -852,6 +1052,21 @@
     if (applied && payload?.roi && typeof applyRoiStatus === 'function') applyRoiStatus(payload.roi);
   }
 
+  window.AutoTitrationAndroidTestHooks = {
+    androidOfficialTemperatureSummaryFrom,
+    androidSafeFrameCounterOrNull,
+    androidCurrentOfficialTemperatureSummaryFrom,
+    androidTemperatureSummaryFrom,
+    trustedAndroidTemperature,
+    trustedAndroidDeviceGlobalTemperature,
+    hasProvenAndroidRawMatrix,
+    sanitizeAndroidBridgePayload,
+    classifyMini2StageReport,
+    stripUnsupportedAndroidAutoStopConfig,
+    configureAndroidUnsupportedAutoStop,
+    buildAndroidRecordingConfig,
+  };
+
   function applyBridgePayload(payload) {
     if (!payload || payload.ok === false) {
       showAndroidError('Android bridge 실패', payload);
@@ -951,6 +1166,86 @@
     return button;
   }
 
+  // Final endpoint inference is off the preview thread and never controls the pump.
+  let endpointWorker = null;
+  let endpointWorkerUrl = null;
+  let nextEndpointJob = 0;
+  const endpointJobs = new Map();
+
+  function disposeEndpointWorker(reason) {
+    if (endpointWorker) endpointWorker.terminate();
+    if (endpointWorkerUrl) URL.revokeObjectURL(endpointWorkerUrl);
+    endpointWorker = null;
+    endpointWorkerUrl = null;
+    for (const job of endpointJobs.values()) { clearTimeout(job.timer); job.reject(new Error(reason)); }
+    endpointJobs.clear();
+  }
+
+  function ensureEndpointWorker() {
+    if (endpointWorker) return endpointWorker;
+    if (typeof bridge.endpointWorkerSource !== 'function' || typeof bridge.endpointModelJson !== 'function') {
+      throw new Error('이 APK에는 휴대폰 예측 모델이 없습니다');
+    }
+    const bootstrap = `
+      let model = null;
+      self.onmessage = event => {
+        const message = event.data;
+        if (message.kind === 'model') {
+          try { model = JSON.parse(message.json); } catch (_) { model = null; }
+          return;
+        }
+        let result;
+        try {
+          if (!model) throw Error('endpoint_model_unavailable');
+          const reason = self.AutoTitrationEndpoint.readiness(message.rows);
+          result = reason
+            ? { predicted_equivalence_status: 'withheld', predicted_equivalence_reason: reason }
+            : self.AutoTitrationEndpoint.predict(model, message.rows, message.titration_type);
+        } catch (error) {
+          result = { predicted_equivalence_status: /^insufficient_|^no_endpoint/.test(error.message || '') ? 'withheld' : 'unavailable', predicted_equivalence_reason: error.message || String(error) };
+        }
+        self.postMessage({ id: message.id, result });
+      };
+    `;
+    endpointWorkerUrl = URL.createObjectURL(new Blob([bridge.endpointWorkerSource(), '\n', bootstrap], { type: 'text/javascript' }));
+    endpointWorker = new Worker(endpointWorkerUrl);
+    endpointWorker.onmessage = event => {
+      const job = endpointJobs.get(event.data?.id);
+      if (!job) return;
+      clearTimeout(job.timer); endpointJobs.delete(event.data.id); job.resolve(event.data.result);
+    };
+    endpointWorker.onerror = event => disposeEndpointWorker(event.message || '휴대폰 모델 처리 실패');
+    endpointWorker.postMessage({ kind: 'model', json: bridge.endpointModelJson() });
+    return endpointWorker;
+  }
+
+  async function analyzeAndroidRecording() {
+    if (typeof bridge.beginEndpointAnalysis !== 'function' || typeof bridge.finishEndpointAnalysis !== 'function') return false;
+    const request = readBridgeJson('beginEndpointAnalysis');
+    if (!request.ok) { showAndroidError('분석 시작 실패', request); return false; }
+    setAndroidText('previewStatus', '당량점·농도 분석 중…');
+    let result;
+    try {
+      const worker = ensureEndpointWorker(), id = ++nextEndpointJob;
+      result = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => disposeEndpointWorker('endpoint_analysis_timeout'), 30000);
+        endpointJobs.set(id, { resolve, reject, timer });
+        try { worker.postMessage({ kind: 'predict', id, rows: request.rows, titration_type: request.titration_type }); }
+        catch (error) { clearTimeout(timer); endpointJobs.delete(id); reject(error); }
+      });
+    } catch (error) {
+      result = { predicted_equivalence_status: 'unavailable', predicted_equivalence_reason: error.message || String(error) };
+    }
+    let response = readBridgeJson('finishEndpointAnalysis', JSON.stringify({ ...result, generation: request.generation, run_id: request.run_id }));
+    if (response.ok === false) {
+      response = readBridgeJson('finishEndpointAnalysis', JSON.stringify({ generation: request.generation, run_id: request.run_id,
+        predicted_equivalence_status: 'unavailable', predicted_equivalence_reason: 'invalid_endpoint_result' }));
+    }
+    if (response.prediction_result_accepted !== true) return false; // A newer run owns the UI now.
+    applyBridgePayload(response);
+    return true;
+  }
+
   function pollAndroidStatus() {
     applyBridgePayload(readBridgeJson('getStatusJson'));
   }
@@ -983,6 +1278,7 @@
   };
 
   ensureAndroidPumpControls();
+  configureAndroidUnsupportedAutoStop();
 
   replaceButtonHandler('mobilePairButton', '적외선 USB 확인', () => {
     runManualMini2Probe('button');
@@ -1036,9 +1332,12 @@
   replaceButtonHandler('csvStartButton', '녹화+펌프 시작', () => {
     startAndroidRecordingWithConfig();
   });
-  replaceButtonHandler('csvStopButton', '녹화+펌프 정지', () => {
-    applyBridgePayload(readBridgeJson('stopRecording'));
-    saveAndroidCsvToDownloads({ auto: true });
+  replaceButtonHandler('csvStopButton', '녹화+펌프 정지', async () => {
+    const stopped = readBridgeJson('stopRecording');
+    applyBridgePayload(stopped);
+    if (stopped.ok === false) return;
+    const hasEndpointBridge = typeof bridge.beginEndpointAnalysis === 'function';
+    if (!hasEndpointBridge || await analyzeAndroidRecording()) saveAndroidCsvToDownloads({ auto: true });
   });
   replaceButtonHandler('pumpBluetoothButton', '펌프 BT 상태', () => {
     setAndroidText('previewStatus', '펌프 Bluetooth 상태 확인 중');

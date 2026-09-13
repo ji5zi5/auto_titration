@@ -100,10 +100,13 @@ def extract_mini2_frame_parts(
         raise ValueError(f"expected {expected} bytes for {width}x{height} uint16 raw frame, got {len(raw_bytes)}")
     if matrix_height <= 0 or matrix_height + 2 > height:
         raise ValueError(f"matrix_height must leave two addline rows within {height}, got {matrix_height}")
+    # ``raw_bytes`` is immutable and remains owned by these NumPy views.  Keep a
+    # single backing buffer instead of copying both the 256x344 frame and its
+    # 256x192 radiometric prefix for every 25 fps capture.
     full_frame = np.frombuffer(raw_bytes, dtype="<u2").reshape(height, width)
-    raw_matrix = full_frame[:matrix_height, :].copy()
+    raw_matrix = full_frame[:matrix_height, :]
     addline_tag1 = full_frame[matrix_height : matrix_height + 2, :].astype("<u2", copy=False).tobytes()
-    return Mini2RawFrameParts(raw_matrix=raw_matrix, addline_tag1=addline_tag1, full_frame_u16=full_frame.copy())
+    return Mini2RawFrameParts(raw_matrix=raw_matrix, addline_tag1=addline_tag1, full_frame_u16=full_frame)
 
 
 @dataclass(frozen=True)

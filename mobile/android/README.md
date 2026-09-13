@@ -1,5 +1,19 @@
 # Auto Titration Android WebView Runtime
 
+## 2026-09-13: phone-local final prediction (0.1.5-mobile-prediction)
+
+- The frozen Windows endpoint artifact is exported without retraining by `tools/export_android_endpoint_bundle.py`.
+- `website/portable-endpoint.js` evaluates the same candidate generation, fitted PLS/KRR/LDA/QDA pipelines, fold aggregation and dense-volume resampling inside an Android WebWorker after recording stops. It is **not** an online pump-control model.
+- `AndroidBridge.beginEndpointAnalysis/finishEndpointAnalysis` connect the result to the native session. Generation/run IDs reject stale callbacks; the native layer validates sensor coverage and recorded-volume bounds before calculating concentration from the standard solution and sample volume.
+- CSV export now applies final prediction annotations; raw `CsvFeatureRow` instances intentionally retain empty prediction placeholders until analysis completes. No missing-sensor theory/constant prediction fallback is added.
+- Raw ROI p95 and linearly interpolated percentiles are included for endpoint inputs.
+- Android asset merging expands `endpoint-portable.json.gz` to `assets/models/endpoint-portable.json`; the bridge opens the packaged `.json` asset.
+- Validation: 12 original-run parity + four-type dense-run parity, 374 Android unit tests, lint with zero errors, signed debug APK and packaged-asset hash checks. No phone was attached for physical UI/Bluetooth/Mini2 smoke testing.
+- **Still not complete:** Android automatic stop/micro-pulses remain disabled. Full-frame calibrated Celsius, complete offline chemistry/IUPAC parity and physical 25fps synchronization are not delivered by this first APK. Existing official temperature-summary support does not grant full-matrix Celsius.
+- Existing Windows copy replaced in place: `C:\Users\Jio\Downloads\auto_titration\dist\auto_titrator-debug.apk`. Private lab sideload only; existing official-byte redistribution restrictions remain in force.
+- See `docs/mobile_parity_validation/result.json` for current APK SHA-256 and validation details.
+
+
 This Android project now uses the **existing web dashboard UI** from `website/` inside a local `WebView`. Native Android code owns permissions and hardware for a phone-only Standalone runtime, then exposes phone-local state to the page through `window.AutoTitrationAndroid`.
 
 ## What this app owns now

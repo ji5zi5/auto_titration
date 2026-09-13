@@ -1,0 +1,5 @@
+﻿titration_type,titration_type_ko,selected_evaluator,mape_percent,run_count,evaluation_scope
+strong_acid_strong_base,강산-강염기,PLS,0.248597,3,current_final_same_12_run_development_selection
+strong_acid_weak_base,강산-약염기,RBF KRR,0.315683,3,current_final_same_12_run_development_selection
+weak_acid_strong_base,약산-강염기,LDA,0.162756,3,current_final_same_12_run_development_selection
+weak_acid_weak_base,약산-약염기,QDA,0.452964,3,current_final_same_12_run_development_selection

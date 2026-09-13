@@ -1,5 +1,6 @@
-from pathlib import Path
+import re
 import unittest
+from pathlib import Path
 
 
 class AndroidScaffoldTests(unittest.TestCase):
@@ -37,7 +38,10 @@ class AndroidScaffoldTests(unittest.TestCase):
             root / "app/src/main/java/kr/auto/titration/mobile/pump/BluetoothPumpTransport.kt",
             root / "app/src/main/java/kr/auto/titration/mobile/export/ExportManifest.kt",
             root / "app/src/main/java/kr/auto/titration/mobile/export/SessionExporter.kt",
+            root / "app/src/main/res/drawable/ic_launcher.xml",
             root / "app/src/main/res/xml/mini2_device_filter.xml",
+            root / "app/src/main/res/xml/backup_rules.xml",
+            root / "app/src/main/res/xml/data_extraction_rules.xml",
             root / "README.md",
         ]
         for path in expected_files:
@@ -53,6 +57,11 @@ class AndroidScaffoldTests(unittest.TestCase):
         self.assertIn("android.permission.CAMERA", manifest)
         self.assertIn("android.hardware.usb.host", manifest)
         self.assertIn("mini2_device_filter", manifest)
+        self.assertIn('android:icon="@drawable/ic_launcher"', manifest)
+        self.assertIn('android:roundIcon="@drawable/ic_launcher"', manifest)
+        self.assertIn('android:allowBackup="false"', manifest)
+        self.assertIn('android:fullBackupContent="@xml/backup_rules"', manifest)
+        self.assertIn('android:dataExtractionRules="@xml/data_extraction_rules"', manifest)
         self.assertNotIn("android.permission.INTERNET", manifest)
         self.assertIn("CameraX", main)
         self.assertIn("ImageAnalysis", main)
@@ -81,15 +90,63 @@ class AndroidScaffoldTests(unittest.TestCase):
         self.assertIn("phone-only", readme)
         self.assertIn("Standalone", readme)
 
-    def test_android_scaffold_does_not_claim_calibrated_celsius_without_validation(self):
+    def test_android_manifest_lint_resources_preserve_no_backup_contract(self):
         root = Path("mobile/android")
-        text = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.kt"))
+        manifest = (root / "app/src/main/AndroidManifest.xml").read_text(encoding="utf-8")
+        icon = (root / "app/src/main/res/drawable/ic_launcher.xml").read_text(encoding="utf-8")
+        backup_rules = (root / "app/src/main/res/xml/backup_rules.xml").read_text(encoding="utf-8")
+        data_rules = (root / "app/src/main/res/xml/data_extraction_rules.xml").read_text(encoding="utf-8")
+
+        self.assertIn('android:allowBackup="false"', manifest)
+        self.assertIn('android:fullBackupContent="@xml/backup_rules"', manifest)
+        self.assertIn('android:dataExtractionRules="@xml/data_extraction_rules"', manifest)
+        self.assertIn('android:icon="@drawable/ic_launcher"', manifest)
+        self.assertIn('android:roundIcon="@drawable/ic_launcher"', manifest)
+        self.assertIn('<vector xmlns:android="http://schemas.android.com/apk/res/android"', icon)
+        self.assertIn('android:viewportWidth="108"', icon)
+        self.assertIn('android:viewportHeight="108"', icon)
+
+        for domain in ["root", "file", "database", "sharedpref", "external"]:
+            with self.subTest(domain=domain):
+                self.assertIn(f'<exclude domain="{domain}" path="." />', backup_rules)
+                self.assertIn(f'<exclude domain="{domain}" path="." />', data_rules)
+        self.assertIn("<cloud-backup>", data_rules)
+        self.assertIn("<device-transfer>", data_rules)
+
+    def test_android_scaffold_does_not_claim_calibrated_celsius_without_validation(self):
+        root = Path("mobile/android/app/src/main/java")
+        source_paths = sorted(
+            path for path in root.rglob("*.kt") if "build" not in path.parts and "generated" not in path.parts
+        )
+        text = "\n".join(path.read_text(encoding="utf-8") for path in source_paths)
 
         self.assertIn("thermal_calibrated", text)
         self.assertIn("raw_unverified", text)
         self.assertIn("isValidatedForCelsius", text)
-        self.assertNotIn("temperatureCelsius = raw", text)
-        self.assertNotIn("/ 64", text)
+
+        validated_mtlib_converter = root / "kr/auto/titration/mobile/thermal/HikmicroMtlibIntConverter.kt"
+        suspicious_raw_celsius = re.compile(
+            r"(?i)(temperatureCelsius\s*=\s*raw|raw[a-zA-Z0-9_]*(?:[^\n]{0,80})?/\s*64(?:\.0)?)"
+        )
+        offenders = []
+        for path in source_paths:
+            if path == validated_mtlib_converter:
+                continue
+            for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if suspicious_raw_celsius.search(line):
+                    offenders.append(f"{path}:{line_number}: {line.strip()}")
+
+        self.assertEqual(
+            [],
+            offenders,
+            "raw-to-Celsius conversion must stay behind explicit validation/fail-closed gates",
+        )
+
+        mtlib_text = validated_mtlib_converter.read_text(encoding="utf-8")
+        self.assertIn("missingReason()", mtlib_text)
+        self.assertIn("currentSelfTestState != HikmicroMtlibSelfTestState.PASSED", mtlib_text)
+        self.assertIn("failClosedReason", mtlib_text)
+        self.assertIn("/ 64.0", mtlib_text)
 
     def test_pump_contract_is_manual_only_in_android_foundation(self):
         pump = Path("mobile/android/app/src/main/java/kr/auto/titration/mobile/pump/PumpCommandContract.kt").read_text(
@@ -133,6 +190,53 @@ class AndroidScaffoldTests(unittest.TestCase):
         self.assertIn("sendPumpCommand", bridge)
         self.assertIn("pumpBluetoothButton", index + adapter)
         self.assertIn("펌프 BT 상태", index + adapter)
+
+    def test_android_bluetooth_pump_ui_selects_and_controls_a_paired_spp_device(self):
+        root = Path("mobile/android/app/src/main/java/kr/auto/titration/mobile")
+        bridge = (root / "AndroidBridge.kt").read_text(encoding="utf-8")
+        main = (root / "MainActivity.kt").read_text(encoding="utf-8")
+        adapter = Path("website/android-webview.js").read_text(encoding="utf-8")
+
+        for bridge_method in [
+            "pumpDevices",
+            "connectPump",
+            "disconnectPump",
+            "openBluetoothSettings",
+        ]:
+            with self.subTest(bridge_method=bridge_method):
+                self.assertIn(bridge_method, bridge)
+
+        for activity_method in [
+            "pumpDevicesFromBridge",
+            "connectPumpFromBridge",
+            "disconnectPumpFromBridge",
+            "openBluetoothSettingsFromBridge",
+        ]:
+            with self.subTest(activity_method=activity_method):
+                self.assertIn(activity_method, main)
+
+        for ui_contract in [
+            "ensureAndroidPumpControls",
+            "pumpDeviceSelect",
+            "pumpConnectButton",
+            "pumpDisconnectButton",
+            "pumpBluetoothSettingsButton",
+            "refreshAndroidPumpDevices",
+            "readBridgeJson('connectPump'",
+            "readBridgeJson('disconnectPump'",
+            "readBridgeJson('openBluetoothSettings'",
+        ]:
+            with self.subTest(ui_contract=ui_contract):
+                self.assertIn(ui_contract, adapter)
+
+        # The Android adapter must replace the desktop HTTP handlers with native
+        # Bluetooth commands on the same visible pump buttons.
+        self.assertIn("replaceButtonHandler('serialPumpDispenseButton'", adapter)
+        self.assertIn("readBridgeJson('sendPumpCommand', 'b')", adapter)
+        self.assertIn("replaceButtonHandler('serialPumpRetractButton'", adapter)
+        self.assertIn("readBridgeJson('sendPumpCommand', 'a')", adapter)
+        self.assertIn("replaceButtonHandler('serialPumpStopButton'", adapter)
+        self.assertIn("readBridgeJson('sendPumpCommand', 'c')", adapter)
 
     def test_android_recording_ui_exposes_complete_config_inputs(self):
         index = Path("website/index.html").read_text(encoding="utf-8")

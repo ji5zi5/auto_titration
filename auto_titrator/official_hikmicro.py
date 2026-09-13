@@ -24,6 +24,7 @@ import json
 import os
 import struct
 import subprocess
+import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -254,6 +255,22 @@ class MtlibRuntime(Protocol):
     def close(self, handle: object) -> None: ...
 
 
+class _MtProcessPoint(ctypes.Structure):
+    """Exact 0x24-byte point record consumed by ``MT_Process_INT``."""
+
+    _fields_ = [
+        ("reserved_00", ctypes.c_int32),
+        ("gray", ctypes.c_int32),
+        ("reserved_08", ctypes.c_int32),
+        ("reserved_0c", ctypes.c_int32),
+        ("temperature_x64", ctypes.c_int32),
+        ("emissivity_q13", ctypes.c_int32),
+        ("reflected_q13", ctypes.c_int32),
+        ("distance_q13", ctypes.c_int32),
+        ("reserved_20", ctypes.c_int32),
+    ]
+
+
 class CtypesMtlibRuntime:
     """ctypes adapter around HIKMICRO Analyzer's MTlib_OL.dll."""
 
@@ -271,6 +288,11 @@ class CtypesMtlibRuntime:
         self.dll = ctypes.WinDLL(str(dll_path))
         self._configure_exports()
         self._keepalive: dict[int, list[object]] = {}
+        # MT_SetConfig may retain the supplied pointer.  Keep the latest buffer
+        # for each logical config slot alive, but do not retain every frame's
+        # 1024-byte addline forever.
+        self._config_keepalive: dict[int, dict[tuple[int, int], object]] = {}
+        self._point_buffers: dict[int, _MtProcessPoint] = {}
 
     def _configure_exports(self) -> None:
         if self.api_variant not in {"standard", "OL", "INT"}:
@@ -299,14 +321,21 @@ class CtypesMtlibRuntime:
         ret = self.MT_Create(ctypes.byref(params), ctypes.byref(desc), ctypes.byref(handle))
         if ret != 0 or not handle.value:
             raise OfficialDllUnavailable(f"MT_Create failed ret={ret} handle={handle.value}")
-        self._keepalive[int(handle.value)] = [params, backing, desc]
+        handle_key = int(handle.value)
+        self._keepalive[handle_key] = [params, backing, desc]
+        self._config_keepalive[handle_key] = {}
+        self._point_buffers[handle_key] = _MtProcessPoint()
         return handle
 
     def set_config(self, handle: object, config_type: int, data: bytes) -> int:
         h = _as_handle(handle)
         data_buffer = ctypes.create_string_buffer(data, len(data))
-        self._keepalive.setdefault(int(h.value or 0), []).append(data_buffer)
-        return int(self.MT_SetConfig(h, int(config_type), ctypes.cast(data_buffer, ctypes.c_void_p), len(data)))
+        ret = int(self.MT_SetConfig(h, int(config_type), ctypes.cast(data_buffer, ctypes.c_void_p), len(data)))
+        if ret == 0:
+            handle_key = int(h.value or 0)
+            subtype = struct.unpack_from("<I", data, 0)[0] if int(config_type) == 1 and len(data) >= 4 else 0
+            self._config_keepalive.setdefault(handle_key, {})[(int(config_type), int(subtype))] = data_buffer
+        return ret
 
     def process_points(self, handle: object, process_type: int, point_bytes: bytes, count: int) -> tuple[int, bytes]:
         h = _as_handle(handle)
@@ -314,9 +343,34 @@ class CtypesMtlibRuntime:
         ret = int(self.MT_Process(h, int(process_type), ctypes.cast(points, ctypes.c_void_p), int(count)))
         return ret, bytes(points.raw)
 
+    def process_single_point_scaled_int(
+        self,
+        handle: object,
+        process_type: int,
+        gray: int,
+        emissivity_q13: int,
+        reflected_q13: int,
+        distance_q13: int,
+    ) -> tuple[int, int]:
+        """Run one exact point without allocating/copying a byte buffer per call."""
+
+        h = _as_handle(handle)
+        handle_key = int(h.value or 0)
+        point = self._point_buffers.setdefault(handle_key, _MtProcessPoint())
+        ctypes.memset(ctypes.byref(point), 0, POINT_SIZE)
+        point.gray = int(gray)
+        point.emissivity_q13 = int(emissivity_q13)
+        point.reflected_q13 = int(reflected_q13)
+        point.distance_q13 = int(distance_q13)
+        ret = int(self.MT_Process(h, int(process_type), ctypes.byref(point), 1))
+        return ret, int(point.temperature_x64)
+
     def close(self, handle: object) -> None:
         h = _as_handle(handle)
-        self._keepalive.pop(int(h.value or 0), None)
+        handle_key = int(h.value or 0)
+        self._keepalive.pop(handle_key, None)
+        self._config_keepalive.pop(handle_key, None)
+        self._point_buffers.pop(handle_key, None)
 
 
 def _as_handle(handle: object) -> ctypes.c_void_p:
@@ -354,6 +408,10 @@ class OfficialMtlibConverter(RawToCelsiusConverter):
         self.runtime = runtime or CtypesMtlibRuntime(dll_dir)
         self._handle: object | None = None
         self._static_configured = False
+        # MT_SetConfig and MT_Process mutate state owned by one DLL handle.
+        # Keep a complete frame conversion atomic when preview/recording code
+        # happens to share one converter across threads.
+        self._process_lock = threading.RLock()
 
     @classmethod
     def from_jpeg(
@@ -395,31 +453,49 @@ class OfficialMtlibConverter(RawToCelsiusConverter):
         tag1 = addline_tag1 or self.metadata.tag1
         if len(tag1) != WIDTH * 2 * 2:
             raise ValueError(f"Mini2 addline/tag1 block must be 1024 bytes, got {len(tag1)}")
-        handle = self._ensure_handle()
-        self._configure_frame(handle, None, tag1)
-        # MT_Process_INT receives one raw gray value plus the same embedded
-        # expert parameters for every point. Therefore equal raw gray values
-        # produce equal official Celsius values in this point API. Process only
-        # the unique gray values, then expand back to the full 256x192 frame.
-        # This is not a fitted/CSV lookup; every unique value is still computed
-        # by HIKMICRO's official DLL for the current frame metadata.
-        flat = raw_values_arr.astype("<u2", copy=False).reshape(-1)
-        unique_raw, inverse = np.unique(flat, return_inverse=True)
-        unique_temps = np.empty(unique_raw.size, dtype=np.float64)
-        for start in range(0, unique_raw.size, self.batch_size):
-            end = min(start + self.batch_size, unique_raw.size)
-            point_bytes = self._pack_points(unique_raw[start:end])
-            ret, out_bytes = self.runtime.process_points(handle, 0, point_bytes, end - start)
-            if ret != 0:
-                raise OfficialDllUnavailable(f"MT_Process failed ret={ret} at unique raw batch starting {start}")
-            unique_temps[start:end] = self._read_scaled_int_celsius(out_bytes, end - start)
-        return unique_temps[inverse].reshape(raw_values_arr.shape)
+        with self._process_lock:
+            handle = self._ensure_handle()
+            self._configure_frame(handle, None, tag1)
+            # MT_Process_INT receives one raw gray value plus the same embedded
+            # expert parameters for every point. Therefore equal raw gray values
+            # produce equal official Celsius values in this point API. Process only
+            # the unique gray values, then expand back to the full 256x192 frame.
+            # This is not a fitted/CSV lookup; every unique value is still computed
+            # by HIKMICRO's official DLL for the current frame metadata.
+            flat = raw_values_arr.astype("<u2", copy=False).reshape(-1)
+            unique_raw, inverse = np.unique(flat, return_inverse=True)
+            unique_temps = np.empty(unique_raw.size, dtype=np.float64)
+            process_single = getattr(self.runtime, "process_single_point_scaled_int", None)
+            if callable(process_single):
+                params = self.metadata.radiometric_q13
+                for index, gray in enumerate(unique_raw):
+                    ret, scaled_int = process_single(
+                        handle,
+                        0,
+                        int(gray),
+                        int(params["emissivity_q13"]),
+                        int(params["reflected_q13"]),
+                        int(params["distance_q13"]),
+                    )
+                    if ret != 0:
+                        raise OfficialDllUnavailable(f"MT_Process failed ret={ret} at unique raw index {index}")
+                    unique_temps[index] = float(scaled_int) / 64.0
+                return unique_temps[inverse].reshape(raw_values_arr.shape)
+            for start in range(0, unique_raw.size, self.batch_size):
+                end = min(start + self.batch_size, unique_raw.size)
+                point_bytes = self._pack_points(unique_raw[start:end])
+                ret, out_bytes = self.runtime.process_points(handle, 0, point_bytes, end - start)
+                if ret != 0:
+                    raise OfficialDllUnavailable(f"MT_Process failed ret={ret} at unique raw batch starting {start}")
+                unique_temps[start:end] = self._read_scaled_int_celsius(out_bytes, end - start)
+            return unique_temps[inverse].reshape(raw_values_arr.shape)
 
     def close(self) -> None:
-        if self._handle is not None:
-            self.runtime.close(self._handle)
-            self._handle = None
-            self._static_configured = False
+        with self._process_lock:
+            if self._handle is not None:
+                self.runtime.close(self._handle)
+                self._handle = None
+                self._static_configured = False
 
     def _ensure_handle(self) -> object:
         if self._handle is None:

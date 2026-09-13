@@ -1,0 +1,558 @@
+{
+  "summary": [
+    {
+      "variant": "base",
+      "mape_percent": 0.7751246527777783,
+      "mean_oracle_score_rank": 31.916666666666668,
+      "max_ape_percent": 1.362590000000008
+    },
+    {
+      "variant": "provenance",
+      "mape_percent": 10.274670625,
+      "mean_oracle_score_rank": 41.5,
+      "max_ape_percent": 24.943865000000002
+    },
+    {
+      "variant": "directional",
+      "mape_percent": 11.134779861111108,
+      "mean_oracle_score_rank": 33.583333333333336,
+      "max_ape_percent": 44.73495
+    },
+    {
+      "variant": "combined",
+      "mape_percent": 9.928868472222222,
+      "mean_oracle_score_rank": 41.833333333333336,
+      "max_ape_percent": 18.779502499999996
+    }
+  ],
+  "rows": [
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-201548-session-4.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 185,
+      "predicted": 39.957241,
+      "actual": 40.0,
+      "ape_percent": 0.10689749999999165,
+      "oracle_score_rank": 37,
+      "feature_count": 34
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-202035-session-5.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 91,
+      "predicted": 20.059955,
+      "actual": 20.0,
+      "ape_percent": 0.29977499999999324,
+      "oracle_score_rank": 48,
+      "feature_count": 34
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-202744-session-6.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 130,
+      "predicted": 29.706286,
+      "actual": 30.0,
+      "ape_percent": 0.9790466666666713,
+      "oracle_score_rank": 12,
+      "feature_count": 34
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-203711-session-7.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 83,
+      "predicted": 19.811199,
+      "actual": 20.0,
+      "ape_percent": 0.9440050000000079,
+      "oracle_score_rank": 67,
+      "feature_count": 22
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-204506-session-8.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 121,
+      "predicted": 30.354408,
+      "actual": 30.0,
+      "ape_percent": 1.181359999999998,
+      "oracle_score_rank": 40,
+      "feature_count": 22
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-205048-session-9.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 156,
+      "predicted": 39.627735,
+      "actual": 40.0,
+      "ape_percent": 0.9306624999999967,
+      "oracle_score_rank": 10,
+      "feature_count": 22
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-213431-session-11.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 69,
+      "predicted": 20.114089,
+      "actual": 20.0,
+      "ape_percent": 0.5704449999999994,
+      "oracle_score_rank": 22,
+      "feature_count": 34
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-213925-session-12.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 100,
+      "predicted": 29.658358,
+      "actual": 30.0,
+      "ape_percent": 1.1388066666666674,
+      "oracle_score_rank": 43,
+      "feature_count": 34
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-214538-session-13.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 132,
+      "predicted": 39.776583,
+      "actual": 40.0,
+      "ape_percent": 0.5585424999999944,
+      "oracle_score_rank": 32,
+      "feature_count": 34
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-215437-session-14.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 63,
+      "predicted": 19.727482,
+      "actual": 20.0,
+      "ape_percent": 1.362590000000008,
+      "oracle_score_rank": 42,
+      "feature_count": 20
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-220325-session-15.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 93,
+      "predicted": 29.659965,
+      "actual": 30.0,
+      "ape_percent": 1.133450000000001,
+      "oracle_score_rank": 24,
+      "feature_count": 20
+    },
+    {
+      "variant": "base",
+      "run": "auto-titration-live-20260601-220652-session-16.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 125,
+      "predicted": 40.038366,
+      "actual": 40.0,
+      "ape_percent": 0.09591500000000863,
+      "oracle_score_rank": 6,
+      "feature_count": 20
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-201548-session-4.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 178,
+      "predicted": 38.481589,
+      "actual": 40.0,
+      "ape_percent": 3.796027500000001,
+      "oracle_score_rank": 62,
+      "feature_count": 74
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-202035-session-5.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 101,
+      "predicted": 22.184729,
+      "actual": 20.0,
+      "ape_percent": 10.923645000000004,
+      "oracle_score_rank": 115,
+      "feature_count": 74
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-202744-session-6.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 137,
+      "predicted": 31.245441,
+      "actual": 30.0,
+      "ape_percent": 4.151469999999999,
+      "oracle_score_rank": 28,
+      "feature_count": 74
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-203711-session-7.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 63,
+      "predicted": 15.011227,
+      "actual": 20.0,
+      "ape_percent": 24.943865000000002,
+      "oracle_score_rank": 31,
+      "feature_count": 62
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-204506-session-8.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 133,
+      "predicted": 33.280316,
+      "actual": 30.0,
+      "ape_percent": 10.934386666666663,
+      "oracle_score_rank": 61,
+      "feature_count": 62
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-205048-session-9.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 123,
+      "predicted": 31.282426,
+      "actual": 40.0,
+      "ape_percent": 21.793934999999998,
+      "oracle_score_rank": 14,
+      "feature_count": 62
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-213431-session-11.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 67,
+      "predicted": 19.610316,
+      "actual": 20.0,
+      "ape_percent": 1.9484199999999952,
+      "oracle_score_rank": 12,
+      "feature_count": 74
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-213925-session-12.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 91,
+      "predicted": 27.052238,
+      "actual": 30.0,
+      "ape_percent": 9.825873333333336,
+      "oracle_score_rank": 41,
+      "feature_count": 74
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-214538-session-13.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 124,
+      "predicted": 37.331189,
+      "actual": 40.0,
+      "ape_percent": 6.672027499999995,
+      "oracle_score_rank": 17,
+      "feature_count": 74
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-215437-session-14.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 63,
+      "predicted": 19.727482,
+      "actual": 20.0,
+      "ape_percent": 1.362590000000008,
+      "oracle_score_rank": 68,
+      "feature_count": 60
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-220325-session-15.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 84,
+      "predicted": 26.778318,
+      "actual": 30.0,
+      "ape_percent": 10.738940000000003,
+      "oracle_score_rank": 22,
+      "feature_count": 60
+    },
+    {
+      "variant": "provenance",
+      "run": "auto-titration-live-20260601-220652-session-16.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 105,
+      "predicted": 33.518053,
+      "actual": 40.0,
+      "ape_percent": 16.204867499999995,
+      "oracle_score_rank": 27,
+      "feature_count": 60
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-201548-session-4.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 178,
+      "predicted": 38.481589,
+      "actual": 40.0,
+      "ape_percent": 3.796027500000001,
+      "oracle_score_rank": 29,
+      "feature_count": 70
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-202035-session-5.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 102,
+      "predicted": 22.503819,
+      "actual": 20.0,
+      "ape_percent": 12.519095,
+      "oracle_score_rank": 58,
+      "feature_count": 70
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-202744-session-6.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 124,
+      "predicted": 28.383309,
+      "actual": 30.0,
+      "ape_percent": 5.388969999999998,
+      "oracle_score_rank": 11,
+      "feature_count": 70
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-203711-session-7.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 46,
+      "predicted": 11.05301,
+      "actual": 20.0,
+      "ape_percent": 44.73495,
+      "oracle_score_rank": 69,
+      "feature_count": 58
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-204506-session-8.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 129,
+      "predicted": 32.401433,
+      "actual": 30.0,
+      "ape_percent": 8.004776666666658,
+      "oracle_score_rank": 14,
+      "feature_count": 58
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-205048-session-9.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 163,
+      "predicted": 41.455744,
+      "actual": 40.0,
+      "ape_percent": 3.6393600000000066,
+      "oracle_score_rank": 54,
+      "feature_count": 58
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-213431-session-11.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 66,
+      "predicted": 19.362625,
+      "actual": 20.0,
+      "ape_percent": 3.186874999999993,
+      "oracle_score_rank": 12,
+      "feature_count": 70
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-213925-session-12.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 111,
+      "predicted": 33.025324,
+      "actual": 30.0,
+      "ape_percent": 10.084413333333325,
+      "oracle_score_rank": 40,
+      "feature_count": 70
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-214538-session-13.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 130,
+      "predicted": 39.074388,
+      "actual": 40.0,
+      "ape_percent": 2.3140300000000025,
+      "oracle_score_rank": 41,
+      "feature_count": 70
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-215437-session-14.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 66,
+      "predicted": 20.706882,
+      "actual": 20.0,
+      "ape_percent": 3.534410000000001,
+      "oracle_score_rank": 15,
+      "feature_count": 56
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-220325-session-15.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 76,
+      "predicted": 24.146258,
+      "actual": 30.0,
+      "ape_percent": 19.512473333333336,
+      "oracle_score_rank": 50,
+      "feature_count": 56
+    },
+    {
+      "variant": "directional",
+      "run": "auto-titration-live-20260601-220652-session-16.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 104,
+      "predicted": 33.239209,
+      "actual": 40.0,
+      "ape_percent": 16.901977499999994,
+      "oracle_score_rank": 10,
+      "feature_count": 56
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-201548-session-4.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 173,
+      "predicted": 37.405264,
+      "actual": 40.0,
+      "ape_percent": 6.486839999999994,
+      "oracle_score_rank": 43,
+      "feature_count": 110
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-202035-session-5.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 102,
+      "predicted": 22.503819,
+      "actual": 20.0,
+      "ape_percent": 12.519095,
+      "oracle_score_rank": 108,
+      "feature_count": 110
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-202744-session-6.csv",
+      "type": "strong_acid_strong_base",
+      "boundary": 129,
+      "predicted": 29.375439,
+      "actual": 30.0,
+      "ape_percent": 2.08187,
+      "oracle_score_rank": 31,
+      "feature_count": 110
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-203711-session-7.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 69,
+      "predicted": 16.4299,
+      "actual": 20.0,
+      "ape_percent": 17.8505,
+      "oracle_score_rank": 47,
+      "feature_count": 98
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-204506-session-8.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 130,
+      "predicted": 32.614013,
+      "actual": 30.0,
+      "ape_percent": 8.713376666666667,
+      "oracle_score_rank": 46,
+      "feature_count": 98
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-205048-session-9.csv",
+      "type": "weak_acid_strong_base",
+      "boundary": 134,
+      "predicted": 34.140271,
+      "actual": 40.0,
+      "ape_percent": 14.649322500000004,
+      "oracle_score_rank": 24,
+      "feature_count": 98
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-213431-session-11.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 64,
+      "predicted": 18.695311,
+      "actual": 20.0,
+      "ape_percent": 6.523444999999999,
+      "oracle_score_rank": 11,
+      "feature_count": 110
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-213925-session-12.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 97,
+      "predicted": 28.732116,
+      "actual": 30.0,
+      "ape_percent": 4.226279999999996,
+      "oracle_score_rank": 45,
+      "feature_count": 110
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-214538-session-13.csv",
+      "type": "strong_acid_weak_base",
+      "boundary": 130,
+      "predicted": 39.074388,
+      "actual": 40.0,
+      "ape_percent": 2.3140300000000025,
+      "oracle_score_rank": 30,
+      "feature_count": 110
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-215437-session-14.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 70,
+      "predicted": 21.973016,
+      "actual": 20.0,
+      "ape_percent": 9.865080000000006,
+      "oracle_score_rank": 43,
+      "feature_count": 96
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-220325-session-15.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 80,
+      "predicted": 25.458876,
+      "actual": 30.0,
+      "ape_percent": 15.13708,
+      "oracle_score_rank": 54,
+      "feature_count": 96
+    },
+    {
+      "variant": "combined",
+      "run": "auto-titration-live-20260601-220652-session-16.csv",
+      "type": "weak_acid_weak_base",
+      "boundary": 102,
+      "predicted": 32.488199,
+      "actual": 40.0,
+      "ape_percent": 18.779502499999996,
+      "oracle_score_rank": 20,
+      "feature_count": 96
+    }
+  ]
+}

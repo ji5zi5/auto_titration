@@ -8,11 +8,14 @@ import kr.auto.titration.mobile.data.LocalCsvWriter
 import org.json.JSONObject
 
 object SessionExporter {
-    fun buildCsv(config: ExperimentConfig, rows: List<CsvFeatureRow>): String {
+    fun buildCsv(config: ExperimentConfig, rows: List<CsvFeatureRow>, predictionFields: Map<String, String> = emptyMap()): String {
+        require(predictionFields.keys.all { it.startsWith("predicted_equivalence_") || it == "sample_concentration_from_predicted_equivalence_M" }) {
+            "prediction annotations cannot overwrite raw sensor or volume fields"
+        }
         val buffer = StringWriter()
         val writer = LocalCsvWriter(buffer)
         writer.writeHeaderIfNeeded()
-        rows.forEach { row -> writer.appendRow(row.toCsvMap(config)) }
+        rows.forEach { row -> writer.appendRow(row.toCsvMap(config) + predictionFields) }
         writer.flush()
         return buffer.toString()
     }

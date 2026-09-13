@@ -1,0 +1,28 @@
+{
+  "validation_status": "passed",
+  "figure_count_png": 9,
+  "figure_count_svg": 9,
+  "run_count": 12,
+  "manual": {
+    "mae_ml": 0.36666666666666714,
+    "rmse_ml": 0.4062019202317985,
+    "mape_percent": 1.2152777777777792
+  },
+  "sensor_only_color_thermal_fusion": {
+    "mae_ml": 0.4762603333333333,
+    "rmse_ml": 0.8311218684544203,
+    "mape_percent": 1.524496388888889
+  },
+  "fusion_threshold_counts": {
+    "within_1_percent": 7,
+    "within_2_percent": 10,
+    "within_5_percent": 11
+  },
+  "model_input_note": "current injected volume excluded",
+  "ml_validation_note": "run-level leave-one-out",
+  "source_files": [
+    "data/ml/report_modality_sensor_features_only/selected_predictions_color_thermal_fusion.csv",
+    "data/ml/report_modality_sensor_features_only/overall_comparison.csv",
+    "data/ml/report_modality_sensor_features_only/typewise_selection_color_thermal_fusion.csv"
+  ]
+}

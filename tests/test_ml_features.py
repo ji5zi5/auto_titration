@@ -1,9 +1,37 @@
 import unittest
 
-from auto_titrator.ml_features import derive_ml_features
+from auto_titrator.ml_features import derive_ml_features, select_online_history_rows
 
 
 class MlFeaturesTests(unittest.TestCase):
+    def test_online_history_selection_preserves_full_feature_result(self):
+        history = []
+        for index in range(250):
+            time_s = index * 0.04
+            history.append(
+                {
+                    "time_s": time_s,
+                    "visible_H_mean": 20.0 + index * 0.1,
+                    "visible_S_mean": 0.3,
+                    "visible_V_mean": 0.7,
+                    "thermal_roi_avg": 25.0 + index * 0.01,
+                    "thermal_roi_p95": 26.0 + index * 0.01,
+                }
+            )
+        current = {
+            "time_s": 10.0,
+            "visible_H_mean": 45.0,
+            "visible_S_mean": 0.31,
+            "visible_V_mean": 0.71,
+            "thermal_roi_avg": 27.5,
+            "thermal_roi_p95": 28.5,
+        }
+
+        selected = select_online_history_rows(history, current)
+
+        self.assertLess(len(selected), 60)
+        self.assertEqual(derive_ml_features(selected, current), derive_ml_features(history, current))
+
     def test_derives_baseline_window_slope_and_quality_features(self):
         history = [
             {

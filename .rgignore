@@ -1,0 +1,5 @@
+# Generated reverse-engineering evidence can contain multi-hundred-MB,
+# single-line JSON. This covers normal recursive searches; the global
+# RIPGREP_CONFIG_PATH policy also caps files when callers force `-g'*'`.
+.omx/research/**/static/**
+.omx/archive/**

@@ -223,3 +223,127 @@ class USB_FRAME_INFO(pointer: Pointer) : Structure(pointer) {
     @JvmField var dwBufSize: Int = 0
     @JvmField var byRes: ByteArray = ByteArray(128)
 }
+
+@Structure.FieldOrder("dwSize", "dwBrightness", "byRes")
+class USB_IMAGE_BRIGHTNESS : Structure() {
+    @JvmField var dwSize: Int = 0
+    @JvmField var dwBrightness: Int = 0
+    @JvmField var byRes: ByteArray = ByteArray(40)
+}
+
+@Structure.FieldOrder("dwSize", "dwContrast", "byRes")
+class USB_IMAGE_CONTRAST : Structure() {
+    @JvmField var dwSize: Int = 0
+    @JvmField var dwContrast: Int = 0
+    @JvmField var byRes: ByteArray = ByteArray(40)
+}
+
+@Structure.FieldOrder(
+    "dwSize",
+    "byNoiseReduceMode",
+    "byBirdWatchingMode",
+    "byHighLightMode",
+    "byHighLightLevel",
+    "dwGeneralLevel",
+    "dwFrameNoiseReduceLevel",
+    "dwInterFrameNoiseReduceLevel",
+    "byPaletteMode",
+    "byLSEDetailEnabled",
+    "byHookEdgeMode",
+    "byHookEdgeLevel",
+    "dwLSEDetailLevel",
+    "byWideTemperatureMode",
+    "byWideTemperatureWork",
+    "byIspAgcMode",
+    "byAISuperResolution",
+    "dwWideTemperatureUpThreshold",
+    "dwWideTemperatureDownThreshold",
+    "byRes",
+)
+class USB_IMAGE_ENHANCEMENT : Structure() {
+    @JvmField var dwSize: Int = 0
+    @JvmField var byNoiseReduceMode: Byte = 0
+    @JvmField var byBirdWatchingMode: Byte = 0
+    @JvmField var byHighLightMode: Byte = 0
+    @JvmField var byHighLightLevel: Byte = 0
+    @JvmField var dwGeneralLevel: Int = 0
+    @JvmField var dwFrameNoiseReduceLevel: Int = 0
+    @JvmField var dwInterFrameNoiseReduceLevel: Int = 0
+    @JvmField var byPaletteMode: Byte = 0
+    @JvmField var byLSEDetailEnabled: Byte = 0
+    @JvmField var byHookEdgeMode: Byte = 0
+    @JvmField var byHookEdgeLevel: Byte = 0
+    @JvmField var dwLSEDetailLevel: Int = 0
+    @JvmField var byWideTemperatureMode: Byte = 0
+    @JvmField var byWideTemperatureWork: Byte = 0
+    @JvmField var byIspAgcMode: Byte = 0
+    @JvmField var byAISuperResolution: Byte = 0
+    @JvmField var dwWideTemperatureUpThreshold: Int = 0
+    @JvmField var dwWideTemperatureDownThreshold: Int = 0
+    @JvmField var byRes: ByteArray = ByteArray(40)
+}
+
+@Structure.FieldOrder(
+    "struImageEnhancement",
+    "bySkyAreaCullLevel",
+    "byAGCMode",
+    "byGaussianFilterEnabled",
+    "byEdgePreservingFilterEnabled",
+    "dwGaussianFilterCenterPoint",
+    "dwBilateralFilterRadius",
+    "dwBilateralFilterEdgeThreshold",
+    "byBurnPreventionEnabled",
+    "byBurnPreventionMode",
+    "byRelativeHumidityThreshold",
+    "bySharpenBoost",
+    "dwBurnPreventionShutterCloseTime",
+    "byBurnPreventionShutterControl",
+    "byBurnPreventionRecovery",
+    "byIsothermEnabled",
+    "byRawDataNoiseReduceEnabled",
+    "dwIsothermalUpperThreshold",
+    "dwIsothermalLowerThreshold",
+    "byIsothermalType",
+    "byColorAlarmType",
+    "dwColorAlarmUpperLimit",
+    "dwColorAlarmLowerLimit",
+    "dwRelativeHumidity",
+    "dwAtmosphericTemperature",
+    "byAutoShutEnabled",
+    "byGeneralLevelDefault",
+    "byGeneralLevelMin",
+    "byGeneralLevelMax",
+    "byRes",
+)
+class USB_IMAGE_ENHANCEMENT_EX : Structure() {
+    @JvmField var struImageEnhancement: USB_IMAGE_ENHANCEMENT = USB_IMAGE_ENHANCEMENT()
+    @JvmField var bySkyAreaCullLevel: Byte = 0
+    @JvmField var byAGCMode: Byte = 0
+    @JvmField var byGaussianFilterEnabled: Byte = 0
+    @JvmField var byEdgePreservingFilterEnabled: Byte = 0
+    @JvmField var dwGaussianFilterCenterPoint: Int = 0
+    @JvmField var dwBilateralFilterRadius: Int = 0
+    @JvmField var dwBilateralFilterEdgeThreshold: Int = 0
+    @JvmField var byBurnPreventionEnabled: Byte = 0
+    @JvmField var byBurnPreventionMode: Byte = 0
+    @JvmField var byRelativeHumidityThreshold: Byte = 0
+    @JvmField var bySharpenBoost: Byte = 0
+    @JvmField var dwBurnPreventionShutterCloseTime: Int = 0
+    @JvmField var byBurnPreventionShutterControl: Byte = 0
+    @JvmField var byBurnPreventionRecovery: Byte = 0
+    @JvmField var byIsothermEnabled: Byte = 0
+    @JvmField var byRawDataNoiseReduceEnabled: Byte = 0
+    @JvmField var dwIsothermalUpperThreshold: Int = 0
+    @JvmField var dwIsothermalLowerThreshold: Int = 0
+    @JvmField var byIsothermalType: Byte = 0
+    @JvmField var byColorAlarmType: Byte = 0
+    @JvmField var dwColorAlarmUpperLimit: Int = 0
+    @JvmField var dwColorAlarmLowerLimit: Int = 0
+    @JvmField var dwRelativeHumidity: Int = 0
+    @JvmField var dwAtmosphericTemperature: Int = 0
+    @JvmField var byAutoShutEnabled: Byte = 0
+    @JvmField var byGeneralLevelDefault: Byte = 0
+    @JvmField var byGeneralLevelMin: Byte = 0
+    @JvmField var byGeneralLevelMax: Byte = 0
+    @JvmField var byRes: ByteArray = ByteArray(902)
+}

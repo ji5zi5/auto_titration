@@ -1,0 +1,5 @@
+config_id,global_weight,mape_percent,normalization,same_type_weight,spec,temperature,titration_type,top_blend,top_k
+2761c1ba1e158dd3,1.0,0.24859749999999378,zscore,0.0,"{""family"": ""pls"", ""subset"": ""state"", ""transform"": ""signed_log1p"", ""parameter"": ""exp_rank@2""}",1.0,strong_acid_strong_base,0.0,all
+53614e5d70098d63,0.75,0.42191999999999413,rank,0.25,"{""family"": ""lda"", ""subset"": ""shift_terminal"", ""transform"": ""raw"", ""parameter"": ""5@svd""}",1.0,weak_acid_strong_base,0.0,20
+125328077230ea01,1.0,0.3156827777777791,rank,0.0,"{""family"": ""kernel_ridge_rbf"", ""subset"": ""shift_terminal"", ""transform"": ""signed_log1p"", ""parameter"": ""rank@1,0.05""}",0.1,strong_acid_weak_base,0.0,all
+02067b019afb7c79,1.0,0.45296444444444955,zscore,0.0,"{""family"": ""qda"", ""subset"": ""shift_terminal"", ""transform"": ""raw"", ""parameter"": ""5@0.9""}",0.1,weak_acid_weak_base,0.0,5

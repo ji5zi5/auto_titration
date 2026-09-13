@@ -1,0 +1,25 @@
+﻿condition,titration_type,volume_ml,method,method_label,ape_percent
+강-강 20,strong_acid_strong_base,20,manual_current,수동 적정 (현재 기록),0.5000000000000071
+강-강 20,strong_acid_strong_base,20,current_final_model,최종 선택 모델 (현재),0.29977499999999324
+강-강 30,strong_acid_strong_base,30,manual_current,수동 적정 (현재 기록),2.9999999999999956
+강-강 30,strong_acid_strong_base,30,current_final_model,최종 선택 모델 (현재),0.3391199999999964
+강-강 40,strong_acid_strong_base,40,manual_current,수동 적정 (현재 기록),3.2499999999999933
+강-강 40,strong_acid_strong_base,40,current_final_model,최종 선택 모델 (현재),0.10689749999999165
+강-약 20,strong_acid_weak_base,20,manual_current,수동 적정 (현재 기록),1.9999999999999927
+강-약 20,strong_acid_weak_base,20,current_final_model,최종 선택 모델 (현재),0.5704449999999994
+강-약 30,strong_acid_weak_base,30,manual_current,수동 적정 (현재 기록),0.6666666666666643
+강-약 30,strong_acid_weak_base,30,current_final_model,최종 선택 모델 (현재),0.25349333333333374
+강-약 40,strong_acid_weak_base,40,manual_current,수동 적정 (현재 기록),3.000000000000007
+강-약 40,strong_acid_weak_base,40,current_final_model,최종 선택 모델 (현재),0.12311000000000405
+약-강 20,weak_acid_strong_base,20,manual_current,수동 적정 (현재 기록),2.5
+약-강 20,weak_acid_strong_base,20,current_final_model,최종 선택 모델 (현재),0.03717999999999222
+약-강 30,weak_acid_strong_base,30,manual_current,수동 적정 (현재 기록),1.6666666666666667
+약-강 30,weak_acid_strong_base,30,current_final_model,최종 선택 모델 (현재),0.40386666666666576
+약-강 40,weak_acid_strong_base,40,manual_current,수동 적정 (현재 기록),2.2499999999999964
+약-강 40,weak_acid_strong_base,40,current_final_model,최종 선택 모델 (현재),0.04721999999999227
+약-약 20,weak_acid_weak_base,20,manual_current,수동 적정 (현재 기록),0.5000000000000071
+약-약 20,weak_acid_weak_base,20,current_final_model,최종 선택 모델 (현재),0.7806350000000073
+약-약 30,weak_acid_weak_base,30,manual_current,수동 적정 (현재 기록),2.6666666666666687
+약-약 30,weak_acid_weak_base,30,current_final_model,최종 선택 모델 (현재),0.4823433333333326
+약-약 40,weak_acid_weak_base,40,manual_current,수동 적정 (현재 기록),1.9999999999999927
+약-약 40,weak_acid_weak_base,40,current_final_model,최종 선택 모델 (현재),0.09591500000000863

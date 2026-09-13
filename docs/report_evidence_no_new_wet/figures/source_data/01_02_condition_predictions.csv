@@ -1,0 +1,13 @@
+﻿seed,run_path,titration_type,titration_type_ko,condition_short,actual_equivalence_volume_ml,predicted_equivalence_volume_ml,absolute_error_ml,ape_percent
+42,머신러닝용 파일모음/auto-titration-live-20260601-202035-session-5.csv,strong_acid_strong_base,강산-강염기,강-강 20,20.0,20.059955,0.05995499999999865,0.29977499999999324
+42,머신러닝용 파일모음/auto-titration-live-20260601-202744-session-6.csv,strong_acid_strong_base,강산-강염기,강-강 30,30.0,29.898264,0.10173599999999894,0.3391199999999964
+42,머신러닝용 파일모음/auto-titration-live-20260601-201548-session-4.csv,strong_acid_strong_base,강산-강염기,강-강 40,40.0,39.957241,0.04275899999999666,0.10689749999999165
+42,머신러닝용 파일모음/auto-titration-live-20260601-213431-session-11.csv,strong_acid_weak_base,강산-약염기,강-약 20,20.0,20.114089,0.11408899999999988,0.5704449999999994
+42,머신러닝용 파일모음/auto-titration-live-20260601-213925-session-12.csv,strong_acid_weak_base,강산-약염기,강-약 30,30.0,29.923952,0.07604800000000012,0.25349333333333374
+42,머신러닝용 파일모음/auto-titration-live-20260601-214538-session-13.csv,strong_acid_weak_base,강산-약염기,강-약 40,40.0,40.049244,0.04924400000000162,0.12311000000000405
+42,머신러닝용 파일모음/auto-titration-live-20260601-203711-session-7.csv,weak_acid_strong_base,약산-강염기,약-강 20,20.0,20.007436,0.007435999999998444,0.03717999999999222
+42,머신러닝용 파일모음/auto-titration-live-20260601-204506-session-8.csv,weak_acid_strong_base,약산-강염기,약-강 30,30.0,30.12116,0.12115999999999971,0.40386666666666576
+42,머신러닝용 파일모음/auto-titration-live-20260601-205048-session-9.csv,weak_acid_strong_base,약산-강염기,약-강 40,40.0,40.018888,0.018887999999996907,0.04721999999999227
+42,머신러닝용 파일모음/auto-titration-live-20260601-215437-session-14.csv,weak_acid_weak_base,약산-약염기,약-약 20,20.0,20.156127,0.15612700000000146,0.7806350000000073
+42,머신러닝용 파일모음/auto-titration-live-20260601-220325-session-15.csv,weak_acid_weak_base,약산-약염기,약-약 30,30.0,30.144703,0.1447029999999998,0.4823433333333326
+42,머신러닝용 파일모음/auto-titration-live-20260601-220652-session-16.csv,weak_acid_weak_base,약산-약염기,약-약 40,40.0,40.038366,0.03836600000000345,0.09591500000000863

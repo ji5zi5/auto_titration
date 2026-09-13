@@ -1,0 +1,6 @@
+﻿method,method_ko,mape_percent
+color_max_gradient,색 최대기울기,4.67
+color_thermal_threshold,색·온도 임계값,5.65
+legacy_ml_color,기존 ML 색상,1.55
+legacy_ml_fusion,기존 ML 융합,1.52
+type_conditioned_sensor_model,새 조건부 모델,0.295

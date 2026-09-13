@@ -1,8 +1,17 @@
 # 자동 적정 프로젝트 진행 현황 및 남은 수정점
 
-작성 기준: 2026-07-13
+작성 기준: 2026-07-27
 목적: Windows 쪽 Codex 또는 다른 개발자가 이 repo를 바로 이어받아, 현재까지 구현된 내용과 앞으로 수정해야 할 일을 헷갈리지 않도록 정리한다.
 범위: Windows 수집 앱, Mini2 열화상 처리, Arduino 시린지 펌프, 화학 계산, 머신러닝, Android 포팅, 문서/포스터 작업을 모두 포함한다.
+
+> **배포/거버넌스 경고 (G009, 2026-07-27):** 현재 작업 트리와 여기서
+> 만드는 Android debug APK/source backup에는 HIKMICRO Viewer에서 추출한 공식
+> DEX/native bytes 및 vendor 경로가 포함되어 있다. 이 트리는 **private lab
+> use 전용이며 재배포 불가**로 취급한다. 현재 트리, APK, source backup을
+> GitHub에 push하거나 release/웹/공유 드라이브 등에 publish하지 않는다.
+> `-PhikmicroRedistributionApproved=true` 같은 boolean은 배포 권한이 아니며
+> release/public packaging을 허용하지 않는다. 공개 배포는 별도 권한 검토와
+> official bytes/vendor path를 제거한 별도 소스 트리에서만 다시 심사한다.
 
 ## 1. 프로젝트 목표 요약
 
@@ -32,6 +41,8 @@
 - GitHub repo: `https://github.com/ji5zi5/auto_titration`
 - Windows 실행본 release: `v0.1.3 Windows 실행본`
 - release URL: `https://github.com/ji5zi5/auto_titration/releases/tag/v0.1.3`
+- 위 URL은 과거 Windows 상태 기록이다. 현재 official-byte Android 작업 트리를
+  push/publish해도 된다는 뜻이 아니다.
 
 ### 2.2 사용자가 실제로 실행하는 Windows 경로
 
@@ -77,6 +88,12 @@ launchers\windows\20_windows_live_collect.bat
 ### 2.4 현재 실사용 기준
 
 현재 실험 수집의 본경로는 Windows 노트북 앱이다. Android 앱은 상당히 많은 파일과 native library, bridge 코드가 있지만 아직 Windows와 같은 수준의 완전한 실사용 본경로라고 보면 안 된다. Android는 이어서 수정해야 할 대상이다.
+
+Android의 현재 허용 범위는 private debug/lab sideload와 host-side software
+verification뿐이다. `mobile/android/app/build.gradle.kts`는 manifest-matching
+official bytes 및 official/vendor source path가 있는 동안 release/public packaging을
+fail-closed로 차단한다. `:app:auditPublicDeliverable`은 로컬에서 같은 내용을
+비파괴적으로 점검하며, 현재 트리에서는 실패가 정상이다.
 
 ## 3. 지금까지 구현한 것
 
@@ -402,69 +419,64 @@ weak_acid_weak_base
 구현된 핵심 파일은 다음과 같다.
 
 ```text
+auto_titrator/type_conditioned_sensor_live_model.py
 auto_titrator/typewise_live_model.py
+tools/export_type_conditioned_sensor_live_model.py
 tools/export_live_typewise_model.py
-tools/train_equivalence_current_volume.py
+tools/validate_optimized_endpoint_research.py
+data/labeled/type-conditioned-sensor-endpoint-ranker.pkl
 data/labeled/typewise-current-volume-classifier.pkl
-docs/ml_current_volume_no_progress.md
-docs/포스터_머신러닝_모델선정.txt
-docs/포스터_적정종류별_성능표.csv
+docs/endpoint_ml_maximize_report.md
 ```
 
-현재 live 앱이 먼저 사용하는 모델은 다음이다.
+실험 종료 후 최종 당량점 계산이 먼저 사용하는 모델은 다음이다.
 
 ```text
-data/labeled/typewise-current-volume-classifier.pkl
+data/labeled/type-conditioned-sensor-endpoint-ranker.pkl
 ```
 
 `tools/windows_live_collect.py`에는 다음 기본값이 들어 있다.
 
 ```text
 DEFAULT_LIVE_ML_MODEL = ""
+DEFAULT_ENDPOINT_ML_MODEL = ROOT / "data" / "labeled" / "type-conditioned-sensor-endpoint-ranker.pkl"
 DEFAULT_TYPEWISE_LIVE_ML_MODEL = ROOT / "data" / "labeled" / "typewise-current-volume-classifier.pkl"
 ```
 
-즉, 과거 JSON regression 모델보다 typewise classifier pickle이 우선된다.
+완료된 CSV에는 사후 시계열 모델을 먼저 적용한다. 이 모델은 적정 종류별 PLS·RBF 커널 릿지·LDA·QDA 경로를 사용하고, 12개 leave-one-run-out 모델의 예측 중앙값을 점 추정으로 사용한다. 색상 또는 열화상 자료가 부족하면 기존 typewise classifier와 peak 추정으로 넘어간다. 자동 정지는 미래 프레임을 사용할 수 없으므로 기존 causal typewise classifier를 계속 사용한다.
 
 현재 live 예측 source는 다음으로 표시된다.
 
 ```text
-predicted_equivalence_source = typewise_frame_zone_classifier
+predicted_equivalence_source = type_conditioned_sensor_endpoint_ranker
 ```
 
 웹에서는 이를 다음처럼 표시한다.
 
 ```text
-적정 종류별 분류 모델
+적정 종류별 시계열 모델
 ```
 
 현재 머신러닝 정리는 다음과 같다.
 
-- 회귀만 고집하지 않고 분류 기반 접근도 실험했다.
-- 최종 live용은 적정 종류별로 나누어 현재 프레임/구간이 당량점 근처인지 판단하는 분류 모델 구조다.
-- 프레임별 후보를 기반으로 실험 단위 당량점 부피를 고르는 방식이다.
-- 입력에는 실제 실험 중 알 수 있는 센서값과 현재 주입량을 포함할 수 있다.
-- 진행률, 이론 당량점, 당량점까지의 거리, 정답 라벨 같은 누수 feature는 제거해야 한다.
+- 실험 종료 후 색상·열화상 시계열에서 변화 후보를 만들고 적정 종류별 평가기로 당량점 하나를 고른다.
+- 현재 주입량은 센서 특징이 아니라 고밀도 입력의 부피축 재표본화와 선택된 프레임의 mL 환산에만 사용한다.
+- 25 fps 입력은 학습 당시의 부피 간격에 맞춰 두 위상으로 재표본화하여 프레임 밀도 차이를 줄인다.
+- 진행률, 이론 당량점, 당량점까지의 거리, 미지 농도와 정답 라벨은 모델 특징에서 제외한다.
+- 색상·열화상 유효 행 비율이 80% 미만이거나 신호가 평탄하면 융합 예측을 보류한다.
 
-현재 문서화된 개발셋 결과는 다음과 같다.
-
-```text
-12개 run 기준 개발셋
-MAE 0.392472 mL
-RMSE 0.685276 mL
-MAPE 1.271147%
-```
-
-적정 종류별 MAPE는 다음으로 정리되어 있다.
+현재 검증 범위는 다음과 같다.
 
 ```text
-강산-강염기: 0.470296%
-강산-약염기: 0.674847%
-약산-강염기: 3.486481%
-약산-약염기: 0.452964%
+선택된 고정 설정의 사후 개발 MAPE: 0.295%
+배포 fold 중앙값 모델의 6월 재적용 MAPE: 1.106%
+25 fps 고밀도 모의 입력 재적용 MAPE: 1.192%
+원래 예측 대비 고밀도 입력 평균 이동: 0.252 mL
+고밀도 입력 최대 이동: 1.043 mL
+7월 지정 동일 미지 시료 3회 CV: 0.961%
 ```
 
-이 결과는 포스터에 쓸 수 있지만, 반드시 개발셋 결과라고 표현해야 한다. 독립적인 새 실험에서 검증된 최종 성능이라고 과장하면 안 된다.
+0.295%는 2,030,370개 설정을 같은 12회에서 비교한 사후 개발값이고, 1.106%와 1.192%도 기존 자료 재적용 진단이다. 7월 0.961%는 정확도가 아니라 지정된 동일 미지 시료의 반복성이다. 독립적으로 표정한 새 습식 시료의 정확도로 표현하면 안 된다.
 
 ## 3.8 Android 앱
 
@@ -932,7 +944,7 @@ GitHub에 EXE 하나만 올리면 전체가 동작하는 구조가 아니다. �
 7. Mini2를 꽂고 열화상 frame 확인
 8. 10초 물 테스트로 CSV row 수와 주입량 확인
 9. 녹화 종료 후 typewise model 예측 source 확인
-10. 문제가 없으면 release ZIP 재생성
+10. Windows release ZIP은 DLL 재배포 권한을 별도로 확인한 뒤에만 재생성
 11. Android Studio에서 `mobile/android` build 시작
 12. Android 카메라 preview부터 고침
 13. Android Mini2 USB permission/stream 확인
@@ -984,10 +996,16 @@ mobile/android/app/src/main/java/kr/auto/titration/mobile/data/CsvSchema.kt
 - 물 주입 실험에서 약 1 mL/s 수준의 보정 유량을 사용했다.
 - 수집 데이터 기준 머신러닝 개발셋 MAPE는 약 1.27%로 정리되어 있다.
 - 약산-강염기 조건이 상대적으로 어려운 조건으로 나타났다.
+- Android host-side debug/unit software 검증과 private lab APK 빌드는 수행할 수 있다.
 
 아직 조심해야 하는 것:
 
 - Android 단독 Mini2 섭씨 변환이 Windows처럼 완전히 검증되었다고 말하면 안 된다.
+- 과거 G009 Android/Python/JS 검증 또는 release APK hash/signature 기록을 현재
+  공개 배포 승인으로 해석하면 안 된다. 해당 기록은 historical software evidence이고,
+  현재 active G009 software audit와 release-governance 상태는 별도다.
+- 현재 official-byte Android 트리, APK, source backup을 push/publish/재배포하면
+  안 된다. boolean Gradle property는 외부 권한을 대체하지 않는다.
 - 머신러닝 MAPE 1.27%를 모든 새 실험에서 보장되는 성능처럼 말하면 안 된다.
 - EXE 하나만 있으면 모든 PC에서 동작한다고 말하면 안 된다. ZIP 내부 파일과 DLL이 필요하다.
 - 자동으로 펌프가 당량점에서 멈춘다고 말하면 안 된다. 현재 설계는 자동 정지가 아니다.

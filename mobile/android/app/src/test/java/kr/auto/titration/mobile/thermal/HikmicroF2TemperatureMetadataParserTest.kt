@@ -21,7 +21,7 @@ class HikmicroF2TemperatureMetadataParserTest {
 
         assertNull(parsed.blockedInvalidMetadata)
         assertFalse(parsed.provesFullMatrixCelsius)
-        assertTrue(parsed.hasValidatedDeviceCelsiusSummaries)
+        assertTrue(parsed.hasDeviceCelsiusDiagnostics)
         val global = requireNotNull(parsed.deviceGlobalSummary)
         assertEquals(0, global.enumTempUnit)
         assertEquals(HikmicroF2TemperatureUnit.CELSIUS, global.nativeUnit)
@@ -82,7 +82,7 @@ class HikmicroF2TemperatureMetadataParserTest {
         assertEquals(12.0f, global.minTemperatureNative, 0.0001f)
         assertNull(global.minTemperatureCelsius)
         assertNull(global.minTemperatureRequestedDisplay)
-        assertFalse(parsed.hasValidatedDeviceCelsiusSummaries)
+        assertFalse(parsed.hasDeviceCelsiusDiagnostics)
     }
 
     @Test
@@ -122,6 +122,40 @@ class HikmicroF2TemperatureMetadataParserTest {
             "unknown_roi_region_type",
             HikmicroF2TemperatureMetadataParser.parseOfflineUploadHeader(unknownRegion).blockedInvalidMetadata?.code,
         )
+    }
+
+    @Test
+    fun rejectsExactLengthAllZeroUninitializedHeaderWithoutDiagnosticCelsius() {
+        val parsed =
+            HikmicroF2TemperatureMetadataParser.parseOfflineUploadHeader(ByteArray(7_368))
+
+        assertEquals("uninitialized_zero_offline_upload_header", parsed.blockedInvalidMetadata?.code)
+        assertNull(parsed.deviceGlobalSummary)
+        assertTrue(parsed.deviceExpertRoiSummary.isEmpty())
+        assertFalse(parsed.hasDeviceCelsiusDiagnostics)
+    }
+
+    @Test
+    fun packetDerivedDeviceSummaryRemainsDiagnosticAndCannotGrantGenericCelsius() {
+        val parsed = HikmicroF2TemperatureMetadataParser.parseOfflineUploadHeader(validHeader())
+        val global = requireNotNull(parsed.deviceGlobalSummary)
+        val status = Mini2RawStreamStatus.streamAttemptStarted(
+            reason = "test",
+            frameCounter = 1,
+            deviceTemperatureSummary = Mini2DeviceTemperatureSummary(
+                avgC = requireNotNull(global.avgTemperatureCelsius).toDouble(),
+                minC = requireNotNull(global.minTemperatureCelsius).toDouble(),
+                maxC = requireNotNull(global.maxTemperatureCelsius).toDouble(),
+                requestedDisplayUnit = requireNotNull(global.nativeUnit).name,
+                requestedDisplayUnitCode = global.enumTempUnit,
+            ),
+        )
+        val fields = status.toJsonTemperatureFieldsForTest()
+
+        assertFalse(fields.getValue("celsius_allowed") as Boolean)
+        assertEquals(null, fields["temperature_avg_c"])
+        assertEquals(30.0, fields["device_global_temperature_avg_c"])
+        assertEquals("device_global_summary", fields["device_global_temperature_provenance"])
     }
 
     @Test

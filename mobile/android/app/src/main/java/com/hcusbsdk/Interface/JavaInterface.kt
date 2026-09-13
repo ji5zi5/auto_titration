@@ -10,6 +10,10 @@ import com.hcusbsdk.jna.USB_CTRL_THERMAL_STREAM_PARAM as JnaUSB_CTRL_THERMAL_STR
 import com.hcusbsdk.jna.USB_DEVICE_INFO as JnaUSB_DEVICE_INFO
 import com.hcusbsdk.jna.USB_DEVICE_REG_RES as JnaUSB_DEVICE_REG_RES
 import com.hcusbsdk.jna.USB_FRAME_INFO as JnaUSB_FRAME_INFO
+import com.hcusbsdk.jna.USB_IMAGE_BRIGHTNESS as JnaUSB_IMAGE_BRIGHTNESS
+import com.hcusbsdk.jna.USB_IMAGE_CONTRAST as JnaUSB_IMAGE_CONTRAST
+import com.hcusbsdk.jna.USB_IMAGE_ENHANCEMENT as JnaUSB_IMAGE_ENHANCEMENT
+import com.hcusbsdk.jna.USB_IMAGE_ENHANCEMENT_EX as JnaUSB_IMAGE_ENHANCEMENT_EX
 import com.hcusbsdk.jna.USB_STREAM_CALLBACK_PARAM as JnaUSB_STREAM_CALLBACK_PARAM
 import com.hcusbsdk.jna.USB_SYSTEM_DEVICE_INFO as JnaUSB_SYSTEM_DEVICE_INFO
 import com.hcusbsdk.jna.USB_THERMAL_STREAM_PARAM as JnaUSB_THERMAL_STREAM_PARAM
@@ -21,6 +25,10 @@ import com.sun.jna.Structure
 import java.util.concurrent.atomic.AtomicLong
 
 private const val USB_GET_SYSTEM_DEVICE_INFO = 2011
+const val USB_GET_IMAGE_BRIGHTNESS = 2018
+const val USB_GET_IMAGE_CONTRAST = 2020
+const val USB_GET_IMAGE_ENHANCEMENT = 2026
+const val USB_GET_IMAGE_ENHANCEMENT_V20 = 2080
 const val USB_GET_THERMOMETRY_CALIBRATION_FILE = 2054
 private const val USB_SET_THERMAL_STREAM_PARAM = 2039
 private const val USB_GET_THERMAL_STREAM_CTRL = 2110
@@ -57,6 +65,10 @@ class JavaInterface private constructor() {
             cond: USB_COMMON_COND,
             out: USB_THERMOMETRY_CALIBRATION_FILE,
         ): Boolean
+        fun USB_GetImageBrightNess(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_BRIGHTNESS): Boolean = false
+        fun USB_GetImageContrast(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_CONTRAST): Boolean = false
+        fun USB_GetImageEnhancement(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_ENHANCEMENT): Boolean = false
+        fun USB_GetImageEnhancementV20(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_ENHANCEMENT_EX): Boolean = false
         fun USB_SetVideoParam(userId: Int, param: USB_VIDEO_PARAM): Boolean
         fun USB_SetThermalStreamParam(userId: Int, param: USB_THERMAL_STREAM_PARAM): Boolean
         fun USB_GetThermalStreamCtrl(userId: Int, param: USB_CTRL_THERMAL_STREAM_PARAM): Boolean
@@ -70,12 +82,20 @@ class JavaInterface private constructor() {
 
     @JvmField
     val m_fnStreamCallBack_jna = com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack { callbackUserId, framePointer, _ ->
-        m_fnStreamCallBack[callbackUserId]!!.fStreamCallback(callbackUserId, framePointer?.toInterfaceFrame())
+        val candidate = framePointer.toJnaFrameCopyCandidate()
+        recordRejectedCallbackFrame("jna", callbackUserId, candidate.summary, candidate.rejectionReason)
     }
 
     @JvmField
     val m_fnStreamCallBack_jni = com.hcusbsdk.jni.StreamCallBack_JNI { callbackUserId, frameInfo ->
-        m_fnStreamCallBack[callbackUserId]!!.fStreamCallback(callbackUserId, frameInfo.toInterfaceFrame())
+        val rejectionReason = frameInfo.copyRejectionReason()
+        val frameSummary = frameInfo.toFrameEntrySummary()
+        if (rejectionReason != null) {
+            recordRejectedCallbackFrame("jni", callbackUserId, frameSummary, rejectionReason)
+        } else {
+            val callback = callbackForDispatch("jni", callbackUserId, frameSummary)
+            callback?.invoke(callbackUserId, requireNotNull(frameInfo).toInterfaceFrame())
+        }
     }
 
     internal data class NativeFrameCopySource(
@@ -91,7 +111,51 @@ class JavaInterface private constructor() {
         val dwBufSize: Int = 0,
     )
 
-    private val streamCallbackEntryCounter = AtomicLong(0)
+    private val streamCallbackTotalEntryCounter = AtomicLong(0)
+    private val streamCallbackRejectedEntryCounter = AtomicLong(0)
+    private val streamCallbackDispatchedEntryCounter = AtomicLong(0)
+    private val streamRegistrationEpochCounter = AtomicLong(0)
+    private val activeStreamRegistrationEpochs = LongArray(m_fnStreamCallBack.size)
+    private val jniStreamCallbackKeepAlives =
+        arrayOfNulls<com.hcusbsdk.jni.StreamCallBack_JNI>(m_fnStreamCallBack.size)
+    private val jnaStreamCallbackKeepAlives =
+        arrayOfNulls<com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack>(m_fnStreamCallBack.size)
+
+    internal fun interface JniStartStreamCallbackInvoker {
+        fun USB_StartStreamCallback(
+            userId: Int,
+            callbackParam: com.hcusbsdk.jni.USB_STREAM_CALLBACK_PARAM,
+            callback: com.hcusbsdk.jni.StreamCallBack_JNI,
+        ): Int
+    }
+
+    internal fun interface JnaStartStreamCallbackInvoker {
+        fun USB_StartStreamCallback(
+            userId: Int,
+            callbackParam: JnaUSB_STREAM_CALLBACK_PARAM,
+        ): Int
+    }
+
+    internal fun interface JnaCallbackParamWriter {
+        fun write(callbackParam: JnaUSB_STREAM_CALLBACK_PARAM)
+    }
+
+    @Volatile
+    internal var jniStartStreamCallbackInvoker: JniStartStreamCallbackInvoker =
+        JniStartStreamCallbackInvoker { userId, callbackParam, callback ->
+            com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance()
+                .USB_StartStreamCallback(userId, callbackParam, callback)
+        }
+
+    @Volatile
+    internal var jnaStartStreamCallbackInvoker: JnaStartStreamCallbackInvoker =
+        JnaStartStreamCallbackInvoker { userId, callbackParam ->
+            HCUSBSDK.getInstance().USB_StartStreamCallback(userId, callbackParam.pointer)
+        }
+
+    @Volatile
+    internal var jnaCallbackParamWriter: JnaCallbackParamWriter =
+        JnaCallbackParamWriter { callbackParam -> callbackParam.write() }
 
     @Volatile
     var lastStartStreamCallbackDetail: String = "not_started"
@@ -101,12 +165,59 @@ class JavaInterface private constructor() {
     var lastStreamCallbackEntryDetail: String = "no_callback_entry"
         private set
 
+    @Volatile
+    var lastStreamCallbackRejectedEntryDetail: String = "no_rejected_callback_entry"
+        private set
+
+    val streamCallbackTotalEntryCount: Long
+        get() = streamCallbackTotalEntryCounter.get()
+
+    val streamCallbackRejectedEntryCount: Long
+        get() = streamCallbackRejectedEntryCounter.get()
+
+    val streamCallbackDispatchedEntryCount: Long
+        get() = streamCallbackDispatchedEntryCounter.get()
+
+    /**
+     * Backward-compatible packet-evidence count. Rejected or otherwise
+     * undispatched callback entries are deliberately excluded.
+     */
     val streamCallbackEntryCount: Long
-        get() = streamCallbackEntryCounter.get()
+        get() = streamCallbackDispatchedEntryCount
 
     fun resetStreamCallbackEntryDiagnostics() {
-        streamCallbackEntryCounter.set(0L)
+        streamCallbackTotalEntryCounter.set(0L)
+        streamCallbackRejectedEntryCounter.set(0L)
+        streamCallbackDispatchedEntryCounter.set(0L)
         lastStreamCallbackEntryDetail = "no_callback_entry"
+        lastStreamCallbackRejectedEntryDetail = "no_rejected_callback_entry"
+    }
+
+    internal fun resetJniStartStreamCallbackInvokerForTest() {
+        jniStartStreamCallbackInvoker = JniStartStreamCallbackInvoker { userId, callbackParam, callback ->
+            com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance()
+                .USB_StartStreamCallback(userId, callbackParam, callback)
+        }
+    }
+
+    internal fun resetJnaStartStreamCallbackInvokerForTest() {
+        jnaStartStreamCallbackInvoker = JnaStartStreamCallbackInvoker { userId, callbackParam ->
+            HCUSBSDK.getInstance().USB_StartStreamCallback(userId, callbackParam.pointer)
+        }
+    }
+
+    internal fun resetJnaCallbackParamWriterForTest() {
+        jnaCallbackParamWriter = JnaCallbackParamWriter { callbackParam -> callbackParam.write() }
+    }
+
+    internal fun resetStreamCallbackRegistrationsForTest() {
+        synchronized(m_fnStreamCallBack) {
+            m_fnStreamCallBack.fill(null)
+            activeStreamRegistrationEpochs.fill(0L)
+            jniStreamCallbackKeepAlives.fill(null)
+            jnaStreamCallbackKeepAlives.fill(null)
+        }
+        resetActiveStreamCallbackState()
     }
 
     @Volatile
@@ -114,6 +225,9 @@ class JavaInterface private constructor() {
 
     @Volatile
     private var activeStreamCallbackChannel: Int = -1
+
+    @Volatile
+    private var activeStreamCallbackRegistrationEpoch: Long = 0L
 
     @Volatile
     private var m_iEnumType: Int = ENUM_TYPE_JAVA
@@ -140,6 +254,10 @@ class JavaInterface private constructor() {
             cond: USB_COMMON_COND,
             out: USB_THERMOMETRY_CALIBRATION_FILE,
         ): Boolean = false
+        override fun USB_GetImageBrightNess(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_BRIGHTNESS): Boolean = false
+        override fun USB_GetImageContrast(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_CONTRAST): Boolean = false
+        override fun USB_GetImageEnhancement(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_ENHANCEMENT): Boolean = false
+        override fun USB_GetImageEnhancementV20(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_ENHANCEMENT_EX): Boolean = false
         override fun USB_SetVideoParam(userId: Int, param: USB_VIDEO_PARAM): Boolean = false
         override fun USB_SetThermalStreamParam(userId: Int, param: USB_THERMAL_STREAM_PARAM): Boolean = false
         override fun USB_GetThermalStreamCtrl(userId: Int, param: USB_CTRL_THERMAL_STREAM_PARAM): Boolean = false
@@ -242,6 +360,47 @@ class JavaInterface private constructor() {
         return true
     }
 
+
+    fun USB_GetImageBrightNess(userId: Int, out: USB_IMAGE_BRIGHTNESS?): Boolean {
+        if (out == null) return false
+        val returned = USB_IMAGE_BRIGHTNESS()
+        val cond = USB_COMMON_COND().apply { byChannelID = 1.toByte() }
+        val ok = nativeBridge.USB_GetImageBrightNess(userId, cond, returned)
+        if (!ok) return false
+        out.dwBrightness = returned.dwBrightness
+        return true
+    }
+
+    fun USB_GetImageContrast(userId: Int, out: USB_IMAGE_CONTRAST?): Boolean {
+        if (out == null) return false
+        val returned = USB_IMAGE_CONTRAST()
+        val cond = USB_COMMON_COND().apply { byChannelID = 1.toByte() }
+        val ok = nativeBridge.USB_GetImageContrast(userId, cond, returned)
+        if (!ok) return false
+        out.dwContrast = returned.dwContrast
+        return true
+    }
+
+    fun USB_GetImageEnhancement(userId: Int, out: USB_IMAGE_ENHANCEMENT?): Boolean {
+        if (out == null) return false
+        val returned = USB_IMAGE_ENHANCEMENT()
+        val cond = USB_COMMON_COND().apply { byChannelID = 1.toByte() }
+        val ok = nativeBridge.USB_GetImageEnhancement(userId, cond, returned)
+        if (!ok) return false
+        out.copyFrom(returned)
+        return true
+    }
+
+    fun USB_GetImageEnhancementV20(userId: Int, out: USB_IMAGE_ENHANCEMENT_EX?): Boolean {
+        if (out == null) return false
+        val returned = USB_IMAGE_ENHANCEMENT_EX()
+        val cond = USB_COMMON_COND().apply { byChannelID = 1.toByte() }
+        val ok = nativeBridge.USB_GetImageEnhancementV20(userId, cond, returned)
+        if (!ok) return false
+        out.copyFrom(returned)
+        return true
+    }
+
     fun USB_SetVideoParam(userId: Int, param: USB_VIDEO_PARAM): Boolean =
         nativeBridge.USB_SetVideoParam(userId, param)
 
@@ -274,52 +433,210 @@ class JavaInterface private constructor() {
         if (userId < 0 || userId >= m_fnStreamCallBack.size) return -1
         val callback = param.fnStreamCallBack ?: return -1
         val suppliedJnaCallback = cbParam.fnStreamCallBack
-        val jnaCallback = com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack { callbackUserId, framePointer, userPointer ->
-            recordCallbackEntry("jna", callbackUserId, framePointer.toFrameEntrySummary())
-            if (suppliedJnaCallback != null) {
-                suppliedJnaCallback.invoke(callbackUserId, framePointer, userPointer)
+        val registration = registerJnaStreamCallback(userId, callback, suppliedJnaCallback)
+        val jnaCallback = registration.callback
+        val registrationEpoch = registration.epoch
+        var nativeParam: JnaUSB_STREAM_CALLBACK_PARAM? = null
+        return completeJnaStartRegistration(
+            userId = userId,
+            registrationEpoch = registrationEpoch,
+            streamType = param.dwStreamType,
+            dwSize = { nativeParam?.dwSize ?: -1 },
+            writeAction = {
+                nativeParam = JnaUSB_STREAM_CALLBACK_PARAM().also {
+                    // Official JNA wrapper shape: dwSize = nativeParam.size()
+                    it.dwSize = it.size()
+                    it.dwStreamType = param.dwStreamType
+                    it.pUser = Pointer.NULL
+                    it.fnStreamCallBack = jnaCallback
+                    jnaCallbackParamWriter.write(it)
+                }
+            },
+            invokeAction = {
+                jnaStartStreamCallbackInvoker.USB_StartStreamCallback(userId, requireNotNull(nativeParam))
+            },
+        )
+    }
+
+    private fun completeJnaStartRegistration(
+        userId: Int,
+        registrationEpoch: Long,
+        streamType: Int,
+        dwSize: () -> Int,
+        writeAction: () -> Unit,
+        invokeAction: () -> Int,
+    ): Int {
+        setActiveStreamCallbackStateIfCurrent(userId, registrationEpoch, -1)
+        var phase = "write"
+        return try {
+            writeAction()
+            phase = "invoke"
+            val channel = invokeAction()
+            setActiveStreamCallbackStateIfCurrent(userId, registrationEpoch, channel)
+            phase = "last_error"
+            val lastError = USB_GetLastError()
+            lastStartStreamCallbackDetail =
+                "official_jna_wrapper_return channel=$channel lastError=$lastError userId=$userId streamType=$streamType dwSize=${dwSize()}"
+            if (channel == -1) {
+                invalidateStreamCallbackRegistrationIfCurrent(userId, registrationEpoch)
+                resetStreamCallbackEntryDiagnostics()
+            }
+            channel
+        } catch (throwable: Throwable) {
+            invalidateStreamCallbackRegistrationIfCurrent(userId, registrationEpoch)
+            resetStreamCallbackEntryDiagnostics()
+            lastStartStreamCallbackDetail =
+                "official_jna_wrapper_throw phase=$phase type=${throwable::class.java.name} userId=$userId streamType=$streamType dwSize=${dwSize()}"
+            throw throwable
+        }
+    }
+
+    private data class JnaStreamCallbackRegistration(
+        val epoch: Long,
+        val callback: com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack,
+    )
+
+    private fun registerJnaStreamCallback(
+        userId: Int,
+        callback: FStreamCallBack,
+        @Suppress("UNUSED_PARAMETER")
+        suppliedJnaCallback: com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack?,
+    ): JnaStreamCallbackRegistration {
+        val registrationEpoch = streamRegistrationEpochCounter.incrementAndGet()
+        val jnaCallback = com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack { callbackUserId, framePointer, _ ->
+            val candidate = framePointer.toJnaFrameCopyCandidate()
+            recordRejectedCallbackFrame("jna", callbackUserId, candidate.summary, candidate.rejectionReason)
+        }
+        synchronized(m_fnStreamCallBack) {
+            m_fnStreamCallBack[userId] = callback
+            activeStreamRegistrationEpochs[userId] = registrationEpoch
+            jnaStreamCallbackKeepAlives[userId] = jnaCallback
+            jniStreamCallbackKeepAlives[userId] = null
+        }
+        return JnaStreamCallbackRegistration(registrationEpoch, jnaCallback)
+    }
+
+    internal fun interface HostJnaStreamCallback {
+        fun invoke(callbackUserId: Int, frame: NativeFrameCopySource)
+    }
+
+    internal fun registerJnaStreamCallbackForHostTest(
+        userId: Int,
+        callback: FStreamCallBack,
+        suppliedJnaCallback: com.hcusbsdk.jna.HCUSBSDKByJNA.FStreamCallBack,
+    ): HostJnaStreamCallback {
+        val registration = registerJnaStreamCallback(userId, callback, suppliedJnaCallback)
+        return HostJnaStreamCallback { callbackUserId, frame ->
+            val rejectionReason = frame.copyRejectionReason()
+            val frameSummary = frame.toFrameEntrySummary()
+            if (rejectionReason != null) {
+                recordRejectedCallbackFrame("jna", callbackUserId, frameSummary, rejectionReason)
             } else {
-                callback.fStreamCallback(callbackUserId, framePointer?.toInterfaceFrame())
+                val registeredCallback = callbackForRegistrationDispatch(
+                    route = "jna",
+                    registeredUserId = userId,
+                    registrationEpoch = registration.epoch,
+                    registeredCallback = callback,
+                    callbackUserId = callbackUserId,
+                    frameSummary = frameSummary,
+                )
+                if (registeredCallback != null) {
+                    suppliedJnaCallback.invoke(callbackUserId, null, null)
+                }
+            }
+        }
+    }
+
+    internal fun runJnaStartTransactionForHostTest(
+        userId: Int,
+        callback: FStreamCallBack,
+        writeAction: () -> Unit,
+        invokeAction: () -> Int,
+    ): Int {
+        val registration = registerJnaStreamCallback(userId, callback, null)
+        return completeJnaStartRegistration(
+            userId = userId,
+            registrationEpoch = registration.epoch,
+            streamType = 0,
+            dwSize = { 0 },
+            writeAction = writeAction,
+            invokeAction = invokeAction,
+        )
+    }
+
+    private fun USB_StartStreamCallback_jni(userId: Int, param: USB_STREAM_CALLBACK_PARAM): Int {
+        if (userId !in m_fnStreamCallBack.indices) return -1
+        resetStreamCallbackEntryDiagnostics()
+        val callback = param.fnStreamCallBack ?: return -1
+        val registrationEpoch = streamRegistrationEpochCounter.incrementAndGet()
+        val jniCallback = com.hcusbsdk.jni.StreamCallBack_JNI { callbackUserId, frameInfo ->
+            val rejectionReason = frameInfo.copyRejectionReason()
+            val frameSummary = frameInfo.toFrameEntrySummary()
+            if (rejectionReason != null) {
+                recordRejectedCallbackFrame("jni", callbackUserId, frameSummary, rejectionReason)
+            } else {
+                val registeredCallback = callbackForRegistrationDispatch(
+                    route = "jni",
+                    registeredUserId = userId,
+                    registrationEpoch = registrationEpoch,
+                    registeredCallback = callback,
+                    callbackUserId = callbackUserId,
+                    frameSummary = frameSummary,
+                )
+                registeredCallback?.invoke(callbackUserId, requireNotNull(frameInfo).toInterfaceFrame())
             }
         }
         synchronized(m_fnStreamCallBack) {
             m_fnStreamCallBack[userId] = callback
+            activeStreamRegistrationEpochs[userId] = registrationEpoch
+            jniStreamCallbackKeepAlives[userId] = jniCallback
+            jnaStreamCallbackKeepAlives[userId] = null
         }
-        val nativeParam = JnaUSB_STREAM_CALLBACK_PARAM()
-        // Official JNA wrapper shape: dwSize = nativeParam.size()
-        nativeParam.dwSize = nativeParam.size()
-        nativeParam.dwStreamType = param.dwStreamType
-        nativeParam.pUser = Pointer.NULL
-        nativeParam.fnStreamCallBack = jnaCallback
-        nativeParam.write()
-        activeStreamCallbackUserId = userId
-        activeStreamCallbackChannel = -1
-        val channel = HCUSBSDK.getInstance().USB_StartStreamCallback(userId, nativeParam.pointer)
-        activeStreamCallbackChannel = channel
-        val lastError = USB_GetLastError()
-        lastStartStreamCallbackDetail =
-            "official_jna_wrapper_return channel=$channel lastError=$lastError userId=$userId streamType=${param.dwStreamType} dwSize=${nativeParam.dwSize}"
-        if (channel == -1) {
-            clearCallbackSlot(userId)
-        }
-        return channel
-    }
-
-    private fun USB_StartStreamCallback_jni(userId: Int, param: USB_STREAM_CALLBACK_PARAM): Int {
-        if (userId == -1 || userId > 10_000) return -1
-        m_fnStreamCallBack[userId] = param.fnStreamCallBack
+        setActiveStreamCallbackStateIfCurrent(userId, registrationEpoch, -1)
         val jniParam = com.hcusbsdk.jni.USB_STREAM_CALLBACK_PARAM().apply {
             dwSize = 0
             dwStreamType = param.dwStreamType
         }
-        return com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance()
-            .USB_StartStreamCallback(userId, jniParam, m_fnStreamCallBack_jni)
+        return try {
+            val channel = jniStartStreamCallbackInvoker.USB_StartStreamCallback(userId, jniParam, jniCallback)
+            setActiveStreamCallbackStateIfCurrent(userId, registrationEpoch, channel)
+            val lastError = USB_GetLastError()
+            lastStartStreamCallbackDetail =
+                "official_jni_wrapper_return channel=$channel lastError=$lastError userId=$userId streamType=${param.dwStreamType} dwSize=${jniParam.dwSize}"
+            if (channel == -1) {
+                invalidateStreamCallbackRegistrationIfCurrent(userId, registrationEpoch)
+                resetStreamCallbackEntryDiagnostics()
+            }
+            channel
+        } catch (throwable: Throwable) {
+            invalidateStreamCallbackRegistrationIfCurrent(userId, registrationEpoch)
+            resetStreamCallbackEntryDiagnostics()
+            lastStartStreamCallbackDetail =
+                "official_jni_wrapper_throw type=${throwable::class.java.name} userId=$userId streamType=${param.dwStreamType} dwSize=${jniParam.dwSize}"
+            throw throwable
+        }
     }
 
-    fun USB_StopChannel(userId: Int, channel: Int): Boolean =
-        com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance().USB_StopChannel(userId, channel)
+    fun USB_StopChannel(userId: Int, channel: Int): Boolean {
+        val suspended = suspendStreamCallbackRegistration(userId)
+        val stopped = try {
+            com.hcusbsdk.jni.HCUSBSDKByJNI.getInstance().USB_StopChannel(userId, channel)
+        } catch (throwable: Throwable) {
+            restoreStreamCallbackRegistration(suspended)
+            throw throwable
+        }
+        if (stopped) {
+            invalidateStreamCallbackRegistration(userId)
+        } else {
+            restoreStreamCallbackRegistration(suspended)
+        }
+        return stopped
+    }
 
-    fun USB_Logout(userId: Int): Boolean = HCUSBSDK.getInstance().USB_Logout(userId)
+    fun USB_Logout(userId: Int): Boolean {
+        invalidateStreamCallbackRegistration(userId)
+        return HCUSBSDK.getInstance().USB_Logout(userId)
+    }
 
     fun releaseUnselectedDeviceConnections(selected: USB_DEVICE_INFO?) {
         synchronized(contextDeviceInfos) {
@@ -346,74 +663,230 @@ class JavaInterface private constructor() {
         }
     }
 
-    private fun clearCallbackSlot(userId: Int) {
-        if (userId !in m_fnStreamCallBack.indices) return
+    internal data class SuspendedStreamCallbackRegistration(
+        val userId: Int,
+        val epoch: Long,
+        val callback: FStreamCallBack,
+    )
+
+    internal fun suspendStreamCallbackRegistration(userId: Int): SuspendedStreamCallbackRegistration? {
+        if (userId !in m_fnStreamCallBack.indices) return null
         synchronized(m_fnStreamCallBack) {
-            m_fnStreamCallBack[userId] = null
+            val callback = m_fnStreamCallBack[userId] ?: return null
+            val epoch = activeStreamRegistrationEpochs[userId]
+            if (epoch == 0L) return null
+            activeStreamRegistrationEpochs[userId] = 0L
+            return SuspendedStreamCallbackRegistration(userId, epoch, callback)
         }
     }
 
+    internal fun restoreStreamCallbackRegistration(suspended: SuspendedStreamCallbackRegistration?) {
+        suspended ?: return
+        synchronized(m_fnStreamCallBack) {
+            if (
+                activeStreamRegistrationEpochs[suspended.userId] == 0L &&
+                m_fnStreamCallBack[suspended.userId] === suspended.callback
+            ) {
+                activeStreamRegistrationEpochs[suspended.userId] = suspended.epoch
+            }
+        }
+    }
+
+    internal fun invalidateStreamCallbackRegistration(userId: Int) {
+        if (userId !in m_fnStreamCallBack.indices) return
+        synchronized(m_fnStreamCallBack) {
+            activeStreamRegistrationEpochs[userId] = 0L
+            m_fnStreamCallBack[userId] = null
+            jniStreamCallbackKeepAlives[userId] = null
+            jnaStreamCallbackKeepAlives[userId] = null
+        }
+        if (activeStreamCallbackUserId == userId) resetActiveStreamCallbackState()
+    }
+
+    private fun invalidateStreamCallbackRegistrationIfCurrent(userId: Int, registrationEpoch: Long) {
+        synchronized(m_fnStreamCallBack) {
+            if (activeStreamRegistrationEpochs[userId] == registrationEpoch) {
+                activeStreamRegistrationEpochs[userId] = 0L
+                m_fnStreamCallBack[userId] = null
+                jniStreamCallbackKeepAlives[userId] = null
+                jnaStreamCallbackKeepAlives[userId] = null
+            }
+            if (
+                activeStreamCallbackUserId == userId &&
+                activeStreamCallbackRegistrationEpoch == registrationEpoch
+            ) {
+                resetActiveStreamCallbackState()
+            }
+        }
+    }
+
+    private fun setActiveStreamCallbackStateIfCurrent(userId: Int, registrationEpoch: Long, channel: Int) {
+        synchronized(m_fnStreamCallBack) {
+            if (activeStreamRegistrationEpochs[userId] != registrationEpoch) return
+            activeStreamCallbackUserId = userId
+            activeStreamCallbackChannel = channel
+            activeStreamCallbackRegistrationEpoch = registrationEpoch
+        }
+    }
+
+    internal fun activeStreamRegistrationEpochForTest(userId: Int): Long =
+        if (userId in m_fnStreamCallBack.indices) {
+            synchronized(m_fnStreamCallBack) { activeStreamRegistrationEpochs[userId] }
+        } else {
+            0L
+        }
+
+    private fun resetActiveStreamCallbackState() {
+        activeStreamCallbackUserId = -1
+        activeStreamCallbackChannel = -1
+        activeStreamCallbackRegistrationEpoch = 0L
+    }
+
     internal fun dispatchJnaFrameCopySourceForHostTest(callbackUserId: Int, frame: NativeFrameCopySource) {
-        recordCallbackEntry("jna", callbackUserId, frame.toFrameEntrySummary())
+        val rejectionReason = frame.copyRejectionReason()
+        val frameSummary = frame.toFrameEntrySummary()
+        if (rejectionReason != null) {
+            recordRejectedCallbackFrame("jna", callbackUserId, frameSummary, rejectionReason)
+        } else {
+            val callback = callbackForDispatch("jna", callbackUserId, frameSummary)
+            callback?.invoke(callbackUserId, frame.toInterfaceFrame())
+        }
+    }
+
+    internal fun dispatchJnaFrameDeclarationForHostTest(
+        callbackUserId: Int,
+        declaredBytes: Int,
+        pointerPresent: Boolean,
+    ) {
+        val summary =
+            "dwBufSize=$declaredBytes availableBytes=unavailable_pointer_abi " +
+                "nativeAllocationLengthValidated=false pBufNull=${!pointerPresent}"
+        val rejectionReason = jnaFrameCopyRejectionReason(declaredBytes, pointerPresent)
+        if (rejectionReason != null) {
+            recordRejectedCallbackFrame("jna", callbackUserId, summary, rejectionReason)
+        }
+    }
+
+    private fun recordRejectedCallbackFrame(
+        route: String,
+        callbackUserId: Int,
+        frameSummary: String,
+        rejectionReason: String,
+    ) {
+        val totalCount = streamCallbackTotalEntryCounter.incrementAndGet()
+        val rejectedCount = streamCallbackRejectedEntryCounter.incrementAndGet()
+        lastStreamCallbackRejectedEntryDetail =
+            "route=$route disposition=rejected dropReason=$rejectionReason rejectedCount=$rejectedCount totalEntryCount=$totalCount callbackUserId=$callbackUserId activeUserId=$activeStreamCallbackUserId activeChannel=$activeStreamCallbackChannel $frameSummary"
+    }
+
+    private fun callbackForDispatch(
+        route: String,
+        callbackUserId: Int,
+        frameSummary: String,
+    ): FStreamCallBack? {
         val callback = if (callbackUserId in m_fnStreamCallBack.indices) {
             synchronized(m_fnStreamCallBack) { m_fnStreamCallBack[callbackUserId] }
         } else {
             null
         }
-        callback?.fStreamCallback(callbackUserId, frame.toInterfaceFrame())
+        if (callback == null) {
+            val dropReason = if (callbackUserId !in m_fnStreamCallBack.indices) {
+                "slot_out_of_range"
+            } else {
+                "slot_cleared_or_unregistered"
+            }
+            recordRejectedCallbackFrame(route, callbackUserId, frameSummary, dropReason)
+            return null
+        }
+
+        val totalCount = streamCallbackTotalEntryCounter.incrementAndGet()
+        val dispatchedCount = streamCallbackDispatchedEntryCounter.incrementAndGet()
+        lastStreamCallbackEntryDetail =
+            "route=$route disposition=dispatched dispatchedCount=$dispatchedCount totalEntryCount=$totalCount callbackUserId=$callbackUserId activeUserId=$activeStreamCallbackUserId activeChannel=$activeStreamCallbackChannel $frameSummary"
+        return callback
     }
 
-    private fun recordCallbackEntry(route: String, callbackUserId: Int, frameSummary: String) {
-        val count = streamCallbackEntryCounter.incrementAndGet()
+    private fun callbackForRegistrationDispatch(
+        route: String,
+        registeredUserId: Int,
+        registrationEpoch: Long,
+        registeredCallback: FStreamCallBack,
+        callbackUserId: Int,
+        frameSummary: String,
+    ): FStreamCallBack? {
+        val currentEpoch: Long
+        val callbackMatches: Boolean
+        synchronized(m_fnStreamCallBack) {
+            currentEpoch = activeStreamRegistrationEpochs[registeredUserId]
+            callbackMatches = m_fnStreamCallBack[registeredUserId] === registeredCallback
+        }
+        val callback = registeredCallback.takeIf {
+            callbackUserId == registeredUserId &&
+                currentEpoch == registrationEpoch &&
+                callbackMatches
+        }
+        if (callback == null) {
+            val dropReason = when {
+                callbackUserId != registeredUserId -> "user_id_mismatch"
+                currentEpoch != registrationEpoch -> "stale_registration_epoch"
+                else -> "callback_replaced"
+            }
+            recordRejectedCallbackFrame(
+                route,
+                callbackUserId,
+                "registeredUserId=$registeredUserId registrationEpoch=$registrationEpoch activeEpoch=$currentEpoch $frameSummary",
+                dropReason,
+            )
+            return null
+        }
+
+        val totalCount = streamCallbackTotalEntryCounter.incrementAndGet()
+        val dispatchedCount = streamCallbackDispatchedEntryCounter.incrementAndGet()
         lastStreamCallbackEntryDetail =
-            "route=$route count=$count callbackUserId=$callbackUserId activeUserId=$activeStreamCallbackUserId activeChannel=$activeStreamCallbackChannel $frameSummary"
+            "route=$route disposition=dispatched dispatchedCount=$dispatchedCount totalEntryCount=$totalCount callbackUserId=$callbackUserId registeredUserId=$registeredUserId registrationEpoch=$registrationEpoch activeEpoch=$currentEpoch activeUserId=$activeStreamCallbackUserId activeChannel=$activeStreamCallbackChannel $frameSummary"
+        return callback
     }
 
     private fun NativeFrameCopySource.toFrameEntrySummary(): String =
-        "dwBufSize=$dwBufSize dwFrameType=$dwFrameType dwDataType=$dwDataType dwStreamType=$dwStreamType frameNum=$nFrameNum"
+        "dwBufSize=$dwBufSize availableBytes=${pBuf.size} dwFrameType=$dwFrameType dwDataType=$dwDataType dwStreamType=$dwStreamType frameNum=$nFrameNum"
 
-    private fun Pointer?.toFrameEntrySummary(): String {
-        if (this == null) return "frame=null"
-        val nativeFrame = JnaUSB_FRAME_INFO(this).apply { read() }
-        return "dwBufSize=${nativeFrame.dwBufSize} dwFrameType=${nativeFrame.dwFrameType} dwDataType=${nativeFrame.dwDataType} dwStreamType=${nativeFrame.dwStreamType} frameNum=${nativeFrame.nFrameNum}"
+    private data class JnaFrameCopyCandidate(
+        val summary: String,
+        val rejectionReason: String,
+    )
+
+    private fun Pointer?.toJnaFrameCopyCandidate(): JnaFrameCopyCandidate {
+        if (this == null) {
+            return JnaFrameCopyCandidate("frame=null nativeCapacity=unavailable_pointer_abi", "frame_pointer_null")
+        }
+        return JnaFrameCopyCandidate(
+            "framePointerPresent=true availableBytes=unavailable_pointer_abi nativeAllocationLengthValidated=false",
+            "native_allocation_capacity_unprovable",
+        )
     }
 
     private fun com.hcusbsdk.jni.USB_FRAME_INFO?.toFrameEntrySummary(): String {
         if (this == null) return "frame=null"
-        return "dwBufSize=$dwBufSize dwFrameType=$dwFrameType dwDataType=$dwDataType dwStreamType=$dwStreamType frameNum=$nFrameNum"
+        return "dwBufSize=$dwBufSize availableBytes=${pBuf.size} dwFrameType=$dwFrameType dwDataType=$dwDataType dwStreamType=$dwStreamType frameNum=$nFrameNum"
     }
 
-    private fun Pointer.toInterfaceFrame(): USB_FRAME_INFO {
-        val nativeFrame = JnaUSB_FRAME_INFO(this).apply { read() }
-        return nativeFrame.toInterfaceFrame { byteCount ->
-            if (byteCount > 0) {
-                nativeFrame.pBuf?.getByteArray(0, byteCount) ?: ByteArray(0)
-            } else {
-                ByteArray(0)
-            }
-        }
+    private fun jnaFrameCopyRejectionReason(declaredBytes: Int, pointerPresent: Boolean): String? = when {
+        declaredBytes < 0 -> "negative_declared_length"
+        declaredBytes > MAX_JNA_FRAME_COPY_BYTES -> "declared_length_exceeds_max"
+        declaredBytes > 0 && !pointerPresent -> "positive_declared_length_with_null_pointer"
+        else -> null
     }
 
-    private fun JnaUSB_FRAME_INFO.toInterfaceFrame(readBytes: (Int) -> ByteArray): USB_FRAME_INFO {
-        val byteCount = dwBufSize.coerceIn(0, MAX_JNA_FRAME_COPY_BYTES)
-        val bytes = readBytes(byteCount)
-        return USB_FRAME_INFO().apply {
-            nStamp = this@toInterfaceFrame.nStamp
-            dwStreamType = this@toInterfaceFrame.dwStreamType
-            dwWidth = this@toInterfaceFrame.dwWidth
-            dwHeight = this@toInterfaceFrame.dwHeight
-            dwFrameRate = this@toInterfaceFrame.dwFrameRate
-            dwFrameType = this@toInterfaceFrame.dwFrameType
-            dwDataType = this@toInterfaceFrame.dwDataType
-            nFrameNum = this@toInterfaceFrame.nFrameNum
-            pBuf = bytes
-            dwBufSize = bytes.size
-        }
+    private fun NativeFrameCopySource.copyRejectionReason(): String? = when {
+        dwBufSize < 0 -> "negative_declared_length"
+        dwBufSize > MAX_JNA_FRAME_COPY_BYTES -> "declared_length_exceeds_max"
+        dwBufSize > pBuf.size -> "declared_length_exceeds_available_bytes"
+        else -> null
     }
 
     private fun NativeFrameCopySource.toInterfaceFrame(): USB_FRAME_INFO {
-        val byteCount = dwBufSize.coerceIn(0, MAX_JNA_FRAME_COPY_BYTES)
-        val bytes = pBuf.copyOf(byteCount)
+        check(copyRejectionReason() == null)
+        val bytes = pBuf.copyOf(dwBufSize)
         return USB_FRAME_INFO().apply {
             nStamp = this@toInterfaceFrame.nStamp
             dwStreamType = this@toInterfaceFrame.dwStreamType
@@ -424,13 +897,20 @@ class JavaInterface private constructor() {
             dwDataType = this@toInterfaceFrame.dwDataType
             nFrameNum = this@toInterfaceFrame.nFrameNum
             pBuf = bytes
-            dwBufSize = bytes.size
+            dwBufSize = this@toInterfaceFrame.dwBufSize
         }
     }
 
-    private fun com.hcusbsdk.jni.USB_FRAME_INFO?.toInterfaceFrame(): USB_FRAME_INFO? {
-        if (this == null) return null
-        val byteCount = dwBufSize.coerceIn(0, MAX_JNA_FRAME_COPY_BYTES)
+    private fun com.hcusbsdk.jni.USB_FRAME_INFO?.copyRejectionReason(): String? = when {
+        this == null -> "frame_info_null"
+        dwBufSize < 0 -> "negative_declared_length"
+        dwBufSize > MAX_JNA_FRAME_COPY_BYTES -> "declared_length_exceeds_max"
+        dwBufSize > pBuf.size -> "declared_length_exceeds_available_bytes"
+        else -> null
+    }
+
+    private fun com.hcusbsdk.jni.USB_FRAME_INFO.toInterfaceFrame(): USB_FRAME_INFO {
+        check(copyRejectionReason() == null)
         return USB_FRAME_INFO().also { target ->
             target.nStamp = nStamp
             target.dwStreamType = dwStreamType
@@ -440,8 +920,8 @@ class JavaInterface private constructor() {
             target.dwFrameType = dwFrameType
             target.dwDataType = dwDataType
             target.nFrameNum = nFrameNum
-            target.pBuf = pBuf.copyOf(byteCount)
-            target.dwBufSize = target.pBuf.size
+            target.pBuf = pBuf.copyOf(dwBufSize)
+            target.dwBufSize = dwBufSize
         }
     }
 
@@ -555,42 +1035,72 @@ class JavaInterface private constructor() {
             out: USB_THERMOMETRY_CALIBRATION_FILE,
         ): Boolean {
             val nativeCond = JnaUSB_COMMON_COND().apply {
-                    byChannelID = cond.byChannelID
-                    byRes = cond.byRes.copyOf(6)
+                byChannelID = cond.byChannelID
+                byRes = cond.byRes.copyOf(6)
+            }
+            val calibrationMemory = com.sun.jna.Memory(USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES.toLong()).apply {
+                clear(USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES.toLong())
+            }
+            val nativeParam = JnaUSB_THERMOMETRY_CALIBRATION_FILE().apply {
+                pCalibrationFile = calibrationMemory
+                dwFileLenth = USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES
+                write()
+            }
+            nativeCond.write()
+            val inputInfo = JnaUSB_CONFIG_INPUT_INFO().apply {
+                lpCondBuffer = nativeCond.pointer
+                dwCondBufferSize = nativeCond.size()
+                write()
+            }
+            val outputInfo = JnaUSB_CONFIG_OUTPUT_INFO().apply {
+                lpOutBuffer = nativeParam.pointer
+                dwOutBufferSize = nativeParam.size()
+                write()
+            }
+            val ok = sdk.USB_GetDeviceConfig(
+                userId,
+                USB_GET_THERMOMETRY_CALIBRATION_FILE,
+                inputInfo.pointer,
+                outputInfo.pointer,
+            )
+            if (ok) {
+                outputInfo.read()
+                nativeParam.read()
+                out.dwFileLenth = nativeParam.dwFileLenth
+                if (nativeParam.dwFileLenth in 1..USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES) {
+                    calibrationMemory.read(0, out.pCalibrationFile, 0, nativeParam.dwFileLenth)
                 }
-                val calibrationMemory = com.sun.jna.Memory(USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES.toLong()).apply {
-                    clear(USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES.toLong())
-                }
-                val nativeParam = JnaUSB_THERMOMETRY_CALIBRATION_FILE().apply {
-                    pCalibrationFile = calibrationMemory
-                    dwFileLenth = USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES
-                    write()
-                }
-                nativeCond.write()
-                val inputInfo = JnaUSB_CONFIG_INPUT_INFO().apply {
-                    lpCondBuffer = nativeCond.pointer
-                    dwCondBufferSize = nativeCond.size()
-                    write()
-                }
-                val outputInfo = JnaUSB_CONFIG_OUTPUT_INFO().apply {
-                    lpOutBuffer = nativeParam.pointer
-                    dwOutBufferSize = nativeParam.size()
-                    write()
-                }
-                val ok = sdk.USB_GetDeviceConfig(
-                    userId,
-                    USB_GET_THERMOMETRY_CALIBRATION_FILE,
-                    inputInfo.pointer,
-                    outputInfo.pointer,
-                )
-                if (ok) {
-                    outputInfo.read()
-                    nativeParam.read()
-                    out.dwFileLenth = nativeParam.dwFileLenth
-                    if (nativeParam.dwFileLenth in 1..USB_THERMOMETRY_CALIBRATION_FILE_MAX_BYTES) {
-                        calibrationMemory.read(0, out.pCalibrationFile, 0, nativeParam.dwFileLenth)
-                    }
-                }
+            }
+            return ok
+        }
+
+        override fun USB_GetImageBrightNess(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_BRIGHTNESS): Boolean {
+            val nativeParam = JnaUSB_IMAGE_BRIGHTNESS().apply { dwSize = size() }
+            val ok = getDeviceConfig(userId, USB_GET_IMAGE_BRIGHTNESS, nativeParam, cond.toJnaCond())
+            if (ok) out.dwBrightness = nativeParam.dwBrightness
+            return ok
+        }
+
+        override fun USB_GetImageContrast(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_CONTRAST): Boolean {
+            val nativeParam = JnaUSB_IMAGE_CONTRAST().apply { dwSize = size() }
+            val ok = getDeviceConfig(userId, USB_GET_IMAGE_CONTRAST, nativeParam, cond.toJnaCond())
+            if (ok) out.dwContrast = nativeParam.dwContrast
+            return ok
+        }
+
+        override fun USB_GetImageEnhancement(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_ENHANCEMENT): Boolean {
+            val nativeParam = JnaUSB_IMAGE_ENHANCEMENT().apply { dwSize = size() }
+            val ok = getDeviceConfig(userId, USB_GET_IMAGE_ENHANCEMENT, nativeParam, cond.toJnaCond())
+            if (ok) out.copyFrom(nativeParam.toInterface())
+            return ok
+        }
+
+        override fun USB_GetImageEnhancementV20(userId: Int, cond: USB_COMMON_COND, out: USB_IMAGE_ENHANCEMENT_EX): Boolean {
+            val nativeParam = JnaUSB_IMAGE_ENHANCEMENT_EX().apply {
+                struImageEnhancement.dwSize = struImageEnhancement.size()
+            }
+            val ok = getDeviceConfig(userId, USB_GET_IMAGE_ENHANCEMENT_V20, nativeParam, cond.toJnaCond())
+            if (ok) out.copyFrom(nativeParam.toInterface())
             return ok
         }
 
@@ -690,6 +1200,64 @@ class JavaInterface private constructor() {
                 outputBuffer.read()
             }
             return ok
+        }
+
+        private fun USB_COMMON_COND.toJnaCond(): JnaUSB_COMMON_COND = JnaUSB_COMMON_COND().apply {
+            byChannelID = this@toJnaCond.byChannelID
+            byRes = this@toJnaCond.byRes.copyOf(6)
+        }
+
+        private fun JnaUSB_IMAGE_ENHANCEMENT.toInterface(): USB_IMAGE_ENHANCEMENT = USB_IMAGE_ENHANCEMENT().also { target ->
+            target.byNoiseReduceMode = byNoiseReduceMode
+            target.byBirdWatchingMode = byBirdWatchingMode
+            target.byHighLightMode = byHighLightMode
+            target.byHighLightLevel = byHighLightLevel
+            target.dwGeneralLevel = dwGeneralLevel
+            target.dwFrameNoiseReduceLevel = dwFrameNoiseReduceLevel
+            target.dwInterFrameNoiseReduceLevel = dwInterFrameNoiseReduceLevel
+            target.byPaletteMode = byPaletteMode
+            target.byLSEDetailEnabled = byLSEDetailEnabled
+            target.byHookEdgeMode = byHookEdgeMode
+            target.byHookEdgeLevel = byHookEdgeLevel
+            target.dwLSEDetailLevel = dwLSEDetailLevel
+            target.byWideTemperatureMode = byWideTemperatureMode
+            target.byWideTemperatureWork = byWideTemperatureWork
+            target.byIspAgcMode = byIspAgcMode
+            target.byAISuperResolution = byAISuperResolution
+            target.dwWideTemperatureUpThreshold = dwWideTemperatureUpThreshold
+            target.dwWideTemperatureDownThreshold = dwWideTemperatureDownThreshold
+        }
+
+        private fun JnaUSB_IMAGE_ENHANCEMENT_EX.toInterface(): USB_IMAGE_ENHANCEMENT_EX = USB_IMAGE_ENHANCEMENT_EX().also { target ->
+            target.struImageEnhancement.copyFrom(struImageEnhancement.toInterface())
+            target.bySkyAreaCullLevel = bySkyAreaCullLevel
+            target.byAGCMode = byAGCMode
+            target.byGaussianFilterEnabled = byGaussianFilterEnabled
+            target.byEdgePreservingFilterEnabled = byEdgePreservingFilterEnabled
+            target.dwGaussianFilterCenterPoint = dwGaussianFilterCenterPoint
+            target.dwBilateralFilterRadius = dwBilateralFilterRadius
+            target.dwBilateralFilterEdgeThreshold = dwBilateralFilterEdgeThreshold
+            target.byBurnPreventionEnabled = byBurnPreventionEnabled
+            target.byBurnPreventionMode = byBurnPreventionMode
+            target.byRelativeHumidityThreshold = byRelativeHumidityThreshold
+            target.bySharpenBoost = bySharpenBoost
+            target.dwBurnPreventionShutterCloseTime = dwBurnPreventionShutterCloseTime
+            target.byBurnPreventionShutterControl = byBurnPreventionShutterControl
+            target.byBurnPreventionRecovery = byBurnPreventionRecovery
+            target.byIsothermEnabled = byIsothermEnabled
+            target.byRawDataNoiseReduceEnabled = byRawDataNoiseReduceEnabled
+            target.dwIsothermalUpperThreshold = dwIsothermalUpperThreshold
+            target.dwIsothermalLowerThreshold = dwIsothermalLowerThreshold
+            target.byIsothermalType = byIsothermalType
+            target.byColorAlarmType = byColorAlarmType
+            target.dwColorAlarmUpperLimit = dwColorAlarmUpperLimit
+            target.dwColorAlarmLowerLimit = dwColorAlarmLowerLimit
+            target.dwRelativeHumidity = dwRelativeHumidity
+            target.dwAtmosphericTemperature = dwAtmosphericTemperature
+            target.byAutoShutEnabled = byAutoShutEnabled
+            target.byGeneralLevelDefault = byGeneralLevelDefault
+            target.byGeneralLevelMin = byGeneralLevelMin
+            target.byGeneralLevelMax = byGeneralLevelMax
         }
 
         private fun ByteArray.fillFrom(value: String) {

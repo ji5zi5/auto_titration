@@ -1,13 +1,16 @@
 import csv
 import io
 import json
+import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
 from argparse import Namespace
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -27,9 +30,10 @@ def rgb_frame(red):
 
 
 class FakeAbcSerial:
-    def __init__(self):
+    def __init__(self, responses=None):
         self.writes = []
         self.closed = False
+        self.responses = list(responses or [])
 
     def write(self, data):
         self.writes.append(data)
@@ -37,8 +41,27 @@ class FakeAbcSerial:
     def flush(self):
         pass
 
+    def readline(self):
+        return self.responses.pop(0) if self.responses else b""
+
     def close(self):
         self.closed = True
+
+
+def acknowledged_test_pump_firmware(command, state):
+    """Return exact guard/run acknowledgements for server-level safety tests."""
+
+    if command.startswith("G "):
+        timeout_ms = int(command.split()[1])
+        state["guard_timeout_ms"] = timeout_ms
+        return f"GUARD ARMED {timeout_ms}"
+    if command in {"a", "b"}:
+        timeout_ms = state.get("guard_timeout_ms")
+        return {"firmware_ack": f"PUMP RUNNING {command} {timeout_ms}"}
+    if command == "c":
+        state["guard_timeout_ms"] = None
+        return {"firmware_ack": "PUMP STOPPED COMMAND"}
+    raise AssertionError(f"unexpected pump command: {command!r}")
 
 
 class FakeOfficialConverter:
@@ -241,6 +264,21 @@ def fake_cup_yolo_model(*, shape=(120, 160), center=(80, 60), radius=18, confide
 
 
 class WindowsLiveCollectTests(unittest.TestCase):
+    def test_collector_instance_lock_rejects_concurrent_second_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "collector.lock"
+            first = windows_live_collect.CollectorInstanceLock(path)
+            second = windows_live_collect.CollectorInstanceLock(path)
+            first.acquire()
+            try:
+                with self.assertRaisesRegex(RuntimeError, "already running"):
+                    second.acquire()
+            finally:
+                first.release()
+
+            second.acquire()
+            second.release()
+
     def test_auto_mini2_index_finds_first_valid_raw_stream(self):
         attempts = []
         released = []
@@ -409,11 +447,13 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(seen["dll_dir"], "missing-dll-dir")
 
         launcher = Path("launchers/windows/20_windows_live_collect.bat").read_text(encoding="utf-8")
+        app_launcher = Path("launchers/windows/21_open_dashboard_server.bat").read_text(encoding="utf-8")
         self.assertIn('set "ROI_LINK_MODE=anchor"', launcher)
         self.assertIn('set "ROI_AUTO_DETECT=off"', launcher)
         self.assertIn('set "VISIBLE_ROI_DETECTOR=yolo"', launcher)
         self.assertIn('set "YOLO_MODEL=yolo11n-seg.pt"', launcher)
         self.assertIn('set "AUTO_INSTALL_YOLO=0"', launcher)
+        self.assertIn('set "AUTO_INSTALL_YOLO=0"', app_launcher)
         self.assertIn("--visible-roi-detector %VISIBLE_ROI_DETECTOR%", launcher)
         self.assertIn("--yolo-model \"%YOLO_MODEL%\"", launcher)
         self.assertIn('set "YOLO_MIN_INTERVAL_MS=200"', launcher)
@@ -1443,6 +1483,22 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertIn("121.25", body)
         self.assertNotIn("manual_label", body)
 
+    def test_auto_stop_observation_uses_recording_clock_while_pump_stopped(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("unused.csv"))
+        started = buffer.start_recording(
+            pump_rate_ml_per_s=0.99, theoretical_equivalence_volume_ml=20,
+            started_monotonic_s=100, started_epoch_s=200,
+        )
+        buffer.begin_commanded_pump_timeline(running=False)
+        buffer.add({"time_s": 999, "pump_elapsed_s": 0}, now_monotonic_s=101.2)
+        row = buffer.latest_recorded_row(started["session_id"])
+        self.assertAlmostEqual(row["csv_recording_elapsed_s"], 1.2)
+        self.assertEqual(row["pump_elapsed_s"], 0)
+        self.assertEqual(row["injected_volume_ml"], 0)
+        self.assertIsNone(buffer.latest_recorded_row(started["session_id"] + 1))
+        row["csv_recording_elapsed_s"] = -1
+        self.assertGreater(buffer.latest_recorded_row(started["session_id"])["csv_recording_elapsed_s"], 1)
+
     def test_live_csv_buffer_adds_pump_equivalence_timeline_fields(self):
         buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
 
@@ -1469,6 +1525,96 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(rows[0]["distance_to_equivalence_ml"], "0.02")
         self.assertEqual(rows[0]["time_to_equivalence_s"], "0.02")
         self.assertEqual(rows[0]["equivalence_window_label"], "equivalence")
+
+    def test_live_csv_buffer_tracks_continuous_time_and_nominal_step_pulses(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            theoretical_equivalence_volume_ml=2.0,
+            started_monotonic_s=100.0,
+        )
+        buffer.begin_commanded_pump_timeline(now_monotonic_s=100.0, running=True)
+
+        running = buffer.status(now_monotonic_s=101.0)
+        buffer.pause_commanded_pump_timeline(now_monotonic_s=101.0, state="pulse_settling")
+        buffer.record_commanded_pulse(
+            steps=5,
+            nominal_ml_per_step=0.01,
+            now_monotonic_s=101.1,
+        )
+        settled = buffer.status(now_monotonic_s=110.0)
+
+        self.assertEqual(running["injected_volume_ml"], 1.0)
+        self.assertEqual(settled["injected_volume_ml"], 1.05)
+        self.assertEqual(settled["pump_elapsed_s"], 1.05)
+        self.assertEqual(settled["pump_state"], "pulse_settling")
+        self.assertEqual(settled["pump_pulse_count"], 1)
+        self.assertEqual(settled["pump_pulse_steps_total"], 5)
+        self.assertEqual(settled["pump_nominal_pulse_volume_ml"], 0.05)
+        self.assertEqual(
+            settled["pump_volume_basis"],
+            "commanded_time_and_nominal_full_steps_not_direct_flow_measurement",
+        )
+
+    def test_live_csv_buffer_accumulates_piecewise_rates_and_excludes_idle_time(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(pump_rate_ml_per_s=1.0, started_monotonic_s=100.0)
+        buffer.begin_commanded_pump_timeline(now_monotonic_s=100.0, running=True)
+        buffer.pause_commanded_pump_timeline(now_monotonic_s=102.0, state="stopped")
+        buffer.start_commanded_continuous_segment(
+            rate_ml_per_s=0.25,
+            stage="slow_continuous",
+            rate_basis="nominal_uncalibrated_fast_rate_times_steps_per_100",
+            now_monotonic_s=105.0,
+        )
+        buffer.pause_commanded_pump_timeline(now_monotonic_s=109.0, state="stopped")
+
+        status = buffer.status(now_monotonic_s=120.0)
+
+        self.assertEqual(status["injected_volume_ml"], 3.0)
+        self.assertEqual(status["pump_elapsed_s"], 6.0)
+        self.assertEqual(status["pump_dosing_stage"], "slow_continuous")
+        self.assertEqual(status["pump_nominal_rate_ml_per_s"], 0.25)
+        self.assertIn("nominal_uncalibrated", status["pump_rate_basis"])
+
+    def test_live_csv_buffer_pulse_elapsed_stays_steps_over_100_after_slow_rate(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(pump_rate_ml_per_s=1.0, started_monotonic_s=100.0)
+        buffer.begin_commanded_pump_timeline(now_monotonic_s=100.0, running=False)
+        buffer.start_commanded_continuous_segment(
+            rate_ml_per_s=0.10, stage="slow_continuous", rate_basis="nominal", now_monotonic_s=100.0
+        )
+        buffer.pause_commanded_pump_timeline(now_monotonic_s=101.0)
+        buffer.record_commanded_pulse(steps=5, nominal_ml_per_step=0.01, now_monotonic_s=101.0)
+
+        status = buffer.status(now_monotonic_s=110.0)
+
+        self.assertEqual(status["pump_elapsed_s"], 1.05)
+        self.assertEqual(status["injected_volume_ml"], 0.15)
+
+    def test_live_csv_buffer_persists_auto_stop_audit_fields(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            theoretical_equivalence_volume_ml=10.0,
+            experiment_metadata={"auto_stop_enabled": True},
+        )
+        buffer.add({"frame_id": 1, "time_s": 1.0})
+        buffer.update_auto_stop_status(
+            {
+                "auto_stop_state": "triggered",
+                "auto_stop_reason": "persistent_color_change",
+                "auto_stop_trigger_volume_ml": 10.1,
+            }
+        )
+
+        status = buffer.status()
+        rows = list(csv.DictReader(io.StringIO(buffer.to_csv_bytes().decode("utf-8-sig"))))
+
+        self.assertTrue(status["auto_stop_enabled"])
+        self.assertEqual(status["auto_stop_state"], "triggered")
+        self.assertEqual(rows[-1]["auto_stop_reason"], "persistent_color_change")
+        self.assertEqual(rows[-1]["auto_stop_trigger_volume_ml"], "10.1")
 
     def test_live_csv_buffer_calculates_concentration_fields_from_recording_metadata(self):
         buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
@@ -1498,15 +1644,16 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(started["sample_concentration_from_theoretical_equivalence_M"], 0.1)
         self.assertEqual(rows[0]["sample_concentration_from_injected_M"], "0.1")
         self.assertEqual(rows[0]["sample_concentration_error_percent"], "0.0")
-        self.assertEqual(rows[0]["sample_concentration_from_predicted_equivalence_M"], "0.1")
-        self.assertEqual(rows[0]["predicted_sample_concentration_error_percent"], "0.0")
-        self.assertEqual(rows[0]["predicted_equivalence_pH"], "7.0")
-        self.assertEqual(status["predicted_equivalence_volume_ml"], 10.0)
-        self.assertEqual(status["sample_concentration_from_predicted_equivalence_M"], 0.1)
-        self.assertEqual(status["predicted_equivalence_pH"], 7.0)
+        self.assertFalse(rows[0].get("sample_concentration_from_predicted_equivalence_M"))
+        self.assertNotIn("predicted_equivalence_volume_ml", status)
+        self.assertEqual(status["predicted_equivalence_status"], "pending")
         self.assertEqual(stopped["state"], "stopped")
-        self.assertEqual(stopped["sample_concentration_from_predicted_equivalence_M"], 0.1)
-        self.assertEqual(stopped["predicted_equivalence_pH"], 7.0)
+        self.assertEqual(stopped["predicted_equivalence_status"], "withheld")
+        self.assertEqual(
+            stopped["predicted_equivalence_reason"],
+            "insufficient_usable_sensor_time_volume_observations",
+        )
+        self.assertNotIn("sample_concentration_from_predicted_equivalence_M", stopped)
 
     def test_live_csv_buffer_stop_estimates_prediction_when_ml_column_is_empty(self):
         buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
@@ -1526,9 +1673,9 @@ class WindowsLiveCollectTests(unittest.TestCase):
             },
         )
         for index, volume, color_delta in [
-            (1, 8.0, 0.1),
-            (2, 10.0, 1.0),
-            (3, 12.0, 0.2),
+            (1, 8.0, 0.1), (2, 8.5, 0.15), (3, 9.0, 0.2),
+            (4, 9.5, 0.4), (5, 10.0, 1.0), (6, 10.5, 0.5),
+            (7, 11.0, 0.3), (8, 11.5, 0.25), (9, 12.0, 0.2),
         ]:
             buffer.add(
                 {
@@ -1536,7 +1683,12 @@ class WindowsLiveCollectTests(unittest.TestCase):
                     "time_s": float(index),
                     "injected_volume_ml": volume,
                     "visible_color_delta": color_delta,
+                    "visible_H_mean": 20.0 + color_delta,
+                    "visible_S_mean": 0.5 + color_delta * 0.01,
+                    "visible_V_mean": 0.7 + color_delta * 0.01,
                     "thermal_roi_avg": 25.0 + color_delta,
+                    "thermal_roi_min": 24.0 + color_delta,
+                    "thermal_roi_max": 26.0 + color_delta,
                     "status_label": "unknown",
                 },
                 now_monotonic_s=100.0 + volume,
@@ -1600,9 +1752,9 @@ class WindowsLiveCollectTests(unittest.TestCase):
             },
         )
         for index, volume, color_delta in [
-            (1, 8.0, 0.1),
-            (2, 10.0, 1.0),
-            (3, 12.0, 0.2),
+            (1, 8.0, 0.1), (2, 8.5, 0.15), (3, 9.0, 0.2),
+            (4, 9.5, 0.4), (5, 10.0, 1.0), (6, 10.5, 0.5),
+            (7, 11.0, 0.3), (8, 11.5, 0.25), (9, 12.0, 0.2),
         ]:
             buffer.add(
                 {
@@ -1610,6 +1762,9 @@ class WindowsLiveCollectTests(unittest.TestCase):
                     "time_s": float(index),
                     "injected_volume_ml": volume,
                     "visible_color_delta": color_delta,
+                    "visible_H_mean": 20.0 + color_delta,
+                    "visible_S_mean": 0.5 + color_delta * 0.01,
+                    "visible_V_mean": 0.7 + color_delta * 0.01,
                     "titration_type": "strong_acid_strong_base",
                 },
                 now_monotonic_s=100.0 + volume,
@@ -1624,6 +1779,72 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(stopped["sample_concentration_from_predicted_equivalence_M"], 0.1)
         self.assertEqual(len(predicted_rows), 1)
         self.assertEqual(predicted_rows[0]["predicted_equivalence_model_key"], "fake:typewise")
+
+    def test_live_csv_buffer_prefers_post_run_sensor_ranker_before_old_classifier(self):
+        endpoint_model = {"artifact_type": "type_conditioned_sensor_endpoint_ranker_v1"}
+        old_model = {"artifact_type": "typewise_frame_zone_classifier_v1"}
+        buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv"),
+            endpoint_prediction_model=endpoint_model,
+            typewise_prediction_model=old_model,
+        )
+        buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=100.0,
+            started_epoch_s=200.0,
+            experiment_metadata={
+                "titration_type": "strong_acid_strong_base",
+                "sample_volume_ml": 10.0,
+                "sample_valence": 1,
+                "titrant_concentration_M": 0.1,
+                "titrant_valence": 1,
+            },
+        )
+        for index in range(1, 9):
+            buffer.add(
+                {
+                    "frame_id": index,
+                    "time_s": float(index),
+                    "injected_volume_ml": 8.4 + index * 0.2,
+                    "visible_H_mean": 20.0 + index * 0.1,
+                    "visible_S_mean": 0.5 + index * 0.01,
+                    "visible_V_mean": 0.7 + index * 0.01,
+                    "thermal_raw_roi_p50": 1000.0 + index,
+                    "thermal_raw_roi_p95": 1010.0 + index,
+                },
+                now_monotonic_s=100.0 + index,
+            )
+        expected = {
+            "predicted_equivalence_volume_ml": 9.8,
+            "predicted_equivalence_confidence": 0.8,
+            "predicted_equivalence_source": "type_conditioned_sensor_endpoint_ranker",
+            "predicted_equivalence_evidence": "fixed sensor ranker",
+            "candidate_index": 4,
+            "model_key": "type-conditioned-sensor-endpoint-v1",
+        }
+
+        with mock.patch.object(
+            windows_live_collect,
+            "predict_type_conditioned_sensor_equivalence",
+            return_value=expected,
+        ) as ranker, mock.patch.object(
+            windows_live_collect,
+            "predict_typewise_equivalence",
+            side_effect=AssertionError("old classifier must not run"),
+        ):
+            stopped = buffer.stop_recording()
+
+        ranker.assert_called_once()
+        self.assertEqual(
+            stopped["predicted_equivalence_source"],
+            "type_conditioned_sensor_endpoint_ranker",
+        )
+        self.assertEqual(stopped["predicted_equivalence_volume_ml"], 9.8)
+        self.assertEqual(stopped["sample_concentration_from_predicted_equivalence_M"], 0.098)
+        self.assertEqual(
+            stopped["predicted_equivalence_model_key"],
+            "type-conditioned-sensor-endpoint-v1",
+        )
 
     def test_live_csv_buffer_records_experiment_metadata_from_start_payload(self):
         buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
@@ -1713,6 +1934,30 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(rows[0]["visible_R_mean"], "20")
         self.assertEqual([row["frame_id"] for row in rows], ["1"])
 
+    def test_live_csv_buffer_duplicate_stop_keeps_finalizing_and_rejects_restart(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        started = buffer.start_recording(capture_session_required=True)
+        self.assertTrue(
+            buffer.add(
+                {
+                    "frame_id": 1,
+                    "time_s": 0.04,
+                    "capture_recording_session_id": started["session_id"],
+                }
+            )
+        )
+
+        first_stop = buffer.request_stop()
+        second_stop = buffer.request_stop()
+
+        self.assertTrue(first_stop["finalizing"])
+        self.assertTrue(second_stop["finalizing"])
+        self.assertEqual(second_stop["state"], "finalizing")
+        self.assertEqual(second_stop["row_count"], 1)
+        with self.assertRaisesRegex(RuntimeError, "while state is finalizing"):
+            buffer.start_recording()
+        self.assertEqual(buffer.status()["row_count"], 1)
+
     def test_live_csv_buffer_adds_session_row_index_elapsed_without_manual_label(self):
         buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
 
@@ -1762,6 +2007,17 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertGreater(float(rows[-1]["thermal_roi_avg_slope_c_per_s"]), 0.0)
         self.assertEqual(rows[-1]["valid_for_training"], "1.0")
 
+    def test_live_csv_buffer_refreshes_titration_one_hot_after_metadata_merge(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(experiment_metadata={"titration_type": "weak_acid_strong_base"})
+        precomputed = {column: 0.0 for column in windows_live_collect.DERIVED_ML_COLUMNS}
+
+        buffer.add({"frame_id": 1, "time_s": 0.04, **precomputed})
+        rows = list(csv.DictReader(io.StringIO(buffer.to_csv_bytes().decode("utf-8-sig"))))
+
+        self.assertEqual(rows[0]["titration_is_weak_acid_strong_base"], "1.0")
+        self.assertEqual(rows[0]["titration_is_strong_acid_strong_base"], "0.0")
+
     def test_build_live_payload_exposes_csv_download_status(self):
         thermal_features = {"thermal_raw_roi_avg": 5000.0, "thermal_raw_roi_min": 4990, "thermal_raw_roi_max": 5010}
         row = {"frame_id": 1, "time_s": 0.04, "status_label": "before"}
@@ -1775,6 +2031,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
                 "recording": True,
                 "state": "recording",
                 "updated_epoch_s": 1779782400.0,
+                "started_epoch_s": 1779782396.75,
                 "csv_event_note": "trial 1",
                 "csv_mark_sequence": 2,
                 "recording_elapsed_s": 3.25,
@@ -1791,7 +2048,12 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(payload["csv_event_note"], "trial 1")
         self.assertEqual(payload["csv_mark_sequence"], 2)
         self.assertEqual(payload["csv_recording_elapsed_s"], 3.25)
+        self.assertEqual(payload["csv_recording_started_epoch_s"], 1779782396.75)
+        self.assertEqual(payload["csv_updated_epoch_s"], 1779782400.0)
         self.assertEqual(payload["csv_rows_per_s"], 3.692308)
+
+        no_csv_payload = windows_live_collect.build_live_payload(thermal_features, row)
+        self.assertIsNone(no_csv_payload["csv_updated_epoch_s"])
 
     def test_live_control_state_updates_roi_settings(self):
         controls = windows_live_collect.LiveControlState(roi_auto_detect="both", visible_roi_detector="yolo")
@@ -1804,6 +2066,9 @@ class WindowsLiveCollectTests(unittest.TestCase):
             controls.update_from_payload({"visible_roi_detector": "contrast"})
         with self.assertRaisesRegex(ValueError, "visible_roi_detector"):
             controls.update_from_payload({"visible_roi_detector": "unknown"})
+
+        self.assertFalse(controls.snapshot()["yolo_available"])
+        self.assertTrue(controls.set_yolo_available(True)["yolo_available"])
 
     def test_auto_update_reuses_last_good_mask_when_detection_is_flat(self):
         state = windows_live_collect.RoiSelectionState()
@@ -1972,6 +2237,80 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertGreater(captured.frame_id, 0)
         self.assertGreater(worker.dropped_frames, 0)
         self.assertTrue(reader.released)
+
+    def test_mini2_capture_thread_preserves_every_recording_frame_in_order(self):
+        reader = FastMini2Reader()
+        worker = windows_live_collect.Mini2CaptureThread(
+            reader,
+            start_time=time.perf_counter(),
+            max_queue=1,
+            max_recording_queue=128,
+        )
+        worker.start()
+        worker.begin_recording(7)
+        time.sleep(0.04)
+        stopped = worker.end_recording(7)
+        expected = int(stopped["recording_captured_frames"])
+        captured = []
+        for _ in range(expected):
+            frame = worker.read(timeout_s=0.5)
+            captured.append(frame)
+            worker.mark_processed(frame)
+        final = worker.recording_status()
+        worker.close()
+
+        self.assertGreater(expected, 1)
+        self.assertEqual([frame.recording_session_id for frame in captured], [7] * expected)
+        frame_ids = [frame.frame_id for frame in captured]
+        self.assertEqual(frame_ids, list(range(frame_ids[0], frame_ids[0] + expected)))
+        self.assertEqual(final["recording_processed_frames"], expected)
+        self.assertEqual(final["recording_dropped_frames"], 0)
+        self.assertEqual(final["recording_backlog_frames"], 0)
+        self.assertTrue(final["drained"])
+
+    def test_mini2_capture_thread_counts_a_rejected_csv_row_as_recording_loss(self):
+        worker = windows_live_collect.Mini2CaptureThread(
+            FastMini2Reader(),
+            start_time=time.perf_counter(),
+            max_recording_queue=8,
+        )
+        worker.begin_recording(3)
+        worker.start()
+        captured = worker.read(timeout_s=0.5)
+        worker.end_recording(3)
+        worker.mark_processed(captured, stored=False)
+        final = worker.recording_status()
+        worker.close()
+
+        self.assertEqual(final["recording_dropped_frames"], 1)
+        self.assertEqual(final["recording_processed_frames"], 1)
+
+    def test_live_csv_buffer_accepts_session_backlog_while_finalizing(self):
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        started = buffer.start_recording(started_monotonic_s=100.0, capture_session_required=True)
+        session_id = int(started["session_id"])
+
+        self.assertFalse(buffer.add({"time_s": 0.0, "capture_recording_session_id": 0}, now_monotonic_s=100.0))
+        self.assertTrue(
+            buffer.add(
+                {"time_s": 0.04, "capture_recording_session_id": session_id},
+                now_monotonic_s=100.04,
+            )
+        )
+        requested = buffer.request_stop()
+        self.assertTrue(requested["finalizing"])
+        self.assertTrue(
+            buffer.add(
+                {"time_s": 0.08, "capture_recording_session_id": session_id},
+                now_monotonic_s=100.08,
+            )
+        )
+        self.assertFalse(buffer.add({"time_s": 0.12, "capture_recording_session_id": 0}, now_monotonic_s=100.12))
+        stopped = buffer.complete_stop()
+
+        self.assertEqual(stopped["state"], "stopped")
+        self.assertFalse(stopped["finalizing"])
+        self.assertEqual(stopped["row_count"], 2)
 
     def test_normalizes_raw_opencv_vector_frames(self):
         raw = np.arange(MINI2_UVC_WIDTH * MINI2_UVC_HEIGHT * 2, dtype=np.uint8).reshape(1, -1)
@@ -2214,6 +2553,8 @@ class WindowsLiveCollectTests(unittest.TestCase):
             frame = rgb_frame(77)
             raw_matrix = np.arange(MINI2_MATRIX_SHAPE[0] * MINI2_MATRIX_SHAPE[1], dtype=np.uint16).reshape(MINI2_MATRIX_SHAPE)
             thermal_features = {
+                "thermal_calibrated": True,
+                "thermal_conversion_status": "ok",
                 "thermal_roi_avg": 23.5,
                 "thermal_roi_min": 22.0,
                 "thermal_roi_max": 25.0,
@@ -2255,10 +2596,36 @@ class WindowsLiveCollectTests(unittest.TestCase):
             self.assertEqual(payload["temperature_avg_c"], 23.5)
             self.assertEqual(payload["temperature_min_c"], 22.0)
             self.assertEqual(payload["temperature_max_c"], 25.0)
+            self.assertTrue(payload["celsius_allowed"])
+            self.assertEqual(payload["temperature_provenance"], "windows_official_mini2_roi_scalar")
+            self.assertEqual(payload["temperature_scope"], "thermal_roi")
+            self.assertFalse(payload["full_matrix_celsius_allowed"])
             self.assertEqual(payload["raw_avg"], 5100.0)
             self.assertEqual(payload["sync_quality"], "good")
             self.assertEqual(payload["thermal_roi"], "96,72,64,48")
             self.assertEqual(payload["visible_roi"], "10,10,20,20")
+
+    def test_windows_live_payload_is_accepted_by_shared_celsius_consumer(self):
+        payload = windows_live_collect.build_live_payload(
+            {
+                "thermal_calibrated": True,
+                "thermal_conversion_status": "ok",
+                "thermal_roi_avg": 23.5,
+                "thermal_roi_min": 22.0,
+                "thermal_roi_max": 25.0,
+            },
+            {"frame_id": 7},
+        )
+        script = f"""
+const fs = require('fs');
+const assert = require('assert');
+const code = fs.readFileSync('website/app.js', 'utf8');
+eval(code.slice(code.indexOf('function parseFiniteNumber'), code.indexOf('function formatNumber')));
+const payload = {json.dumps(payload)};
+assert.strictEqual(hasTrustedCelsiusTemperature(payload), true);
+assert.strictEqual(hasTrustedCelsiusTemperature({{...payload, temperature_provenance: ''}}), false);
+"""
+        subprocess.run(["node", "-e", script], check=True)
 
     def test_jpeg_bytes_encodes_stream_frame_without_bmp_file_polling(self):
         try:
@@ -2935,7 +3302,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
             return "" if len(resolver_calls) == 1 else "COM9"
 
         def serial_factory(port, baud, timeout, write_timeout):
-            serial_obj = FakeAbcSerial()
+            serial_obj = FakeAbcSerial([b"PUMP RUNNING b 120000\n"])
             serial_obj.port = port
             serial_obj.baud = baud
             serials.append(serial_obj)
@@ -2961,6 +3328,806 @@ class WindowsLiveCollectTests(unittest.TestCase):
         finally:
             bridge.close()
 
+    def test_auto_reconnect_bridge_auto_detects_original_legacy_firmware(self):
+        serial_obj = FakeAbcSerial()
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+            protocol_mode="auto",
+            start_background=False,
+        )
+        try:
+            bridge.warmup()
+            status = bridge.status()
+            self.assertTrue(status["connected"])
+            self.assertEqual(status["firmware_protocol"], "legacy_abc")
+            self.assertFalse(status["supports_firmware_guard"])
+            self.assertFalse(status["supports_step_pulse"])
+
+            armed = bridge.send("G 2500\n")
+            started = bridge.send_guarded_direction("b", lambda: True)
+            stopped = bridge.send("c")
+        finally:
+            bridge.close()
+
+        self.assertEqual(armed["guard_scope"], "host_only")
+        self.assertTrue(started["pump_running"])
+        self.assertFalse(started["acknowledged"])
+        self.assertTrue(stopped["stop_sent"])
+        self.assertEqual(serial_obj.writes, [b"Q\n", b"Q\n", b"Q\n", b"b", b"c"])
+
+    def test_auto_reconnect_bridge_retries_lost_version_query_without_motion(self):
+        class LostQuerySerial(FakeAbcSerial):
+            def readline(self):
+                if self.writes.count(b"Q\n") >= 2:
+                    return b"PUMP FW 2 PULSE b GUARD 1\r\n"
+                return b""
+
+        serial_obj = LostQuerySerial()
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto", resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0, protocol_mode="auto", start_background=False,
+        )
+        try:
+            bridge.warmup()
+            self.assertTrue(bridge.status()["supports_step_pulse"])
+            self.assertEqual(serial_obj.writes, [b"Q\n", b"Q\n", b"V\n"])
+        finally:
+            bridge.close()
+
+    def test_auto_reconnect_bridge_auto_detects_acknowledged_firmware(self):
+        serial_obj = FakeAbcSerial(
+            [
+                b"PUMP FW 2 PULSE b GUARD 1\r\n",
+                b"",
+                b"GUARD ARMED 2500\r\n",
+            ]
+        )
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+            protocol_mode="auto",
+            start_background=False,
+        )
+        try:
+            bridge.warmup()
+            status = bridge.status()
+            self.assertEqual(status["firmware_protocol"], "ack_v2")
+            self.assertTrue(status["supports_firmware_guard"])
+            self.assertTrue(status["supports_step_pulse"])
+            self.assertEqual(status["firmware_pulse_direction"], "b")
+            acknowledgement = bridge.send("G 2500\n")
+        finally:
+            bridge.close()
+
+        self.assertEqual(acknowledgement, "GUARD ARMED 2500")
+        self.assertEqual(serial_obj.writes, [b"Q\n", b"V\n", b"G 2500\n"])
+
+    def test_auto_reconnect_bridge_does_not_claim_step_for_unversioned_ack_firmware(self):
+        serial_obj = FakeAbcSerial([b"GUARD IDLE 0\r\n"])
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+            protocol_mode="auto",
+            start_background=False,
+        )
+        try:
+            bridge.warmup()
+            status = bridge.status()
+        finally:
+            bridge.close()
+
+        self.assertEqual(status["firmware_protocol"], "ack_v1")
+        self.assertTrue(status["supports_firmware_guard"])
+        self.assertFalse(status["supports_step_pulse"])
+        self.assertEqual(status["firmware_pulse_direction"], "")
+
+    def test_original_legacy_firmware_manual_start_uses_host_only_guard(self):
+        serial_obj = FakeAbcSerial()
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+            protocol_mode="auto",
+            start_background=False,
+        )
+        guard = windows_live_collect.AbsolutePumpSafetyGuard(
+            bridge.send,
+            direction_sender=bridge.send_guarded_direction,
+            watchdog_interval_s=0.01,
+        )
+        try:
+            bridge.warmup()
+            started = guard.start(
+                direction_command="b",
+                maximum_pump_rate_ml_per_s=1.0,
+                requested_maximum_volume_ml=1.0,
+                requested_maximum_run_time_s=10.0,
+            )
+            stopped = guard.stop("test_stop")
+        finally:
+            guard.close()
+            bridge.close()
+
+        self.assertTrue(started["absolute_guard_armed"])
+        self.assertEqual(started["absolute_guard_scope"], "host_only")
+        self.assertEqual(started["absolute_guard_reason"], "absolute_limits_armed_host_only")
+        self.assertEqual(stopped["absolute_guard_stop_status"], "sent")
+        self.assertIn(b"b", serial_obj.writes)
+        self.assertIn(b"c", serial_obj.writes)
+
+    def test_pump_serial_bridge_returns_firmware_guard_acknowledgement(self):
+        serial_obj = FakeAbcSerial([b"GUARD ARMED 2500\r\n"])
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            acknowledgement = bridge.send("G 2500\n")
+        finally:
+            bridge.close()
+
+        self.assertEqual(acknowledgement, "GUARD ARMED 2500")
+        self.assertEqual(serial_obj.writes, [b"G 2500\n"])
+
+    def test_pump_serial_bridge_requires_exact_rate_ack_and_fails_stopped(self):
+        accepted_serial = FakeAbcSerial([b"RATE ACCEPTED 25\r\n"])
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8", serial_factory=lambda *args, **kwargs: accepted_serial,
+            open_reset_delay_s=0,
+        )
+        try:
+            self.assertEqual(bridge.send("RATE 25\n"), "RATE ACCEPTED 25")
+        finally:
+            bridge.close()
+        self.assertEqual(accepted_serial.writes, [b"RATE 25\n"])
+
+        mismatched_serial = FakeAbcSerial([b"RATE ACCEPTED 24\r\n"])
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8", serial_factory=lambda *args, **kwargs: mismatched_serial,
+            open_reset_delay_s=0,
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "exact requested rate"):
+                bridge.send("RATE 25\n")
+        finally:
+            bridge.close()
+        self.assertEqual(mismatched_serial.writes, [b"RATE 25\n", b"c"])
+
+    def test_variable_rate_capability_requires_exact_v_query_response(self):
+        serial_obj = FakeAbcSerial([
+            b"PUMP FW 2 PULSE b GUARD 1\r\n",
+            b"PUMP SPEED 1\r\n",
+        ])
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto", resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0, protocol_mode="auto", start_background=False,
+        )
+        try:
+            bridge.warmup()
+            self.assertTrue(bridge.status()["supports_variable_rate"])
+        finally:
+            bridge.close()
+        self.assertEqual(serial_obj.writes, [b"Q\n", b"V\n"])
+
+    def test_slow_restart_wire_order_is_stop_rate_guard_direction(self):
+        serial_obj = FakeAbcSerial([
+            b"PUMP STOPPED COMMAND\r\n",
+            b"RATE ACCEPTED 25\r\n",
+            b"GUARD ARMED 4000\r\n",
+            b"PUMP RUNNING b 4000\r\n",
+            b"PUMP STOPPED COMMAND\r\n",
+        ])
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8", serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        guard = windows_live_collect.AbsolutePumpSafetyGuard(
+            bridge.send, direction_sender=bridge.send_guarded_direction,
+            monotonic=lambda: 100.0,
+        )
+        try:
+            bridge.send("c")
+            status = windows_live_collect.start_guarded_continuous_at_rate(
+                command_sender=bridge.send, guard=guard, direction_command="b",
+                rate_steps_per_s=25, maximum_rate_ml_per_s=1.0,
+                remaining_volume_ml=10.0, absolute_deadline_monotonic_s=104.0,
+                can_restart=lambda: True,
+            )
+            guard.stop("test_complete")
+        finally:
+            guard.close()
+            bridge.close()
+
+        self.assertTrue(status["absolute_guard_armed"])
+        self.assertEqual(
+            serial_obj.writes,
+            [b"c", b"RATE 25\n", b"G 4000\n", b"b", b"c"],
+        )
+
+    def test_csv_continuous_time_begins_at_direction_write_not_ack(self):
+        clock = {"now": 100.0}
+
+        class DelayedDirectionAckSerial(FakeAbcSerial):
+            def readline(self):
+                response = super().readline()
+                if response.startswith(b"PUMP RUNNING"):
+                    clock["now"] = 100.5
+                return response
+
+        serial_obj = DelayedDirectionAckSerial([
+            b"GUARD ARMED 9500\r\n", b"PUMP RUNNING b 9500\r\n",
+            b"PUMP STOPPED COMMAND\r\n",
+        ])
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8", serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        guard = windows_live_collect.AbsolutePumpSafetyGuard(
+            bridge.send, direction_sender=bridge.send_guarded_direction,
+            monotonic=lambda: clock["now"],
+        )
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("unused.csv"))
+        buffer.start_recording(pump_rate_ml_per_s=1.0, started_monotonic_s=100.0)
+        buffer.begin_commanded_pump_timeline(now_monotonic_s=100.0, running=False)
+        try:
+            clock["now"] = 100.5
+            with mock.patch.object(windows_live_collect.time, "perf_counter", return_value=100.2):
+                status = guard.start(
+                    direction_command="b", maximum_pump_rate_ml_per_s=1.0,
+                    absolute_deadline_monotonic_s=110.0,
+                )
+            buffer.resume_commanded_pump_timeline(
+                now_monotonic_s=status["direction_written_monotonic_s"]
+            )
+            timeline = buffer.status(now_monotonic_s=100.5)
+        finally:
+            guard.stop("test")
+            guard.close()
+            bridge.close()
+
+        self.assertEqual(status["direction_written_monotonic_s"], 100.2)
+        self.assertAlmostEqual(timeline["pump_elapsed_s"], 0.3)
+        self.assertAlmostEqual(timeline["injected_volume_ml"], 0.3)
+
+    def test_pump_serial_bridge_requires_direction_ack_with_same_guard_deadline(self):
+        serial_obj = FakeAbcSerial(
+            [b"GUARD ARMED 2500\r\n", b"PUMP RUNNING b 2500\r\n"]
+        )
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            bridge.send("G 2500\n")
+            result = bridge.send("b")
+        finally:
+            bridge.close()
+
+        self.assertEqual(result["firmware_ack"], "PUMP RUNNING b 2500")
+        self.assertEqual(serial_obj.writes, [b"G 2500\n", b"b"])
+
+    def test_pump_serial_bridge_guarded_direction_cancellation_writes_no_direction(self):
+        serial_obj = FakeAbcSerial([b"GUARD ARMED 2500\r\n"])
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            bridge.send("G 2500\n")
+            result = bridge.send_guarded_direction("b", lambda: False)
+        finally:
+            bridge.close()
+
+        self.assertTrue(result["direction_cancelled"])
+        self.assertFalse(result["direction_written"])
+        self.assertEqual(serial_obj.writes, [b"G 2500\n"])
+
+    def test_pump_serial_bridge_guarded_direction_keeps_exact_guard_deadline_check(self):
+        serial_obj = FakeAbcSerial(
+            [b"GUARD ARMED 2500\r\n", b"PUMP RUNNING b 120000\r\n"]
+        )
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            bridge.send("G 2500\n")
+            with self.assertRaisesRegex(RuntimeError, "different safety deadline"):
+                bridge.send_guarded_direction("b", lambda: True)
+        finally:
+            bridge.close()
+
+        self.assertEqual(serial_obj.writes, [b"G 2500\n", b"b", b"c"])
+
+    def test_auto_reconnect_bridge_guarded_direction_requires_armed_firmware(self):
+        serial_obj = FakeAbcSerial()
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            resolver=lambda requested: "COM9",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+            start_background=False,
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "guard must be armed"):
+                bridge.send_guarded_direction("b", lambda: True)
+        finally:
+            bridge.close()
+
+        self.assertEqual(serial_obj.writes, [])
+
+    def test_pump_serial_bridge_stops_when_direction_ack_uses_wrong_deadline(self):
+        serial_obj = FakeAbcSerial(
+            [b"GUARD ARMED 2500\r\n", b"PUMP RUNNING b 120000\r\n"]
+        )
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            bridge.send("G 2500\n")
+            with self.assertRaisesRegex(RuntimeError, "different safety deadline"):
+                bridge.send("b")
+        finally:
+            bridge.close()
+
+        self.assertEqual(serial_obj.writes, [b"G 2500\n", b"b", b"c"])
+
+    def test_auto_reconnect_bridge_stops_without_replaying_wrong_direction_ack(self):
+        serials = []
+
+        def serial_factory(port, baud, timeout, write_timeout):
+            serial_obj = FakeAbcSerial(
+                [b"GUARD ARMED 2500\r\n", b"PUMP RUNNING b 120000\r\n"]
+            )
+            serials.append(serial_obj)
+            return serial_obj
+
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            baud=9600,
+            resolver=lambda requested: "COM9",
+            serial_factory=serial_factory,
+            open_reset_delay_s=0,
+            start_background=False,
+        )
+        try:
+            bridge.send("G 2500\n")
+            with self.assertRaisesRegex(RuntimeError, "different safety deadline"):
+                bridge.send("b")
+        finally:
+            bridge.close()
+
+        self.assertEqual(len(serials), 1)
+        self.assertEqual(serials[0].writes, [b"G 2500\n", b"b", b"c"])
+
+    def test_pump_serial_bridge_accepts_acknowledged_bounded_step_pulse(self):
+        serial_obj = FakeAbcSerial(
+            [b"STEP ACCEPTED 5\r\n", b"PUMP STOPPED PULSE_COMPLETE\r\n"]
+        )
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            acknowledgement = bridge.send("STEP 5\n")
+            with self.assertRaisesRegex(ValueError, "1..200"):
+                bridge.send("STEP 201\n")
+        finally:
+            bridge.close()
+
+        self.assertEqual(acknowledgement, "STEP ACCEPTED 5")
+        self.assertEqual(serial_obj.writes, [b"STEP 5\n"])
+
+    def test_pump_serial_bridge_fails_closed_when_step_completion_is_not_confirmed(self):
+        serial_obj = FakeAbcSerial(
+            [b"STEP ACCEPTED 5\r\n", b"PUMP STOPPED ABSOLUTE_TIMEOUT\r\n"]
+        )
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+        try:
+            with self.assertRaisesRegex(
+                windows_live_collect.PulseDeliveryUncertainError,
+                "unexpected reason",
+            ):
+                bridge.send("STEP 5\n")
+        finally:
+            bridge.close()
+
+        self.assertEqual(serial_obj.writes, [b"STEP 5\n", b"c"])
+
+    def test_emergency_stop_preempts_blocked_step_acknowledgement_wait(self):
+        waiting_for_stop = threading.Event()
+        stop_written = threading.Event()
+        outcome = {}
+
+        class BlockingStepSerial(FakeAbcSerial):
+            def __init__(self):
+                super().__init__()
+                self.read_count = 0
+
+            def write(self, data):
+                super().write(data)
+                if data == b"c":
+                    stop_written.set()
+
+            def readline(self):
+                self.read_count += 1
+                if self.read_count == 1:
+                    return b"STEP ACCEPTED 200\r\n"
+                waiting_for_stop.set()
+                if not stop_written.wait(1.0):
+                    raise RuntimeError("emergency stop did not preempt STEP wait")
+                return b"PUMP STOPPED COMMAND\r\n"
+
+        serial_obj = BlockingStepSerial()
+        bridge = windows_live_collect.ArduinoAbcPumpSerialBridge(
+            port="COM8",
+            serial_factory=lambda *args, **kwargs: serial_obj,
+            open_reset_delay_s=0,
+        )
+
+        def run_step():
+            try:
+                bridge.send("STEP 200\n")
+            except Exception as exc:  # noqa: BLE001 - captured for thread assertion.
+                outcome["error"] = exc
+
+        thread = threading.Thread(target=run_step)
+        try:
+            thread.start()
+            self.assertTrue(waiting_for_stop.wait(1.0))
+            emergency = bridge.emergency_stop()
+            thread.join(1.0)
+        finally:
+            bridge.close()
+
+        self.assertTrue(emergency["sent"])
+        self.assertTrue(stop_written.is_set())
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(
+            outcome.get("error"),
+            windows_live_collect.PulseDeliveryUncertainError,
+        )
+        self.assertEqual(serial_obj.writes[:2], [b"STEP 200\n", b"c"])
+
+    def test_auto_reconnect_bridge_never_replays_an_uncertain_step(self):
+        serials = []
+
+        def serial_factory(port, baud, timeout, write_timeout):
+            serial_obj = FakeAbcSerial(
+                [b"STEP ACCEPTED 5\r\n", b"PUMP STOPPED COMMAND\r\n"]
+            )
+            serials.append(serial_obj)
+            return serial_obj
+
+        bridge = windows_live_collect.AutoReconnectArduinoAbcPumpSerialBridge(
+            requested_port="auto",
+            baud=9600,
+            resolver=lambda requested: "COM9",
+            serial_factory=serial_factory,
+            open_reset_delay_s=0,
+            start_background=False,
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "unexpected reason"):
+                bridge.send("STEP 5\n")
+        finally:
+            bridge.close()
+
+        self.assertEqual(len(serials), 1)
+        self.assertEqual(serials[0].writes, [b"STEP 5\n", b"c"])
+
+    def test_endpoint_pulse_runtime_stops_continuous_then_steps_and_waits(self):
+        commands = []
+        safety_stops = []
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(pump_rate_ml_per_s=1.0)
+        buffer.begin_commanded_pump_timeline(running=True)
+
+        def sender(command):
+            commands.append(command)
+            return f"STEP ACCEPTED {command.split()[1]}" if command.startswith("STEP ") else {"sent": True}
+
+        def stop_continuous(reason):
+            commands.append("c")
+            buffer.pause_commanded_pump_timeline(state="pulse_settling")
+            return {"absolute_guard_stop_status": "sent", "reason": reason}
+
+        runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=sender,
+            stop_continuous=stop_continuous,
+            csv_buffer=buffer,
+            on_safety_stop=lambda *values: safety_stops.append(values),
+        )
+        runtime.arm(
+            session_id=1,
+            requested=True,
+            pump_started=True,
+            pump_rate_ml_per_s=1.0,
+            maximum_pump_rate_ml_per_s=1.0,
+            pulse_ml_per_step_upper_bound=0.01,
+            maximum_volume_ml=10.0,
+            approach_score=0.2,
+            pulse_steps=5,
+            settle_time_s=0.5,
+        )
+
+        def observe(elapsed, score, volume=0.0, state="armed"):
+            runtime.handle_auto_stop_status(
+                {
+                    "auto_stop_session_id": 1,
+                    "auto_stop_state": state,
+                    "auto_stop_baseline_ready": True,
+                    "auto_stop_observation_elapsed_s": elapsed,
+                    "auto_stop_observation_volume_ml": volume,
+                    "auto_stop_endpoint_score": score,
+                }
+            )
+
+        observe(0.0, 0.1)
+        observe(0.1, 0.25)
+        observe(0.59, 0.1)
+        observe(0.60, 0.1)
+        observe(0.66, 0.1, 0.05)
+        observe(1.17, 0.1, 0.05)
+
+        status = buffer.status()
+        self.assertEqual(commands, ["c", "STEP 5\n", "STEP 5\n"])
+        self.assertEqual(status["auto_stop_pulse_count"], 2)
+        self.assertEqual(status["pump_pulse_steps_total"], 10)
+        self.assertFalse(safety_stops)
+
+    def test_endpoint_runtime_optional_slow_stage_preserves_conservative_budget(self):
+        events = []
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("unused.csv"))
+        recording_start = time.perf_counter()
+        buffer.start_recording(pump_rate_ml_per_s=1.0, started_monotonic_s=recording_start)
+        buffer.begin_commanded_pump_timeline(now_monotonic_s=recording_start, running=True)
+
+        runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=lambda command: events.append(("command", command)),
+            stop_continuous=lambda reason: events.append(("stop", reason)) or {},
+            csv_buffer=buffer,
+            on_safety_stop=lambda *values: events.append(("safety", values)),
+            start_slow_continuous=lambda **kwargs: events.append(("restart", kwargs)) or {},
+        )
+        runtime.arm(
+            session_id=1, requested=True, pump_started=True,
+            pump_rate_ml_per_s=1.0, maximum_pump_rate_ml_per_s=1.2,
+            pulse_ml_per_step_upper_bound=0.01, maximum_volume_ml=10.0,
+            approach_score=0.6, slow_stage_enabled=True,
+            slow_onset_score=0.3, slow_onset_duration_s=0.4,
+            slow_rate_steps_per_s=25, absolute_maximum_run_time_s=20.0,
+            absolute_deadline_monotonic_s=120.0,
+        )
+
+        for elapsed in (1.0, 1.4):
+            runtime.handle_auto_stop_status({
+                "auto_stop_session_id": 1, "auto_stop_state": "armed",
+                "auto_stop_baseline_ready": True,
+                "auto_stop_observation_elapsed_s": elapsed,
+                "auto_stop_observation_volume_ml": 0.2,
+                "auto_stop_endpoint_score": 0.35,
+            })
+
+        restart = next(value for kind, value in events if kind == "restart")
+        status = buffer.status(now_monotonic_s=100.0)
+        self.assertEqual(restart["rate_steps_per_s"], 25)
+        self.assertEqual(restart["nominal_rate_ml_per_s"], 0.25)
+        self.assertEqual(restart["absolute_deadline_monotonic_s"], 120.0)
+        self.assertAlmostEqual(restart["remaining_volume_ml"], 8.32)
+        self.assertEqual(status["auto_stop_pulse_conservative_volume_ml"], 1.68)
+        self.assertEqual(status["pump_dosing_stage"], "slow_continuous")
+
+    def test_confirmed_stop_time_refreshes_conservative_volume_before_slow_restart(self):
+        clock = {"now": 100.0}
+        restart_calls = []
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("unused.csv"))
+        buffer.start_recording(pump_rate_ml_per_s=1.0, started_monotonic_s=100.0)
+        buffer.begin_commanded_pump_timeline(now_monotonic_s=100.0, running=True)
+
+        def stop_continuous(reason):
+            clock["now"] = 103.0  # STOP acknowledgement arrives 2 s after telemetry.
+            return {"absolute_guard_stop_status": "sent"}
+
+        runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=lambda command: None,
+            stop_continuous=stop_continuous,
+            csv_buffer=buffer,
+            on_safety_stop=lambda *values: None,
+            start_slow_continuous=lambda **kwargs: restart_calls.append(kwargs) or {
+                "direction_written_monotonic_s": 103.0
+            },
+        )
+        runtime.arm(
+            session_id=1, requested=True, pump_started=True,
+            pump_rate_ml_per_s=1.0, maximum_pump_rate_ml_per_s=1.2,
+            pulse_ml_per_step_upper_bound=0.01, maximum_volume_ml=10.0,
+            approach_score=0.6, slow_stage_enabled=True,
+            slow_onset_score=0.3, slow_onset_duration_s=0.0,
+            slow_rate_steps_per_s=25, absolute_deadline_monotonic_s=120.0,
+        )
+        with mock.patch.object(windows_live_collect.time, "perf_counter", side_effect=lambda: clock["now"]):
+            runtime.handle_auto_stop_status({
+                "auto_stop_session_id": 1, "auto_stop_state": "armed",
+                "auto_stop_baseline_ready": True,
+                "auto_stop_observation_elapsed_s": 1.0,
+                "auto_stop_observation_volume_ml": 0.1,
+                "auto_stop_endpoint_score": 0.35,
+            })
+
+        self.assertAlmostEqual(restart_calls[0]["remaining_volume_ml"], 6.4)
+        self.assertEqual(
+            buffer.status(now_monotonic_s=103.0)["auto_stop_pulse_conservative_volume_ml"],
+            3.6,
+        )
+        self.assertAlmostEqual(
+            buffer.status(now_monotonic_s=104.0)["injected_volume_ml"], 3.25
+        )
+
+    def test_endpoint_pulse_runtime_uses_conservative_rate_and_pulse_ceiling(self):
+        commands = []
+        safety_stops = []
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        buffer.start_recording(pump_rate_ml_per_s=0.5)
+        buffer.begin_commanded_pump_timeline(running=True)
+
+        runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=lambda command: commands.append(command) or f"STEP ACCEPTED {command.split()[1]}",
+            stop_continuous=lambda reason: commands.append("c") or {"absolute_guard_stop_status": "sent"},
+            csv_buffer=buffer,
+            on_safety_stop=lambda *values: safety_stops.append(values),
+        )
+        runtime.arm(
+            session_id=1,
+            requested=True,
+            pump_started=True,
+            pump_rate_ml_per_s=0.5,
+            maximum_pump_rate_ml_per_s=1.0,
+            pulse_ml_per_step_upper_bound=0.01,
+            maximum_volume_ml=0.151,
+            approach_score=0.2,
+            pulse_steps=5,
+            settle_time_s=0.0,
+        )
+
+        def observe(elapsed, score, volume=0.0):
+            runtime.handle_auto_stop_status(
+                {
+                    "auto_stop_session_id": 1,
+                    "auto_stop_state": "armed",
+                    "auto_stop_baseline_ready": True,
+                    "auto_stop_observation_elapsed_s": elapsed,
+                    "auto_stop_observation_volume_ml": volume,
+                    "auto_stop_endpoint_score": score,
+                }
+            )
+
+        observe(0.0, 0.1)
+        observe(0.10, 0.25, 0.05)  # conservative continuous bound is 0.10 mL
+        observe(0.10, 0.1, 0.05)   # one 0.05 mL upper-bound pulse is allowed
+        observe(0.10, 0.1, 0.05)   # a second pulse would exceed 0.151 mL
+
+        self.assertEqual(commands.count("STEP 5\n"), 1)
+        self.assertTrue(safety_stops)
+        status = buffer.status()
+        self.assertEqual(status["auto_stop_pulse_conservative_volume_ml"], 0.15)
+        self.assertEqual(status["auto_stop_pulse_reason"], "maximum_volume_would_be_exceeded")
+
+    def test_endpoint_pulse_runtime_separates_nominal_csv_volume_from_safety_ceiling(self):
+        commands = []
+        buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+        buffer.start_recording(
+            pump_rate_ml_per_s=0.99,
+            started_monotonic_s=100.0,
+        )
+        buffer.begin_commanded_pump_timeline(
+            now_monotonic_s=100.0,
+            running=False,
+        )
+        runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=lambda command: commands.append(command)
+            or f"STEP ACCEPTED {command.split()[1]}",
+            stop_continuous=lambda reason: commands.append("c")
+            or {"absolute_guard_stop_status": "sent"},
+            csv_buffer=buffer,
+            on_safety_stop=lambda *values: None,
+        )
+        armed = runtime.arm(
+            session_id=1,
+            requested=True,
+            pump_started=True,
+            pump_rate_ml_per_s=0.99,
+            maximum_pump_rate_ml_per_s=1.05,
+            pulse_ml_per_step_upper_bound=0.0105,
+            pulse_nominal_ml_per_step=0.0099,
+            maximum_volume_ml=10.0,
+            dispense_direction="a",
+            approach_score=0.2,
+            pulse_steps=5,
+            settle_time_s=0.0,
+        )
+
+        def observe(score):
+            runtime.handle_auto_stop_status(
+                {
+                    "auto_stop_session_id": 1,
+                    "auto_stop_state": "armed",
+                    "auto_stop_baseline_ready": True,
+                    "auto_stop_observation_elapsed_s": 0.0,
+                    "auto_stop_observation_volume_ml": 0.0,
+                    "auto_stop_endpoint_score": score,
+                }
+            )
+
+        with mock.patch.object(windows_live_collect.time, "perf_counter", return_value=100.0):
+            observe(0.1)
+            observe(0.25)
+            observe(0.1)
+
+        status = buffer.status(now_monotonic_s=100.0)
+        self.assertEqual(commands, ["c", "STEP 5\n"])
+        self.assertEqual(armed["auto_stop_pulse_nominal_ml_per_step"], 0.0099)
+        self.assertEqual(
+            armed["auto_stop_pulse_configured_ml_per_step_upper_bound"],
+            0.0105,
+        )
+        self.assertEqual(armed["auto_stop_pulse_nominal_volume_ml"], 0.0495)
+        self.assertEqual(status["injected_volume_ml"], 0.0495)
+        self.assertEqual(status["pump_elapsed_s"], 0.05)
+        self.assertEqual(status["pump_nominal_pulse_volume_ml"], 0.0495)
+        self.assertEqual(
+            status["auto_stop_pulse_conservative_volume_ml"],
+            0.0525,
+        )
+
+    def test_endpoint_pulse_runtime_rejects_invalid_dispense_direction(self):
+        commands = []
+        buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=commands.append,
+            stop_continuous=commands.append,
+            csv_buffer=buffer,
+            on_safety_stop=lambda *values: None,
+        )
+
+        status = runtime.arm(
+            session_id=1,
+            requested=True,
+            pump_started=True,
+            pump_rate_ml_per_s=1.0,
+            maximum_pump_rate_ml_per_s=1.0,
+            pulse_ml_per_step_upper_bound=0.01,
+            maximum_volume_ml=10.0,
+            dispense_direction="x",
+        )
+
+        self.assertEqual(status["auto_stop_pulse_state"], "unavailable")
+        self.assertEqual(status["auto_stop_pulse_reason"], "pulse_direction_invalid")
+        self.assertEqual(commands, [])
+
     def test_auto_reconnect_pump_bridge_background_thread_connects_late_port(self):
         serials = []
         resolver_calls = []
@@ -2971,7 +4138,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
             return "COM7" if port_ready["value"] else ""
 
         def serial_factory(port, baud, timeout, write_timeout):
-            serial_obj = FakeAbcSerial()
+            serial_obj = FakeAbcSerial([b"PUMP RUNNING a 120000\n"])
             serial_obj.port = port
             serial_obj.baud = baud
             serials.append(serial_obj)
@@ -3030,6 +4197,18 @@ class WindowsLiveCollectTests(unittest.TestCase):
         finally:
             bridge.close()
 
+    def test_pump_serial_message_explains_web_firmware_ack_requirement(self):
+        message = windows_live_collect._pump_serial_user_message(
+            status="error",
+            requested="auto",
+            port="COM4",
+            error="firmware did not confirm pump command c: no acknowledgement",
+        )
+
+        self.assertIn("웹 제어용 펌웨어 응답", message)
+        self.assertIn("auto_titrator/arduino_stepper/arduino_stepper.ino", message)
+        self.assertIn("Serial Monitor", message)
+
     def test_live_stream_server_health_exposes_pump_reconnect_status(self):
         live_state = windows_live_collect.LiveStreamState()
         roi_state = windows_live_collect.RoiSelectionState(
@@ -3065,6 +4244,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
 
     def test_live_stream_server_starts_and_stops_training_csv_recording(self):
         pump_commands = []
+        firmware_state = {}
         live_state = windows_live_collect.LiveStreamState()
         roi_state = windows_live_collect.RoiSelectionState(
             visible_roi=Roi(10, 20, 30, 40),
@@ -3072,19 +4252,28 @@ class WindowsLiveCollectTests(unittest.TestCase):
         )
         roi_state.lock()
         csv_buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
         handle = windows_live_collect.start_live_stream_server(
             "127.0.0.1",
             0,
             live_state,
             roi_state=roi_state,
             csv_buffer=csv_buffer,
-            pump_command_sender=lambda command: pump_commands.append(command),
+            pump_command_sender=guarded_sender,
         )
         try:
             port = handle.server.server_address[1]
             start_request = urllib.request.Request(
                 f"http://127.0.0.1:{port}/api/csv/start",
-                data=b"{}",
+                data=json.dumps(
+                    {
+                        "pump_rate_ml_per_s": 1.0,
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                    }
+                ).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
@@ -3101,7 +4290,12 @@ class WindowsLiveCollectTests(unittest.TestCase):
                 stop_payload = json.loads(response.read().decode("utf-8"))
             restart_request = urllib.request.Request(
                 f"http://127.0.0.1:{port}/api/csv/start",
-                data=b"{}",
+                data=json.dumps(
+                    {
+                        "pump_rate_ml_per_s": 1.0,
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                    }
+                ).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
@@ -3119,7 +4313,106 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(restart_payload["roi"]["roi_state"], "recording")
         self.assertEqual(stop_payload["csv"]["state"], "stopped")
         self.assertEqual(stop_payload["csv"]["row_count"], 1)
-        self.assertEqual(pump_commands, ["b", "c", "b"])
+        self.assertEqual(
+            pump_commands,
+            ["G 100000\n", "b", "c", "G 100000\n", "b", "c"],
+        )
+
+    def test_live_stream_server_finalizes_lossless_capture_backlog_before_download(self):
+        live_state = windows_live_collect.LiveStreamState()
+        roi_state = windows_live_collect.RoiSelectionState(
+            visible_roi=Roi(10, 20, 30, 40),
+            thermal_roi=Roi(50, 60, 20, 15),
+        )
+        roi_state.lock()
+        csv_buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        worker = windows_live_collect.Mini2CaptureThread(
+            FastMini2Reader(),
+            start_time=time.perf_counter(),
+            max_recording_queue=64,
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            live_state,
+            roi_state=roi_state,
+            csv_buffer=csv_buffer,
+        )
+        handle.server.capture_controller = worker
+        worker.start()
+        try:
+            port = handle.server.server_address[1]
+            start_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/start",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(start_request, timeout=1.0) as response:
+                started = json.loads(response.read().decode("utf-8"))
+            time.sleep(0.02)
+            stop_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(stop_request, timeout=1.0) as response:
+                stopping = json.loads(response.read().decode("utf-8"))
+
+            self.assertTrue(stopping["csv"]["finalizing"])
+            duplicate_stop_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(duplicate_stop_request, timeout=1.0) as response:
+                duplicate_stopping = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(duplicate_stopping["csv"]["finalizing"])
+            self.assertEqual(duplicate_stopping["csv"]["session_id"], started["csv"]["session_id"])
+
+            premature_restart_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/start",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as restart_error:
+                urllib.request.urlopen(premature_restart_request, timeout=1.0)
+            self.assertEqual(restart_error.exception.code, 409)
+            restart_payload = json.loads(restart_error.exception.read().decode("utf-8"))
+            self.assertTrue(restart_payload["csv"]["finalizing"])
+            self.assertEqual(restart_payload["csv"]["session_id"], started["csv"]["session_id"])
+
+            with self.assertRaises(urllib.error.HTTPError) as download_error:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/csv", timeout=1.0)
+            self.assertEqual(download_error.exception.code, 409)
+
+            session_id = int(started["csv"]["session_id"])
+            captured_count = int(stopping["capture"]["recording_captured_frames"])
+            for _ in range(captured_count):
+                captured = worker.read(timeout_s=0.5)
+                self.assertTrue(
+                    csv_buffer.add(
+                        {
+                            "frame_id": captured.frame_id,
+                            "time_s": captured.timestamp_s,
+                            "capture_recording_session_id": session_id,
+                        }
+                    )
+                )
+                worker.mark_processed(captured)
+            self.assertTrue(worker.recording_drained(session_id))
+            csv_buffer.complete_stop()
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/csv", timeout=1.0) as response:
+                downloaded = response.read().decode("utf-8-sig")
+        finally:
+            worker.close()
+            handle.close()
+
+        self.assertGreater(captured_count, 0)
+        self.assertEqual(len(list(csv.DictReader(io.StringIO(downloaded)))), captured_count)
 
     def test_live_stream_server_starts_csv_when_arduino_pump_is_missing(self):
         live_state = windows_live_collect.LiveStreamState()
@@ -3170,33 +4463,46 @@ class WindowsLiveCollectTests(unittest.TestCase):
 
     def test_live_stream_server_exposes_manual_abc_pump_buttons(self):
         pump_commands = []
+        firmware_state = {}
         live_state = windows_live_collect.LiveStreamState()
         roi_state = windows_live_collect.RoiSelectionState(
             visible_roi=Roi(10, 20, 30, 40),
             thermal_roi=Roi(50, 60, 20, 15),
         )
         csv_buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("data/raw/live-training.csv"))
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
         handle = windows_live_collect.start_live_stream_server(
             "127.0.0.1",
             0,
             live_state,
             roi_state=roi_state,
             csv_buffer=csv_buffer,
-            pump_command_sender=lambda command: pump_commands.append(command),
+            pump_command_sender=guarded_sender,
         )
         try:
             port = handle.server.server_address[1]
             dispense_request = urllib.request.Request(
                 f"http://127.0.0.1:{port}/api/pump/dispense",
-                data=b"{}",
+                data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
             with urllib.request.urlopen(dispense_request, timeout=1.0) as response:
                 dispense_payload = json.loads(response.read().decode("utf-8"))
+            stop_before_retract_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(stop_before_retract_request, timeout=1.0) as response:
+                stop_before_retract_payload = json.loads(response.read().decode("utf-8"))
             retract_request = urllib.request.Request(
                 f"http://127.0.0.1:{port}/api/pump/retract",
-                data=b"{}",
+                data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
@@ -3214,13 +4520,1020 @@ class WindowsLiveCollectTests(unittest.TestCase):
             handle.close()
 
         self.assertTrue(dispense_payload["ok"])
+        self.assertTrue(stop_before_retract_payload["ok"])
         self.assertTrue(retract_payload["ok"])
         self.assertTrue(stop_payload["ok"])
         self.assertEqual(dispense_payload["pump"]["action"], "start")
         self.assertEqual(dispense_payload["pump"]["command"], "b")
         self.assertEqual(retract_payload["pump"]["command"], "a")
         self.assertEqual(stop_payload["pump"]["command"], "c")
-        self.assertEqual(pump_commands, ["b", "a", "c"])
+        self.assertEqual(
+            pump_commands,
+            ["G 100000\n", "b", "c", "G 100000\n", "a", "c"],
+        )
+
+    def test_live_stream_server_can_reverse_manual_pump_direction_mapping(self):
+        pump_commands = []
+        firmware_state = {}
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            pump_command_sender=guarded_sender,
+        )
+        try:
+            port = handle.server.server_address[1]
+
+            def post(path):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}{path}",
+                    data=json.dumps(
+                        {
+                            "maximum_pump_rate_ml_per_s": 1.0,
+                            "pump_direction_mode": "reversed",
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=1.0) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            dispense = post("/api/pump/dispense")
+            stop_one = post("/api/pump/stop")
+            retract = post("/api/pump/retract")
+            stop_two = post("/api/pump/stop")
+        finally:
+            handle.close()
+
+        self.assertEqual(dispense["pump"]["command"], "a")
+        self.assertEqual(retract["pump"]["command"], "b")
+        self.assertTrue(stop_one["ok"])
+        self.assertTrue(stop_two["ok"])
+        self.assertEqual(
+            pump_commands,
+            ["G 100000\n", "a", "c", "G 100000\n", "b", "c"],
+        )
+
+    def test_manual_web_pump_buttons_bypass_time_and_volume_guard(self):
+        pump_commands = []
+
+        def sender(command):
+            pump_commands.append(command)
+            return {"legacy_command_sent": command}
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            pump_command_sender=sender,
+            pump_command_map={"start": "b", "retract": "a", "stop": "c"},
+        )
+        try:
+            port = handle.server.server_address[1]
+
+            def post(path, payload):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}{path}",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=1.0) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            dispense = post("/api/pump/dispense", {"manual_unbounded": True})
+            stop_one = post("/api/pump/stop", {})
+            retract = post("/api/pump/retract", {"manual_unbounded": True})
+            stop_two = post("/api/pump/stop", {})
+            reset = post("/api/pump/reset", {})
+        finally:
+            handle.close()
+
+        self.assertTrue(dispense["pump"]["manual_unbounded"])
+        self.assertTrue(retract["pump"]["manual_unbounded"])
+        self.assertEqual(dispense["pump"]["command"], "b")
+        self.assertEqual(retract["pump"]["command"], "a")
+        self.assertTrue(stop_one["ok"])
+        self.assertTrue(stop_two["ok"])
+        self.assertTrue(reset["ok"])
+        self.assertEqual(reset["pump"]["command"], "r")
+        self.assertEqual(pump_commands, ["b", "c", "a", "c", "r"])
+        self.assertFalse(any(command.startswith("G ") for command in pump_commands))
+
+    def test_live_stream_server_rejects_duplicate_start_without_refreshing_guard(self):
+        pump_commands = []
+        firmware_state = {}
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            pump_command_sender=guarded_sender,
+        )
+        try:
+            port = handle.server.server_address[1]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps(
+                    {
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                        "absolute_maximum_volume_ml": 10.0,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                first = json.loads(response.read().decode("utf-8"))
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                duplicate = json.loads(response.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        self.assertTrue(first["ok"])
+        self.assertFalse(duplicate["ok"])
+        self.assertIn("already active", duplicate["pump"]["error"])
+        self.assertEqual(pump_commands, ["G 10000\n", "b", "c"])
+
+    def test_recording_session_volume_budget_survives_explicit_stop_and_restart(self):
+        pump_commands = []
+        firmware_state = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        with mock.patch.object(windows_live_collect.time, "perf_counter", return_value=100.0):
+            csv_buffer.start_recording(
+                pump_rate_ml_per_s=1.0,
+                started_monotonic_s=100.0,
+            )
+            handle = windows_live_collect.start_live_stream_server(
+                "127.0.0.1",
+                0,
+                windows_live_collect.LiveStreamState(),
+                csv_buffer=csv_buffer,
+                pump_command_sender=guarded_sender,
+            )
+            try:
+                port = handle.server.server_address[1]
+
+                def post(path, payload):
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}{path}",
+                        data=json.dumps(payload).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(request, timeout=1.0) as response:
+                        return json.loads(response.read().decode("utf-8"))
+
+                first = post(
+                    "/api/pump/dispense",
+                    {
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                        "absolute_maximum_volume_ml": 10.0,
+                    },
+                )
+                stopped = post("/api/pump/stop", {})
+                csv_buffer.record_commanded_pulse(
+                    steps=200,
+                    nominal_ml_per_step=0.01,
+                    now_monotonic_s=100.0,
+                )
+                restarted = post(
+                    "/api/pump/dispense",
+                    {
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                        "absolute_maximum_volume_ml": 10.0,
+                    },
+                )
+            finally:
+                handle.close()
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(stopped["ok"])
+        self.assertTrue(restarted["ok"])
+        self.assertEqual(restarted["pump"]["session_used_volume_ml"], 2.0)
+        self.assertEqual(restarted["pump"]["session_remaining_volume_ml"], 8.0)
+        self.assertEqual(
+            pump_commands,
+            ["G 10000\n", "b", "c", "G 8000\n", "b", "c"],
+        )
+
+    def test_pump_start_and_retract_are_rejected_while_csv_is_finalizing(self):
+        pump_commands = []
+        firmware_state = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=100.0,
+        )
+        stopping = csv_buffer.request_stop()
+        self.assertTrue(stopping["finalizing"])
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+        )
+        try:
+            port = handle.server.server_address[1]
+
+            def post(path):
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}{path}",
+                    data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=1.0) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            dispense = post("/api/pump/dispense")
+            retract = post("/api/pump/retract")
+            commands_before_close = list(pump_commands)
+        finally:
+            handle.close()
+
+        self.assertFalse(dispense["ok"])
+        self.assertFalse(retract["ok"])
+        self.assertIn("finalization is in progress", dispense["pump"]["error"])
+        self.assertIn("finalization is in progress", retract["pump"]["error"])
+        self.assertEqual(commands_before_close, [])
+        self.assertNotIn("a", pump_commands)
+        self.assertNotIn("b", pump_commands)
+        self.assertFalse(any(command.startswith("G ") for command in pump_commands))
+
+    def test_pump_start_is_rejected_while_csv_stop_is_draining_capture(self):
+        pump_commands = []
+        firmware_state = {}
+        drain_entered = threading.Event()
+        release_drain = threading.Event()
+        stop_result = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class BlockingCaptureController(windows_live_collect.Mini2CaptureThread):
+            def __init__(self):
+                pass
+
+            def end_recording(self, session_id):
+                drain_entered.set()
+                if not release_drain.wait(timeout=3.0):
+                    raise TimeoutError("test capture drain was not released")
+                return {"drained": True, "recording_session_id": session_id}
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+        )
+        handle.server.capture_controller = BlockingCaptureController()
+        port = handle.server.server_address[1]
+
+        def stop_csv():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4.0) as response:
+                    stop_result["payload"] = json.loads(response.read().decode("utf-8"))
+            except BaseException as exc:  # noqa: BLE001 - surfaced after the thread joins.
+                stop_result["error"] = exc
+
+        stop_thread = threading.Thread(target=stop_csv, daemon=True)
+        stop_thread.start()
+        try:
+            self.assertTrue(drain_entered.wait(timeout=1.0))
+            start_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as start_error:
+                urllib.request.urlopen(start_request, timeout=1.0)
+            self.assertEqual(start_error.exception.code, 409)
+            start_payload = json.loads(start_error.exception.read().decode("utf-8"))
+            self.assertIn("transition is in progress", start_payload["pump"]["error"])
+            self.assertEqual(pump_commands, ["c"])
+        finally:
+            release_drain.set()
+            stop_thread.join(timeout=4.0)
+            handle.close()
+
+        self.assertFalse(stop_thread.is_alive())
+        self.assertNotIn("error", stop_result)
+        self.assertTrue(stop_result["payload"]["ok"])
+        self.assertNotIn("a", pump_commands)
+        self.assertNotIn("b", pump_commands)
+        self.assertFalse(any(command.startswith("G ") for command in pump_commands))
+
+    def test_csv_stop_preempts_an_inflight_pump_start_before_waiting_for_csv_lock(self):
+        pump_commands = []
+        wire_write_lock = threading.Lock()
+        direction_entered = threading.Event()
+        release_direction = threading.Event()
+        emergency_sent = threading.Event()
+        start_result = {}
+        stop_result = {}
+        firmware_timeout = {"ms": None}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        def sender(command):
+            pump_commands.append(command)
+            if command.startswith("G "):
+                timeout_ms = int(command.split()[1])
+                firmware_timeout["ms"] = timeout_ms
+                return f"GUARD ARMED {timeout_ms}"
+            if command == "c":
+                return "PUMP STOPPED COMMAND"
+            raise AssertionError(f"unexpected command: {command!r}")
+
+        def guarded_direction(command, can_send):
+            with wire_write_lock:
+                if not can_send():
+                    return {"direction_cancelled": True}
+                pump_commands.append(command)
+                direction_entered.set()
+            if not release_direction.wait(timeout=3.0):
+                raise TimeoutError("test direction acknowledgement was not released")
+            return f"PUMP RUNNING {command} {firmware_timeout['ms']}"
+
+        def emergency_stop():
+            with wire_write_lock:
+                pump_commands.append("EMERGENCY_C")
+                emergency_sent.set()
+            return {"sent": True, "status": "sent"}
+
+        csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=sender,
+            pump_guarded_direction_sender=guarded_direction,
+            pump_emergency_stop_sender=emergency_stop,
+        )
+        port = handle.server.server_address[1]
+
+        def post(path, payload, result):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4.0) as response:
+                    result["payload"] = json.loads(response.read().decode("utf-8"))
+            except BaseException as exc:  # noqa: BLE001 - surfaced after the thread joins.
+                result["error"] = exc
+
+        start_thread = threading.Thread(
+            target=post,
+            args=(
+                "/api/pump/dispense",
+                {"maximum_pump_rate_ml_per_s": 1.0},
+                start_result,
+            ),
+            daemon=True,
+        )
+        stop_thread = threading.Thread(
+            target=post,
+            args=("/api/csv/stop", {}, stop_result),
+            daemon=True,
+        )
+        start_thread.start()
+        try:
+            self.assertTrue(direction_entered.wait(timeout=1.0))
+            stop_thread.start()
+            self.assertTrue(emergency_sent.wait(timeout=1.0))
+            self.assertTrue(start_thread.is_alive())
+        finally:
+            release_direction.set()
+            start_thread.join(timeout=4.0)
+            stop_thread.join(timeout=4.0)
+            handle.close()
+
+        self.assertFalse(start_thread.is_alive())
+        self.assertFalse(stop_thread.is_alive())
+        self.assertNotIn("error", start_result)
+        self.assertNotIn("error", stop_result)
+        self.assertFalse(start_result["payload"]["ok"])
+        self.assertTrue(stop_result["payload"]["ok"])
+        self.assertEqual(pump_commands[1:], ["b", "EMERGENCY_C", "c"])
+        self.assertRegex(pump_commands[0], r"^G [1-9][0-9]*\n$")
+        guard_status = stop_result["payload"]["pump"]["absolute_guard"]
+        self.assertFalse(guard_status["absolute_guard_armed"])
+        self.assertEqual(guard_status["absolute_guard_state"], "stopped")
+
+    def test_stop_intent_rejects_start_in_prelock_stop_gap(self):
+        pump_commands = []
+        emergency_entered = threading.Event()
+        release_emergency = threading.Event()
+        stop_result = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        def sender(command):
+            pump_commands.append(command)
+            if command == "c":
+                return "PUMP STOPPED COMMAND"
+            if command.startswith("G "):
+                timeout_ms = int(command.split()[1])
+                return f"GUARD ARMED {timeout_ms}"
+            if command == "b":
+                timeout_ms = int(pump_commands[-2].split()[1])
+                return f"PUMP RUNNING b {timeout_ms}"
+            raise AssertionError(command)
+
+        def emergency_stop():
+            pump_commands.append("EMERGENCY_C")
+            emergency_entered.set()
+            if not release_emergency.wait(timeout=3.0):
+                raise TimeoutError("test emergency stop was not released")
+            return {"sent": True, "status": "sent"}
+
+        csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=sender,
+            pump_emergency_stop_sender=emergency_stop,
+        )
+        port = handle.server.server_address[1]
+
+        def stop_csv():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4.0) as response:
+                    stop_result["payload"] = json.loads(response.read().decode("utf-8"))
+            except BaseException as exc:  # noqa: BLE001 - surfaced after join.
+                stop_result["error"] = exc
+
+        stop_thread = threading.Thread(target=stop_csv, daemon=True)
+        stop_thread.start()
+        try:
+            self.assertTrue(emergency_entered.wait(timeout=1.0))
+            # The stop handler has published intent and is still before its CSV
+            # lock acquisition. A motion request must not enter this gap.
+            start_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as start_error:
+                urllib.request.urlopen(start_request, timeout=1.0)
+            self.assertEqual(start_error.exception.code, 409)
+            payload = json.loads(start_error.exception.read().decode("utf-8"))
+            self.assertIn("stop/finalization intent", payload["pump"]["error"])
+            self.assertEqual(pump_commands, ["EMERGENCY_C"])
+        finally:
+            release_emergency.set()
+            stop_thread.join(timeout=4.0)
+            handle.close()
+
+        self.assertFalse(stop_thread.is_alive())
+        self.assertNotIn("error", stop_result)
+        self.assertTrue(stop_result["payload"]["ok"])
+        self.assertEqual(pump_commands, ["EMERGENCY_C", "c"])
+        self.assertFalse(handle.server.csv_stop_intent.is_set())
+
+    def test_stop_intent_coordinator_requires_all_owners_and_latch_to_finish(self):
+        coordinator = windows_live_collect.StopIntentCoordinator()
+        manual_token = coordinator.begin("manual")
+        automatic_token = coordinator.begin("automatic")
+        coordinator.latch_session(7)
+
+        self.assertFalse(coordinator.clear_latch(8))
+        coordinator.finish(automatic_token)
+        self.assertTrue(coordinator.is_set())
+        self.assertEqual(coordinator.status()["stop_intent_owner_count"], 1)
+
+        coordinator.finish(manual_token)
+        self.assertTrue(coordinator.is_set())
+        self.assertEqual(coordinator.status()["stop_intent_latch_session_id"], 7)
+        self.assertTrue(coordinator.clear_latch(7))
+        self.assertFalse(coordinator.is_set())
+        self.assertEqual(coordinator.status()["stop_intent_owner_count"], 0)
+
+    def test_stale_session_cannot_clear_another_sessions_finalization_latch(self):
+        coordinator = windows_live_collect.StopIntentCoordinator()
+        coordinator.latch_session(22)
+        stale_token = coordinator.begin("stale_session_21")
+
+        self.assertFalse(coordinator.clear_latch(21))
+        coordinator.finish(stale_token)
+
+        self.assertTrue(coordinator.is_set())
+        self.assertEqual(coordinator.status()["stop_intent_latch_session_id"], 22)
+        self.assertTrue(coordinator.clear_latch(22))
+        self.assertFalse(coordinator.is_set())
+
+    def test_delayed_stale_auto_stop_callback_does_not_stop_new_session(self):
+        pump_commands = []
+        firmware_state = {}
+        stale_begin_entered = threading.Event()
+        release_stale_begin = threading.Event()
+        callback_result = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class DelayedBeginStopIntent(windows_live_collect.StopIntentCoordinator):
+            def begin(self, reason):
+                if reason == "stale_session_1":
+                    stale_begin_entered.set()
+                    if not release_stale_begin.wait(timeout=3.0):
+                        raise TimeoutError("stale callback begin was not released")
+                return super().begin(reason)
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+        )
+        coordinator = DelayedBeginStopIntent()
+        handle.server.csv_stop_intent = coordinator
+        port = handle.server.server_address[1]
+
+        def post(path, payload):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=4.0) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        first_csv = csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        first_session_id = int(first_csv["session_id"])
+        first_pump = post(
+            "/api/pump/dispense",
+            {
+                "maximum_pump_rate_ml_per_s": 1.0,
+                "absolute_maximum_volume_ml": 10.0,
+            },
+        )
+
+        def stale_callback():
+            try:
+                windows_live_collect.finish_live_automatic_stop(
+                    server=handle.server,
+                    csv_buffer=csv_buffer,
+                    roi_state=handle.server.roi_state,
+                    auto_stop_controller=None,
+                    endpoint_pulse_runtime=None,
+                    session_id=first_session_id,
+                    status={"auto_stop_state": "triggered"},
+                    guard_reason="stale_session_1",
+                )
+            except BaseException as exc:  # noqa: BLE001 - surfaced after join.
+                callback_result["error"] = exc
+
+        callback_thread = threading.Thread(target=stale_callback, daemon=True)
+        callback_thread.start()
+        commands_before_cleanup = []
+        csv_before_cleanup = {}
+        guard_before_cleanup = {}
+        intent_before_cleanup = True
+        try:
+            self.assertTrue(first_pump["ok"])
+            self.assertTrue(stale_begin_entered.wait(timeout=1.0))
+
+            stopped = post("/api/csv/stop", {})
+            self.assertTrue(stopped["ok"])
+            second_csv = csv_buffer.start_recording(
+                pump_rate_ml_per_s=1.0,
+                started_monotonic_s=time.perf_counter(),
+            )
+            second_session_id = int(second_csv["session_id"])
+            self.assertNotEqual(second_session_id, first_session_id)
+            second_pump = post(
+                "/api/pump/dispense",
+                {
+                    "maximum_pump_rate_ml_per_s": 1.0,
+                    "absolute_maximum_volume_ml": 10.0,
+                },
+            )
+            self.assertTrue(second_pump["ok"])
+
+            release_stale_begin.set()
+            callback_thread.join(timeout=3.0)
+            commands_before_cleanup = list(pump_commands)
+            csv_before_cleanup = csv_buffer.status()
+            guard_before_cleanup = handle.server.absolute_pump_safety_guard.status()
+            intent_before_cleanup = coordinator.is_set()
+        finally:
+            release_stale_begin.set()
+            callback_thread.join(timeout=3.0)
+            if csv_buffer.status().get("recording"):
+                try:
+                    post("/api/csv/stop", {})
+                except Exception:
+                    pass
+            handle.close()
+
+        self.assertFalse(callback_thread.is_alive())
+        self.assertNotIn("error", callback_result)
+        self.assertEqual(len(commands_before_cleanup), 5)
+        self.assertRegex(commands_before_cleanup[0], r"^G [1-9][0-9]*\n$")
+        self.assertEqual(commands_before_cleanup[1], "b")
+        self.assertEqual(commands_before_cleanup[2], "c")
+        self.assertRegex(commands_before_cleanup[3], r"^G [1-9][0-9]*\n$")
+        self.assertEqual(commands_before_cleanup[4], "b")
+        self.assertTrue(csv_before_cleanup["recording"])
+        self.assertEqual(csv_before_cleanup["session_id"], second_session_id)
+        self.assertEqual(guard_before_cleanup["absolute_guard_state"], "armed_running")
+        self.assertFalse(intent_before_cleanup)
+
+    def test_overlapping_auto_and_manual_stop_keep_restart_blocked(self):
+        pump_commands = []
+        firmware_state = {}
+        callback_gate_held = threading.Event()
+        disarm_called = threading.Event()
+        automatic_owner_finished = threading.Event()
+        release_callback_gate = threading.Event()
+        automatic_result = {}
+        stop_result = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class GateControlledAutoStop(windows_live_collect.ColorChangeAutoStopController):
+            def __init__(self):
+                self._callback_gate = threading.RLock()
+
+            def disarm(self, reason):
+                disarm_called.set()
+                with self._callback_gate:
+                    return {
+                        "auto_stop_state": "disabled",
+                        "auto_stop_reason": reason,
+                    }
+
+        auto_stop = GateControlledAutoStop()
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        initial_csv_status = csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        initial_session_id = int(initial_csv_status["session_id"])
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+            auto_stop_controller=auto_stop,
+        )
+        port = handle.server.server_address[1]
+        coordinator = handle.server.csv_stop_intent
+
+        def simulate_automatic_stop_completion():
+            with auto_stop._callback_gate:
+                token = coordinator.begin("automatic_stop")
+                coordinator.latch_session(initial_session_id)
+                callback_gate_held.set()
+                try:
+                    if not disarm_called.wait(timeout=2.0):
+                        automatic_result["error"] = "manual disarm was not attempted"
+                        return
+                    with handle.server.csv_control_lock:
+                        csv_buffer.stop_recording()
+                        coordinator.clear_latch(initial_session_id)
+                finally:
+                    coordinator.finish(token)
+                    automatic_owner_finished.set()
+                # Widen the exact race window from the real callback: its stop
+                # token is finished, but manual stop still owns another token
+                # and is blocked on this callback gate.
+                if not release_callback_gate.wait(timeout=3.0):
+                    automatic_result["error"] = "callback gate was not released"
+
+        def stop_csv():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4.0) as response:
+                    stop_result["payload"] = json.loads(response.read().decode("utf-8"))
+            except BaseException as exc:  # noqa: BLE001 - surfaced after joins.
+                stop_result["error"] = exc
+
+        automatic_thread = threading.Thread(
+            target=simulate_automatic_stop_completion,
+            daemon=True,
+        )
+        stop_thread = threading.Thread(target=stop_csv, daemon=True)
+        automatic_thread.start()
+        self.assertTrue(callback_gate_held.wait(timeout=1.0))
+        stop_thread.start()
+        try:
+            self.assertTrue(automatic_owner_finished.wait(timeout=2.0))
+            self.assertTrue(stop_thread.is_alive())
+            self.assertTrue(coordinator.is_set())
+            self.assertEqual(coordinator.status()["stop_intent_owner_count"], 1)
+
+            start_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps(
+                    {"maximum_pump_rate_ml_per_s": 1.0}
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as start_error:
+                urllib.request.urlopen(start_request, timeout=1.0)
+            self.assertEqual(start_error.exception.code, 409)
+            start_payload = json.loads(start_error.exception.read().decode("utf-8"))
+            self.assertIn("stop/finalization intent", start_payload["pump"]["error"])
+            self.assertFalse(any(command.startswith("G ") for command in pump_commands))
+            self.assertNotIn("b", pump_commands)
+        finally:
+            release_callback_gate.set()
+            automatic_thread.join(timeout=3.0)
+            stop_thread.join(timeout=4.0)
+            handle.close()
+
+        self.assertFalse(automatic_thread.is_alive())
+        self.assertFalse(stop_thread.is_alive())
+        self.assertNotIn("error", automatic_result)
+        self.assertNotIn("error", stop_result)
+        self.assertTrue(stop_result["payload"]["ok"])
+        self.assertEqual(pump_commands, ["c"])
+        self.assertFalse(coordinator.is_set())
+        self.assertEqual(coordinator.status()["stop_intent_owner_count"], 0)
+
+    def test_manual_csv_stop_does_not_deadlock_with_auto_stop_callback(self):
+        pump_commands = []
+        firmware_state = {}
+        pump_stop_sent = threading.Event()
+        callback_gate_held = threading.Event()
+        disarm_called = threading.Event()
+        automatic_csv_lock_acquired = threading.Event()
+        automatic_result = {}
+        stop_result = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class GateControlledAutoStop(windows_live_collect.ColorChangeAutoStopController):
+            def __init__(self):
+                self._callback_gate = threading.RLock()
+
+            def disarm(self, reason):
+                # Signal before waiting for the callback gate.  If the HTTP
+                # handler holds csv_control_lock here, the simulated automatic
+                # callback below creates the historical AB/BA deadlock.
+                disarm_called.set()
+                with self._callback_gate:
+                    return {
+                        "auto_stop_state": "disabled",
+                        "auto_stop_reason": reason,
+                    }
+
+        auto_stop = GateControlledAutoStop()
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            response = acknowledged_test_pump_firmware(command, firmware_state)
+            if command == "c":
+                pump_stop_sent.set()
+            return response
+
+        csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+            auto_stop_controller=auto_stop,
+        )
+        port = handle.server.server_address[1]
+
+        def simulate_automatic_callback():
+            with auto_stop._callback_gate:
+                callback_gate_held.set()
+                if not pump_stop_sent.wait(timeout=2.0):
+                    automatic_result["error"] = "manual stop command was not sent"
+                    return
+                if not disarm_called.wait(timeout=2.0):
+                    automatic_result["error"] = "manual disarm was not attempted"
+                    return
+                acquired = handle.server.csv_control_lock.acquire(timeout=1.0)
+                automatic_result["csv_lock_acquired"] = acquired
+                if acquired:
+                    automatic_csv_lock_acquired.set()
+                    handle.server.csv_control_lock.release()
+
+        def stop_csv():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4.0) as response:
+                    stop_result["payload"] = json.loads(response.read().decode("utf-8"))
+            except BaseException as exc:  # noqa: BLE001 - surfaced after joins.
+                stop_result["error"] = exc
+
+        automatic_thread = threading.Thread(
+            target=simulate_automatic_callback,
+            daemon=True,
+        )
+        stop_thread = threading.Thread(target=stop_csv, daemon=True)
+        automatic_thread.start()
+        self.assertTrue(callback_gate_held.wait(timeout=1.0))
+        stop_thread.start()
+        try:
+            self.assertTrue(automatic_csv_lock_acquired.wait(timeout=2.0))
+        finally:
+            automatic_thread.join(timeout=3.0)
+            stop_thread.join(timeout=4.0)
+            handle.close()
+
+        self.assertFalse(automatic_thread.is_alive())
+        self.assertFalse(stop_thread.is_alive())
+        self.assertNotIn("error", automatic_result)
+        self.assertNotIn("error", stop_result)
+        self.assertTrue(automatic_result["csv_lock_acquired"])
+        self.assertTrue(stop_result["payload"]["ok"])
+        self.assertEqual(pump_commands, ["c"])
+
+    def test_manual_retract_does_not_deadlock_with_auto_stop_callback(self):
+        pump_commands = []
+        firmware_state = {}
+        callback_gate_held = threading.Event()
+        disarm_called = threading.Event()
+        automatic_csv_lock_acquired = threading.Event()
+        automatic_result = {}
+        retract_result = {}
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class GateControlledAutoStop(windows_live_collect.ColorChangeAutoStopController):
+            def __init__(self):
+                self._callback_gate = threading.RLock()
+
+            def disarm(self, reason):
+                disarm_called.set()
+                with self._callback_gate:
+                    return {
+                        "auto_stop_state": "disabled",
+                        "auto_stop_reason": reason,
+                    }
+
+        auto_stop = GateControlledAutoStop()
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        csv_buffer.start_recording(
+            pump_rate_ml_per_s=1.0,
+            started_monotonic_s=time.perf_counter(),
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+            auto_stop_controller=auto_stop,
+        )
+        port = handle.server.server_address[1]
+
+        def simulate_automatic_callback():
+            with auto_stop._callback_gate:
+                callback_gate_held.set()
+                if not disarm_called.wait(timeout=2.0):
+                    automatic_result["error"] = "manual disarm was not attempted"
+                    return
+                acquired = handle.server.csv_control_lock.acquire(timeout=1.0)
+                automatic_result["csv_lock_acquired"] = acquired
+                if acquired:
+                    automatic_csv_lock_acquired.set()
+                    handle.server.csv_control_lock.release()
+
+        def retract_pump():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/retract",
+                data=json.dumps(
+                    {"maximum_pump_rate_ml_per_s": 1.0}
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=4.0) as response:
+                    retract_result["payload"] = json.loads(response.read().decode("utf-8"))
+            except BaseException as exc:  # noqa: BLE001 - surfaced after joins.
+                retract_result["error"] = exc
+
+        automatic_thread = threading.Thread(
+            target=simulate_automatic_callback,
+            daemon=True,
+        )
+        retract_thread = threading.Thread(target=retract_pump, daemon=True)
+        automatic_thread.start()
+        self.assertTrue(callback_gate_held.wait(timeout=1.0))
+        retract_thread.start()
+        try:
+            self.assertTrue(automatic_csv_lock_acquired.wait(timeout=2.0))
+        finally:
+            automatic_thread.join(timeout=3.0)
+            retract_thread.join(timeout=4.0)
+            handle.close()
+
+        self.assertFalse(automatic_thread.is_alive())
+        self.assertFalse(retract_thread.is_alive())
+        self.assertNotIn("error", automatic_result)
+        self.assertNotIn("error", retract_result)
+        self.assertTrue(automatic_result["csv_lock_acquired"])
+        self.assertTrue(retract_result["payload"]["ok"])
+        self.assertRegex(pump_commands[0], r"^G [1-9][0-9]*\n$")
+        self.assertEqual(pump_commands[1], "a")
+        self.assertEqual(pump_commands[-1], "c")
 
     def test_live_stream_server_starts_csv_with_pump_equivalence_payload(self):
         live_state = windows_live_collect.LiveStreamState()
@@ -3260,6 +5573,479 @@ class WindowsLiveCollectTests(unittest.TestCase):
         self.assertEqual(start_payload["csv"]["pump_run_rate_ml_per_s"], 1.0)
         self.assertEqual(start_payload["csv"]["theoretical_equivalence_volume_ml"], 9.0)
         self.assertEqual(start_payload["csv"]["theoretical_equivalence_time_s"], 9.0)
+
+    def test_slow_stage_unsupported_capability_is_rejected_before_motion(self):
+        commands = []
+        roi_state = windows_live_collect.RoiSelectionState(
+            visible_roi=Roi(1, 1, 5, 5), thermal_roi=Roi(1, 1, 5, 5)
+        )
+        roi_state.lock()
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1", 0, windows_live_collect.LiveStreamState(),
+            roi_state=roi_state,
+            csv_buffer=windows_live_collect.LiveCsvBuffer(output_path=Path("unused.csv")),
+            pump_command_sender=lambda command: commands.append(command),
+            pump_status_provider=lambda: {
+                "supports_step_pulse": True,
+                "supports_variable_rate": False,
+                "firmware_pulse_direction": "b",
+            },
+            auto_stop_controller=object(),
+            endpoint_pulse_runtime=object(),
+        )
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{handle.server.server_address[1]}/api/csv/start",
+                data=json.dumps({
+                    "auto_stop_enabled": True,
+                    "auto_stop_pulse_enabled": True,
+                    "auto_stop_slow_stage_enabled": True,
+                    "pump_rate_ml_per_s": 1.0,
+                    "maximum_pump_rate_ml_per_s": 1.05,
+                    "absolute_maximum_volume_ml": 10.0,
+                    "pulse_ml_per_step_upper_bound": 0.01,
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=1.0)
+            body = json.loads(caught.exception.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        self.assertIn("unsupported", body["error"])
+        self.assertIn("PUMP SPEED 1", body["error"])
+        self.assertEqual(commands, [])
+
+    def test_csv_start_rejects_malformed_and_fractional_staged_values_without_side_effects(self):
+        commands = []
+        roi_state = windows_live_collect.RoiSelectionState(
+            visible_roi=Roi(1, 1, 5, 5), thermal_roi=Roi(1, 1, 5, 5)
+        )
+        roi_state.lock()
+        csv_buffer = windows_live_collect.LiveCsvBuffer(output_path=Path("unused.csv"))
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1", 0, windows_live_collect.LiveStreamState(),
+            roi_state=roi_state, csv_buffer=csv_buffer,
+            pump_command_sender=lambda command: commands.append(command),
+        )
+        try:
+            port = handle.server.server_address[1]
+            bodies = [b"{", b"[]", json.dumps({
+                "auto_stop_slow_stage_enabled": "true"
+            }).encode(), json.dumps({
+                "auto_stop_slow_stage_enabled": True,
+                "auto_stop_slow_rate_steps_per_s": 25.5,
+            }).encode()]
+            for body in bodies:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/csv/start", data=body,
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request, timeout=1.0)
+                self.assertEqual(caught.exception.code, 400)
+        finally:
+            handle.close()
+
+        self.assertEqual(commands, [])
+        self.assertEqual(csv_buffer.status()["state"], "idle")
+        self.assertFalse(roi_state.status()["roi_recording"])
+
+    def test_pump_start_and_retract_reject_malformed_json_before_motion(self):
+        commands = []
+        disarms = []
+
+        class DisarmSpy:
+            def __init__(self, name):
+                self.name = name
+
+            def disarm(self, reason):
+                disarms.append((self.name, reason))
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1", 0, windows_live_collect.LiveStreamState(),
+            pump_command_sender=lambda command: commands.append(command),
+            auto_stop_controller=DisarmSpy("auto"),
+            endpoint_pulse_runtime=DisarmSpy("pulse"),
+        )
+        try:
+            port = handle.server.server_address[1]
+            for _ in range(5):
+                for path in ("/api/pump/dispense", "/api/pump/retract"):
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}{path}", data=b"[]",
+                        headers={"Content-Type": "application/json"}, method="POST",
+                    )
+                    with self.assertRaises(urllib.error.HTTPError) as caught:
+                        urllib.request.urlopen(request, timeout=1.0)
+                    self.assertEqual(caught.exception.code, 400)
+        finally:
+            handle.close()
+        self.assertEqual(commands, [])
+        self.assertEqual(disarms, [])
+
+    def test_live_stream_server_calibrates_auto_stop_before_pump_start(self):
+        pump_commands = []
+        firmware_state = {}
+        events = []
+        baseline_volumes = []
+        live_state = windows_live_collect.LiveStreamState()
+        roi_state = windows_live_collect.RoiSelectionState(
+            visible_roi=Roi(10, 20, 30, 40),
+            thermal_roi=Roi(50, 60, 20, 15),
+        )
+        roi_state.lock()
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class ReadyAutoStop(windows_live_collect.ColorChangeAutoStopController):
+            def __init__(self):
+                self.current = {
+                    "auto_stop_enabled": True,
+                    "auto_stop_state": "armed",
+                    "auto_stop_reason": "waiting_for_color_model_confirmation",
+                    "auto_stop_baseline_ready": True,
+                    "auto_stop_session_id": 1,
+                }
+
+            def arm(self, **kwargs):
+                events.append("baseline_ready")
+                baseline_volumes.append(csv_buffer.status().get("injected_volume_ml"))
+                self.current = {**self.current, "auto_stop_session_id": kwargs["session_id"]}
+                return dict(self.current)
+
+            def status(self):
+                return dict(self.current)
+
+            def disarm(self, reason):
+                self.current = {
+                    **self.current,
+                    "auto_stop_state": "disabled",
+                    "auto_stop_reason": reason,
+                }
+                return dict(self.current)
+
+        class ReadyPulseRuntime(windows_live_collect.EndpointPulseRuntime):
+            def __init__(self):
+                pass
+
+            def arm(self, **kwargs):
+                events.append("pulse_armed")
+                return {
+                    "auto_stop_pulse_state": "armed_continuous",
+                    "auto_stop_pulse_reason": "waiting_for_model_approach",
+                }
+
+            def disarm(self, reason):
+                return {
+                    "auto_stop_pulse_state": "disabled",
+                    "auto_stop_pulse_reason": reason,
+                }
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            events.append(command.strip())
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            live_state,
+            roi_state=roi_state,
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+            auto_stop_controller=ReadyAutoStop(),
+            endpoint_pulse_runtime=ReadyPulseRuntime(),
+        )
+        try:
+            port = handle.server.server_address[1]
+            start_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/start",
+                data=json.dumps(
+                    {
+                        "pump_rate_ml_per_s": 1.0,
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                        "absolute_maximum_volume_ml": 15.0,
+                        "titration_type": "strong_acid_strong_base",
+                        "auto_stop_enabled": True,
+                        "auto_stop_confirmation_delay_s": 0.4,
+                        "auto_stop_maximum_volume_ml": 15.0,
+                        "auto_stop_pulse_enabled": True,
+                        "pulse_ml_per_step_upper_bound": 0.011,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(start_request, timeout=1.0) as response:
+                started = json.loads(response.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        self.assertEqual(pump_commands, ["G 15000\n", "b", "c"])
+        self.assertLess(events.index("baseline_ready"), events.index("G 15000"))
+        self.assertLess(events.index("b"), events.index("pulse_armed"))
+        self.assertTrue(started["auto_stop"]["auto_stop_enabled"])
+        self.assertEqual(started["auto_stop"]["auto_stop_state"], "armed")
+        self.assertEqual(started["csv"]["auto_stop_confirmation_delay_s"], 0.4)
+        self.assertEqual(started["csv"]["auto_stop_maximum_volume_ml"], 15.0)
+        self.assertEqual(baseline_volumes, [0.0])
+
+    def test_live_stream_server_rejects_auto_stop_without_independent_maximum_rate(self):
+        pump_commands = []
+        roi_state = windows_live_collect.RoiSelectionState(
+            visible_roi=Roi(10, 20, 30, 40),
+            thermal_roi=Roi(50, 60, 20, 15),
+        )
+        roi_state.lock()
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+
+        class UnusedAutoStop(windows_live_collect.ColorChangeAutoStopController):
+            def __init__(self):
+                pass
+
+            def disarm(self, reason):
+                return {"auto_stop_state": "disabled", "auto_stop_reason": reason}
+
+        pulse_runtime = windows_live_collect.EndpointPulseRuntime(
+            command_sender=pump_commands.append,
+            stop_continuous=pump_commands.append,
+            csv_buffer=csv_buffer,
+            on_safety_stop=lambda *values: None,
+        )
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            roi_state=roi_state,
+            csv_buffer=csv_buffer,
+            pump_command_sender=pump_commands.append,
+            auto_stop_controller=UnusedAutoStop(),
+            endpoint_pulse_runtime=pulse_runtime,
+        )
+        try:
+            port = handle.server.server_address[1]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/start",
+                data=json.dumps(
+                    {
+                        "pump_rate_ml_per_s": 1.0,
+                        "absolute_maximum_volume_ml": 10.0,
+                        "auto_stop_enabled": True,
+                        "auto_stop_pulse_enabled": True,
+                        "pulse_ml_per_step_upper_bound": 0.01,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(request, timeout=1.0)
+            error_payload = json.loads(raised.exception.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        self.assertEqual(raised.exception.code, 409)
+        self.assertIn("maximum_pump_rate_ml_per_s", error_payload["error"])
+        self.assertEqual(pump_commands, [])
+        self.assertEqual(csv_buffer.status()["state"], "idle")
+
+    def test_live_stream_server_does_not_start_pump_when_auto_stop_baseline_times_out(self):
+        pump_commands = []
+        firmware_state = {}
+        roi_state = windows_live_collect.RoiSelectionState(
+            visible_roi=Roi(10, 20, 30, 40),
+            thermal_roi=Roi(50, 60, 20, 15),
+        )
+        roi_state.lock()
+        csv_buffer = windows_live_collect.LiveCsvBuffer(
+            output_path=Path("data/raw/live-training.csv")
+        )
+        auto_stop = windows_live_collect.ColorChangeAutoStopController(
+            {},
+            on_trigger=lambda decision: None,
+            on_status=csv_buffer.update_auto_stop_status,
+        )
+
+        class ReadyPulseRuntime(windows_live_collect.EndpointPulseRuntime):
+            def __init__(self):
+                pass
+
+            def arm(self, **kwargs):
+                return {"auto_stop_pulse_state": "armed_continuous"}
+
+            def disarm(self, reason):
+                return {"auto_stop_pulse_state": "disabled"}
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        original_timeout = windows_live_collect.AUTO_STOP_BASELINE_START_TIMEOUT_S
+        windows_live_collect.AUTO_STOP_BASELINE_START_TIMEOUT_S = 0.05
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            roi_state=roi_state,
+            csv_buffer=csv_buffer,
+            pump_command_sender=guarded_sender,
+            auto_stop_controller=auto_stop,
+            endpoint_pulse_runtime=ReadyPulseRuntime(),
+        )
+        try:
+            port = handle.server.server_address[1]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/csv/start",
+                data=json.dumps(
+                    {
+                        "pump_rate_ml_per_s": 1.0,
+                        "maximum_pump_rate_ml_per_s": 1.0,
+                        "absolute_maximum_volume_ml": 15.0,
+                        "titration_type": "strong_acid_strong_base",
+                        "auto_stop_enabled": True,
+                        "auto_stop_pulse_enabled": True,
+                        "pulse_ml_per_step_upper_bound": 0.011,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=1.0)
+            payload = json.loads(error.exception.read().decode("utf-8"))
+        finally:
+            windows_live_collect.AUTO_STOP_BASELINE_START_TIMEOUT_S = original_timeout
+            auto_stop.close()
+            handle.close()
+
+        self.assertEqual(error.exception.code, 409)
+        self.assertIn("baseline timed out", payload["error"])
+        self.assertEqual(pump_commands, [])
+        self.assertEqual(payload["csv"]["state"], "stopped")
+
+    def test_live_stream_server_fails_closed_when_firmware_guard_cannot_arm(self):
+        pump_commands = []
+
+        def unacknowledged_sender(command):
+            pump_commands.append(command)
+            return None
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            pump_command_sender=unacknowledged_sender,
+        )
+        try:
+            port = handle.server.server_address[1]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["pump"]["status"], "error")
+        self.assertEqual(pump_commands, ["G 100000\n", "c"])
+        self.assertNotIn("b", pump_commands)
+
+    def test_live_stream_server_clamps_oversized_absolute_limits(self):
+        pump_commands = []
+        firmware_state = {}
+
+        def guarded_sender(command):
+            pump_commands.append(command)
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            pump_command_sender=guarded_sender,
+        )
+        try:
+            port = handle.server.server_address[1]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps(
+                    {
+                        "maximum_pump_rate_ml_per_s": 0.5,
+                        "absolute_maximum_volume_ml": 1000.0,
+                        "absolute_maximum_run_time_s": 1000.0,
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        guard_status = payload["pump"]["absolute_guard"]
+        self.assertTrue(payload["ok"])
+        self.assertTrue(guard_status["absolute_guard_limits_clamped"])
+        self.assertEqual(guard_status["absolute_guard_effective_maximum_volume_ml"], 100.0)
+        self.assertEqual(guard_status["absolute_guard_effective_maximum_run_time_s"], 120.0)
+        self.assertEqual(pump_commands, ["G 120000\n", "b", "c"])
+
+    def test_live_stream_server_records_stop_command_failure(self):
+        firmware_state = {}
+
+        def sender(command):
+            if command == "c":
+                raise OSError("serial stop failed")
+            return acknowledged_test_pump_firmware(command, firmware_state)
+
+        handle = windows_live_collect.start_live_stream_server(
+            "127.0.0.1",
+            0,
+            windows_live_collect.LiveStreamState(),
+            pump_command_sender=sender,
+        )
+        try:
+            port = handle.server.server_address[1]
+            start_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/dispense",
+                data=json.dumps({"maximum_pump_rate_ml_per_s": 1.0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(start_request, timeout=1.0):
+                pass
+            stop_request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/pump/stop",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(stop_request, timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/collector-health",
+                timeout=1.0,
+            ) as response:
+                health = json.loads(response.read().decode("utf-8"))
+        finally:
+            handle.close()
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["pump"]["absolute_guard"]["absolute_guard_stop_status"], "failed")
+        self.assertIn("serial stop failed", payload["pump"]["absolute_guard"]["absolute_guard_error"])
+        self.assertEqual(
+            health["absolute_pump_guard"]["absolute_guard_stop_status"],
+            "failed",
+        )
 
     def test_live_stream_server_rejects_removed_csv_manual_label_endpoint(self):
         live_state = windows_live_collect.LiveStreamState()
@@ -3722,15 +6508,20 @@ class WindowsLiveCollectTests(unittest.TestCase):
             visible = FakeVisibleCamera()
             old_open = windows_live_collect.open_mini2_capture
             old_builder = windows_live_collect.build_official_converter
+            old_yolo_loader = windows_live_collect.load_yolo_model
             windows_live_collect.open_mini2_capture = lambda _args: (_ for _ in ()).throw(RuntimeError("Mini2 busy"))
             windows_live_collect.build_official_converter = lambda _args: (_ for _ in ()).throw(
                 AssertionError("converter should not be built when Mini2 is unavailable")
+            )
+            windows_live_collect.load_yolo_model = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("YOLO must not load while automatic ROI is off")
             )
             try:
                 windows_live_collect.run(args, visible_camera=visible)
             finally:
                 windows_live_collect.open_mini2_capture = old_open
                 windows_live_collect.build_official_converter = old_builder
+                windows_live_collect.load_yolo_model = old_yolo_loader
 
             with out.open(newline="", encoding="utf-8") as handle:
                 row = next(csv.DictReader(handle))

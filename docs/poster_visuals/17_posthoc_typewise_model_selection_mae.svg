@@ -16,5 +16,5 @@
 <text x="32" y="310.6" font-family="Pretendard, Arial, sans-serif" font-size="15" fill="#111827">strict_no_progress · headline_only</text>
 <rect x="260" y="282" width="714.3" height="44.0" rx="8" fill="#dc2626"/>
 <text x="984.3" y="310.6" font-family="Pretendard, Arial, sans-serif" font-size="15" font-weight="700" fill="#111827">5.08 mL</text>
-<text x="260" y="492" font-family="Pretendard, Arial, sans-serif" font-size="13" fill="#6b7280">낮을수록 좋음. 진행률 포함값은 비엄격 프로토콜 보조 + post-hoc 탐색 결과라 실제 일반화 성능보다 낙관적일 수 있음.</text>
+<text x="260" y="492" font-family="Pretendard, Arial, sans-serif" font-size="13" fill="#6b7280">낮을수록 좋음. 진행률 포함값은 개발 자료 내부에서 선택한 결과이므로 실제 일반화 성능보다 낙관적일 수 있음.</text>
 </svg>

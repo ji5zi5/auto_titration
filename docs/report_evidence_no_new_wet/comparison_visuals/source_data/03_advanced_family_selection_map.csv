@@ -1,0 +1,9 @@
+﻿explored_family,selected,selected_for_titration_type
+PLS,yes,강산-강염기
+LDA,yes,약산-강염기
+QDA,yes,약산-약염기
+Prototype,no,
+Pairwise Ridge,no,
+RBF KRR,yes,강산-약염기
+Polynomial KRR,no,
+RBF SVR,no,

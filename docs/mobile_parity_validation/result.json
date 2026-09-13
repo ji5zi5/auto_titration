@@ -1,0 +1,36 @@
+{
+  "version": "0.1.5-mobile-prediction",
+  "apk": "mobile/android/app/build/outputs/apk/debug/app-debug.apk",
+  "windows_apk": "/mnt/c/Users/Jio/Downloads/auto_titration/dist/auto_titrator-debug.apk",
+  "size_bytes": 56936239,
+  "apk_sha256": "023bc8e87d74d4399a84688f3cbf29b120872f727dbd924ece48d5162d3aab93",
+  "checks": {
+    "portable_worker_matches": true,
+    "android_ui_matches": true,
+    "packaged_json_matches_export": true,
+    "frozen_model_sha_matches": true,
+    "four_type_models": true,
+    "bridge_methods_packaged": true,
+    "native_asset_name_matches": true
+  },
+  "android_unit_tests": 374,
+  "android_unit_failures": 0,
+  "android_unit_errors": 0,
+  "lint_counts": {
+    "Warning": 18
+  },
+  "python_node_parity_tests": 4,
+  "hardware_tested": false,
+  "new_capabilities": [
+    "frozen post-run sensor ranker in phone WebWorker",
+    "predicted concentration from standard solution and selected volume",
+    "CSV result annotations and explicit unavailable status",
+    "raw ROI p95 and Windows-compatible percentile interpolation"
+  ],
+  "remaining": [
+    "automatic stop and pulse commands still gated off",
+    "full Celsius matrix still requires official live parameters and validation",
+    "25fps physical capture/synchronization not verified",
+    "complete offline chemistry and IUPAC parity not implemented"
+  ]
+}

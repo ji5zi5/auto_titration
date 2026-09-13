@@ -3,11 +3,16 @@ package kr.auto.titration.mobile.thermal
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import com.hcusbsdk.Interface.FStreamCallBack
 import com.hcusbsdk.Interface.USB_FRAME_INFO
 import com.hik.f2module.F2UsbModuleApi
 import com.hik.f2module.F2UsbModuleHelper
-import com.hik.f2module.withTemporaryF2ContextEnumerationCleanup
+import com.hik.f2module.F2StageResult
+import com.hik.f2module.ThermalStreamCtrlState
+import com.hik.f2module.replacementStartBlockedResult
+import com.hik.f2module.verifyThermalStreamCtrlDisabledBounded
 import com.hik.viewer.manager.PreviewManagerII
+import com.sun.jna.Callback
 import kr.auto.titration.mobile.thermal.PreviewManagerIIAppBinding
 import java.lang.reflect.Modifier
 import java.util.concurrent.CountDownLatch
@@ -37,8 +42,11 @@ class F2OfficialLifecycleTest {
         val dispatchCount = AtomicInteger(0)
         val receivedBytes = AtomicReference<ByteArray?>()
         val manager = PreviewManagerIIAppBinding.manager()
-        Z2.a.a.u(f3.j().apply { d(12) })
+        val profile = f3.j().apply { d(12) }
+        Z2.a.a.u(profile)
         manager.closePreviewCallback()
+        manager.openPreviewCallback()
+        captureProcessorProfile(manager, profile)
         PreviewManagerIIAppBinding.bind(manager) { frame ->
             receivedBytes.set(frame.bytes)
             dispatchCount.incrementAndGet()
@@ -51,7 +59,7 @@ class F2OfficialLifecycleTest {
             val callback = callbackHolder.getFStreamCallBack()
             assertNotNull(callback)
 
-            callback!!.fStreamCallback(7, frameOfSize(rejected, fill = 0x11))
+            callback!!.invoke(7, frameOfSize(rejected, fill = 0x11))
             assertFalse(
                 "nonempty packets outside the selected profile must be dropped",
                 delivered.await(150, TimeUnit.MILLISECONDS),
@@ -59,7 +67,7 @@ class F2OfficialLifecycleTest {
             assertEquals("rejected packets must not dispatch", 0, dispatchCount.get())
             assertNull("rejected packets must not publish bytes", receivedBytes.get())
 
-            callback.fStreamCallback(7, frameOfSize(accepted, fill = 0x22))
+            callback.invoke(7, frameOfSize(accepted, fill = 0x22))
             val slot = PreviewManagerII::class.java.getDeclaredField("s0").apply { isAccessible = true }.get(manager) as ByteArray
             assertEquals(accepted, slot.size)
             assertArrayEquals(ByteArray(accepted) { 0x22 }, slot)
@@ -72,8 +80,11 @@ class F2OfficialLifecycleTest {
     fun previewCallbackCloseIsIdempotentAndOpenStartStopReopenDeliversOnlyWhenOpen() {
         val packetSize = 203_720
         val manager = PreviewManagerIIAppBinding.manager()
-        Z2.a.a.u(f3.j().apply { d(12) })
+        val profile = f3.j().apply { d(12) }
+        Z2.a.a.u(profile)
         manager.closePreviewCallback()
+        manager.openPreviewCallback()
+        captureProcessorProfile(manager, profile)
         val firstDelivered = CountDownLatch(1)
         val reopenedDelivered = CountDownLatch(1)
         val dispatchCount = AtomicInteger(0)
@@ -90,13 +101,13 @@ class F2OfficialLifecycleTest {
             val callback = callbackHolder.getFStreamCallBack()
             assertNotNull(callback)
 
-            callback!!.fStreamCallback(7, frameOfSize(packetSize, fill = 0x31))
+            callback!!.invoke(7, frameOfSize(packetSize, fill = 0x31))
             val firstSlot = PreviewManagerII::class.java.getDeclaredField("s0").apply { isAccessible = true }.get(manager) as ByteArray
             assertEquals(packetSize, firstSlot.size)
 
             manager.closePreviewCallback()
             manager.closePreviewCallback()
-            callback.fStreamCallback(7, frameOfSize(packetSize, fill = 0x32))
+            callback.invoke(7, frameOfSize(packetSize, fill = 0x32))
             assertFalse(
                 "closed preview callback must drop frames from repeated stop/close actions",
                 reopenedDelivered.await(150, TimeUnit.MILLISECONDS),
@@ -104,7 +115,15 @@ class F2OfficialLifecycleTest {
             assertEquals(0, dispatchCount.get())
 
             manager.openPreviewCallback()
-            callback.fStreamCallback(7, frameOfSize(packetSize, fill = 0x33))
+            captureProcessorProfile(manager, profile)
+            callback.invoke(7, frameOfSize(packetSize, fill = 0x33))
+            assertEquals("stale callback must remain rejected after reopen", 0, dispatchCount.get())
+            val staleSlot = PreviewManagerII::class.java.getDeclaredField("s0").apply { isAccessible = true }.get(manager) as ByteArray
+            assertEquals("stale callback must not populate the reopened mailbox", 0, staleSlot.size)
+            val reopenedCallback = manager.R()
+            assertNotNull(reopenedCallback)
+            assertFalse("reopen must install a callback for the new epoch", callback === reopenedCallback)
+            reopenedCallback!!.invoke(7, frameOfSize(packetSize, fill = 0x33))
             val reopenedSlot = PreviewManagerII::class.java.getDeclaredField("s0").apply { isAccessible = true }.get(manager) as ByteArray
             assertEquals(packetSize, reopenedSlot.size)
             assertNull("production path must still avoid automatic JNA fallback", callbackHolder.getFStreamCallBackJNA())
@@ -132,7 +151,7 @@ class F2OfficialLifecycleTest {
 
 
     @Test
-    fun openUsbModuleIsSingleOfficialOpenAttemptWithoutWrapperRetryLadder() {
+    fun openUsbModuleMatchesOfficialFiveAttemptLinearBackoff() {
         val source = readProjectSource(
             "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
             "mobile/android/app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
@@ -140,18 +159,15 @@ class F2OfficialLifecycleTest {
         val method = extractFunctionSource(source, "openUsbModule")
 
         assertEquals(
-            "F2 open must make exactly one bounded helper.openUsbDevice call",
+            "official loop keeps one helper call site",
             1,
             Regex("helper\\.openUsbDevice\\s*\\(").findAll(method).count(),
         )
-        assertFalse("openUsbModule must not expose a maxRetries wrapper", method.contains("maxRetries"))
-        assertFalse("openUsbModule must not track retryIndex", method.contains("retryIndex"))
-        assertFalse("openUsbModule must not sleep/back off around open", method.contains("Thread.sleep"))
-        assertFalse("openUsbModule must not wrap openUsbDevice in a retry loop", method.contains("while ("))
-        assertTrue(
-            "openUsbModule stage report must truthfully describe the single attempt",
-            method.contains("singleAttempt success="),
-        )
+        assertTrue("official open tracks retryIndex", method.contains("retryIndex"))
+        assertTrue("official open retries at most five attempts", method.contains("retryIndex < 5"))
+        assertTrue("official open uses linear 500ms backoff", method.contains("Thread.sleep(retryIndex * 500L)"))
+        assertTrue("official open wraps helper call in do/while", method.contains("do {") && method.contains("while ("))
+        assertTrue("stage report must expose final official retry state", method.contains("retryIndex=\$retryIndex"))
     }
 
     @Test
@@ -165,31 +181,121 @@ class F2OfficialLifecycleTest {
     }
 
     @Test
-    fun temporaryContextEnumerationCleanupRunsOnSuccessThrowAndEarlyReturn() {
-        val successEvents = mutableListOf<String>()
-        val success = withTemporaryF2ContextEnumerationCleanup(
-            releaseTemporaryEnumerationConnections = { successEvents += "cleanup" },
-        ) {
-            successEvents += "enumerated"
-            "deviceCountCheck=attempted"
+    fun officialStopAlwaysWaitsThenCallsNativeStopEvenForMinusOneChannel() {
+        val source = readProjectSource(
+            "app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt",
+            "mobile/android/app/src/main/java/com/hik/f2module/F2UsbModuleHelper.kt",
+        )
+        val method = extractFunctionSource(source, "stopStreamPreview")
+
+        assertTrue("official stop waits 100ms after thermal-control polling", method.contains("Thread.sleep(100)"))
+        assertTrue("official stop always reaches native channel stop", method.contains("stopChannelOperation(currentUserId, currentChannel)"))
+        assertFalse("official APK does not skip stop solely for channel -1", method.contains("currentChannel != -1"))
+    }
+
+    @Test
+    fun thermalDisableVerificationCountsEveryEnabledPollAndStopsAtExactBound() {
+        var polls = 0
+        var retries = 0
+        val sleeps = mutableListOf<Long>()
+
+        val report = verifyThermalStreamCtrlDisabledBounded(
+            initialDisableOk = true,
+            maxAttempts = 4,
+            getState = {
+                polls += 1
+                ThermalStreamCtrlState(ok = true, streamEnable = true, byEnable = 1, lastError = 0)
+            },
+            retryDisable = {
+                retries += 1
+                true
+            },
+            getDeviceCount = { 1 },
+            contextLabel = "test.package",
+            sleep = { sleeps += it },
+        )
+
+        assertEquals(4, polls)
+        assertEquals(3, retries)
+        assertEquals(listOf(10L, 10L, 10L), sleeps)
+        assertTrue(report.contains("reason=max_attempts"))
+        assertTrue(report.contains("attempts=4"))
+        assertTrue(report.contains("unsuccessfulPolls=4"))
+    }
+
+    @Test
+    fun thermalDisableVerificationRestoresInterruptAndReturnsImmediately() {
+        Thread.interrupted()
+        var polls = 0
+        try {
+            val report = verifyThermalStreamCtrlDisabledBounded(
+                initialDisableOk = true,
+                maxAttempts = 5,
+                getState = {
+                    polls += 1
+                    ThermalStreamCtrlState(ok = true, streamEnable = true, byEnable = 1, lastError = 0)
+                },
+                retryDisable = { true },
+                getDeviceCount = { 1 },
+                contextLabel = "test.package",
+                sleep = { throw InterruptedException("test interrupt") },
+            )
+
+            assertEquals(1, polls)
+            assertTrue(report.contains("reason=interrupted"))
+            assertTrue(Thread.currentThread().isInterrupted)
+        } finally {
+            Thread.interrupted()
+        }
+    }
+
+    @Test
+    fun replacementStartIsBlockedOnlyWhenARealActiveChannelFailsToStop() {
+        val failedStop = F2StageResult(ok = false, summary = "USB_StopChannel=attempted ok=false error=84")
+
+        for (path in listOf("official_interface_wrapper", "official_jna_wrapper")) {
+            val blocked = replacementStartBlockedResult(
+                activeChannelBeforeStop = 7,
+                stopResult = failedStop,
+                startPath = path,
+                stageReport = "start",
+                profileResolution = null,
+            ) ?: error("expected replacement start to be blocked")
+
+            assertFalse(blocked.ok)
+            assertFalse(blocked.waitingForFrame)
+            assertEquals(7, blocked.channel)
+            assertTrue(blocked.reason.contains("existing_active_channel_stop_failed"))
+            assertTrue(blocked.stageReport.contains("USB_StartStreamCallback=not_run"))
+            assertEquals("blocked_existing_channel_stop_failed", blocked.attemptDiagnostics.single().startStatus)
+            assertEquals(path, blocked.attemptDiagnostics.single().startPath)
         }
 
-        assertEquals("deviceCountCheck=attempted", success)
-        assertEquals(listOf("enumerated", "cleanup"), successEvents)
+        assertNull(
+            "a no-active channel stop result must preserve the existing start behavior",
+            replacementStartBlockedResult(-1, failedStop, "official_interface_wrapper", "start", null),
+        )
+        assertNull(
+            replacementStartBlockedResult(
+                7,
+                F2StageResult(ok = true, summary = "USB_StopChannel=attempted ok=true"),
+                "official_jna_wrapper",
+                "start",
+                null,
+            ),
+        )
+    }
 
-        val failureEvents = mutableListOf<String>()
-        val thrown = runCatching {
-            withTemporaryF2ContextEnumerationCleanup(
-                releaseTemporaryEnumerationConnections = { failureEvents += "cleanup" },
-            ) {
-                failureEvents += "enumerated"
-                throw IllegalStateException("enum failed")
-            }
-        }.exceptionOrNull()
+    @Test
+    fun officialInterfaceCallbackAbiExtendsJnaCallbackAndUsesInvoke() {
+        val callbackType = FStreamCallBack::class.java
+        assertTrue(Callback::class.java.isAssignableFrom(callbackType))
+        val method = callbackType.getDeclaredMethod("invoke", Integer.TYPE, USB_FRAME_INFO::class.java)
+        assertEquals(Void.TYPE, method.returnType)
 
-        assertTrue(thrown is IllegalStateException)
-        assertEquals(listOf("enumerated", "cleanup"), failureEvents)
-        assertEquals(listOf("early", "cleanup"), earlyReturnCleanupEvents())
+        val implementation = Class.forName("com.hik.viewer.manager.PreviewManagerII\$d")
+        val invoke = implementation.getDeclaredMethod("invoke", Integer.TYPE, USB_FRAME_INFO::class.java)
+        assertTrue(Modifier.isSynchronized(invoke.modifiers))
     }
 
     @Test
@@ -205,6 +311,67 @@ class F2OfficialLifecycleTest {
         assertTrue(config.streamingNew)
         assertEquals(setOf(203_720, 183_496), config.allowedPacketSizes)
         assertFalse("profile resolution should not fall back to a universal packet-size ladder", 102_944 in config.allowedPacketSizes)
+    }
+
+    @Test
+    fun f2ApiWiresInvalidPacketTimeoutWithoutChangingOfficialCallbackShape() {
+        val source = readProjectSource(
+            "app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
+            "mobile/android/app/src/main/java/com/hik/f2module/F2UsbModuleApi.kt",
+        )
+        val method = extractFunctionSource(source, "startStreamPreview")
+        val nativeStart = extractFunctionSource(source, "startNativeStreamPreviewLocked")
+
+        assertTrue(
+            "invalid-packet timeout callback must be attached to the official PreviewManagerII callback holder",
+            method.contains("setInvalidPacketSizeTimeoutCallback"),
+        )
+        assertTrue(
+            "fresh starts must clear stale Java callback diagnostics before any bounded-wait classification",
+            nativeStart.indexOf("resetStreamCallbackEntryDiagnostics") >
+                nativeStart.indexOf("val fStreamCallBack = streamCallback.getFStreamCallBack()") &&
+                nativeStart.indexOf("resetStreamCallbackEntryDiagnostics") <
+                nativeStart.indexOf("helper.startStreamPreview("),
+        )
+        assertTrue(
+            "official JNI callback shape must remain F2ModuleStreamCallback(null, previewManager.R())",
+            method.contains("F2ModuleStreamCallback(null, previewManager.R())"),
+        )
+        assertFalse(
+            "invalid-packet diagnostics must not introduce an automatic JNA fallback",
+            method.contains("getFStreamCallBackJNA"),
+        )
+    }
+
+    @Test
+    fun noJavaCallbackAfterAcceptedStartFailsClosedForCelsiusStatus() {
+        val status = Mini2RawStreamStatus(
+            rawStreamStatus = "blocked_native_stream",
+            reason = "waiting for first official F2 callback",
+            stageReport = "USB_SET_VIDEO_PARAM=ok; USB_StartStreamCallback=ok channel=0 error=0; startStreamPreview resultCode=1 channel=0",
+            fd = 55,
+            userId = 7,
+            channel = 0,
+            callbackEntryCount = 0L,
+            callbackEntryDetail = "no_callback_entry",
+            rawAvg = 12345.0,
+            rawMin = 12000,
+            rawMax = 13000,
+        )
+
+        val temperatureFields = status.toJsonTemperatureFieldsForTest()
+
+        assertEquals("blocked_native_stream", status.rawStreamStatus)
+        assertEquals("native_start_accepted_no_java_callback_after_bounded_wait", status.postStartState)
+        assertEquals(0L, status.callbackEntryCount)
+        assertEquals("no_callback_entry", status.callbackEntryDetail)
+        assertNull(status.deviceTemperatureSummary)
+        assertFalse("no callback must not publish Celsius", temperatureFields["celsius_allowed"] as Boolean)
+        assertNull(temperatureFields["temperature_avg_c"])
+        assertNull(temperatureFields["temperature_min_c"])
+        assertNull(temperatureFields["temperature_max_c"])
+        assertFalse("full-matrix Celsius remains unproved", temperatureFields["full_matrix_celsius_allowed"] as Boolean)
+        assertEquals("unproved_not_emitted", temperatureFields["full_matrix_temperature_status"] as String)
     }
 
 
@@ -249,16 +416,6 @@ class F2OfficialLifecycleTest {
         return registry
     }
 
-    private fun earlyReturnCleanupEvents(): List<String> {
-        val events = mutableListOf<String>()
-        withTemporaryF2ContextEnumerationCleanup(
-            releaseTemporaryEnumerationConnections = { events += "cleanup" },
-        ) {
-            events += "early"
-            return events
-        }
-    }
-
     private fun frameOfSize(size: Int, fill: Int): USB_FRAME_INFO = USB_FRAME_INFO().apply {
         dwBufSize = size
         pBuf = ByteArray(size) { fill.toByte() }
@@ -266,5 +423,11 @@ class F2OfficialLifecycleTest {
         dwHeight = 344
         dwStreamType = 103
         nFrameNum = 1
+    }
+
+    private fun captureProcessorProfile(manager: PreviewManagerII, profile: f3.k) {
+        PreviewManagerII::class.java.getDeclaredMethod("captureProcessorProfile", f3.k::class.java)
+            .apply { isAccessible = true }
+            .invoke(manager, profile)
     }
 }

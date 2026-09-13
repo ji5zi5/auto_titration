@@ -1,3 +1,10 @@
+// Remote mode is browser-only; the Android native bridge keeps its own UI.
+const remoteControlMode = !window.AutoTitrationAndroid
+  && !/[?&]remote=0(?:&|$)/.test(window.location?.search || '')
+  && (/[?&]remote=1(?:&|$)/.test(window.location?.search || '')
+    || Boolean(window.matchMedia?.('(max-width: 700px)').matches));
+if (remoteControlMode) document.body.classList.add('remote-control-mode');
+
 const $ = (id) => document.getElementById(id);
 const LOCAL_COLLECTOR_BACKEND = 'http://127.0.0.1:8766';
 const DASHBOARD_LOCAL_BACKEND = 'http://127.0.0.1:8765';
@@ -22,9 +29,22 @@ let constantsSelectionMode = '';
 let candidateNoticeTimer = null;
 let currentAppMode = 'csv';
 let latestCsvStatus = null;
+let latestCsvStatusSource = '';
 let autoRoiSetupEnabled = false;
 let autoRoiSetupTimer = null;
 let autoRoiRequestInFlight = false;
+let backendRevision = 0;
+let csvControlSequence = 0;
+let csvStartInFlight = null;
+let csvStopInFlight = null;
+let pumpCommandSequence = 0;
+let pumpMotionInFlight = null;
+let pumpMotionPath = '';
+let pumpStopInFlight = null;
+let pumpStopCsvSessionKey = '';
+const downloadedCsvSessions = new Set();
+const demoViewApi = window.AutoTitrationDemoView || null;
+const demoViewState = demoViewApi ? demoViewApi.createState(600) : null;
 
 const AUTO_ROI_RETRY_MS = 1200;
 
@@ -32,24 +52,186 @@ const TITRATION_SUBSTANCE_PRESETS = {
   strong_acid_strong_base: {
     sample: 'hydrochloric acid',
     standard: 'sodium hydroxide',
+    indicator: 'phenolphthalein',
   },
   weak_acid_strong_base: {
     sample: 'acetic acid',
     standard: 'sodium hydroxide',
+    indicator: 'phenolphthalein',
   },
   strong_acid_weak_base: {
     sample: 'hydrochloric acid',
     standard: 'ammonia',
+    indicator: 'methyl_orange',
   },
   weak_acid_weak_base: {
     sample: 'acetic acid',
     standard: 'ammonia',
+    indicator: 'bromothymol_blue',
   },
 };
 
 function setText(id, value) {
   const element = $(id);
   if (element) element.textContent = value;
+}
+
+function setDemoConnection(connection) {
+  if (!demoViewState) return;
+  demoViewState.connection = connection;
+  renderDemoView();
+}
+
+function resetDemoViewForBackend() {
+  backendRevision += 1;
+  csvControlSequence += 1;
+  pumpCommandSequence += 1;
+  constantsLookupSerial += 1;
+  csvStartInFlight = null;
+  csvStopInFlight = null;
+  pumpMotionInFlight = null;
+  pumpStopInFlight = null;
+  pumpMotionPath = '';
+  pumpStopCsvSessionKey = '';
+  remoteSettingsSyncing = false;
+  stopAutoRoiSetup();
+  autoRoiRequestInFlight = false;
+  latestCsvStatus = null;
+  latestCsvStatusSource = '';
+  latestLiveMetadata = {};
+  latestRoiRecordable = false;
+  latestRoiComplete = false;
+  latestRoiLocked = false;
+  roiDrag = null;
+  updateCsvControlButtons();
+  updatePumpCommandButtons();
+  if (!demoViewState || !demoViewApi) return;
+  demoViewApi.resetState(demoViewState);
+  renderDemoView();
+}
+
+function drawTrend(canvasId, emptyId, valueKey, stroke, unit) {
+  if (typeof remoteControlMode !== 'undefined' && remoteControlMode) return;
+  const canvas = $(canvasId);
+  if (!canvas || typeof canvas.getContext !== 'function' || !demoViewState) return;
+  const samples = demoViewState.samples;
+  const values = samples.map((sample) => sample[valueKey]).filter(Number.isFinite);
+  const empty = $(emptyId);
+  if (empty) empty.hidden = values.length > 0;
+  const width = Math.max(220, Math.round(canvas.clientWidth || 640));
+  const height = Math.max(160, Math.round(canvas.clientHeight || 240));
+  const ratio = Math.min(2, window.devicePixelRatio || 1);
+  if (canvas.width !== width * ratio || canvas.height !== height * ratio) {
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+  }
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  const plot = { left: 68, top: 20, right: width - 16, bottom: height - 32 };
+  context.strokeStyle = '#e2e2e7';
+  context.lineWidth = 1;
+  for (let index = 0; index <= 3; index += 1) {
+    const y = plot.top + ((plot.bottom - plot.top) * index) / 3;
+    context.beginPath(); context.moveTo(plot.left, y); context.lineTo(plot.right, y); context.stroke();
+  }
+  if (!samples.length || !values.length) return;
+  const xs = samples.map((sample) => sample.x).filter(Number.isFinite);
+  let xMin = Math.min(...xs);
+  let xMax = Math.max(...xs);
+  let yMin = Math.min(...values);
+  let yMax = Math.max(...values);
+  if (xMin === xMax) xMax = xMin + 1;
+  if (yMin === yMax) { yMin -= .5; yMax += .5; }
+  const yPad = (yMax - yMin) * .08;
+  yMin -= yPad; yMax += yPad;
+  const xAt = (value) => plot.left + ((value - xMin) / (xMax - xMin)) * (plot.right - plot.left);
+  const yAt = (value) => plot.bottom - ((value - yMin) / (yMax - yMin)) * (plot.bottom - plot.top);
+
+  context.font = '11px Pretendard, system-ui, sans-serif';
+  context.fillStyle = '#6e6e73';
+  context.textAlign = 'right';
+  context.fillText(`${yMax.toFixed(valueKey === 'thermalC' ? 1 : 2)} ${unit}`, plot.left - 6, plot.top + 4);
+  context.fillText(`${yMin.toFixed(valueKey === 'thermalC' ? 1 : 2)} ${unit}`, plot.left - 6, plot.bottom);
+  context.textAlign = 'left';
+  context.fillText(`${xMin.toFixed(1)} s`, plot.left, height - 10);
+  context.textAlign = 'right';
+  context.fillText(`${xMax.toFixed(1)} s`, plot.right, height - 10);
+
+  const labelEnds = [-Infinity, -Infinity, -Infinity];
+  demoViewState.markers.filter((marker) => marker.x >= xMin && marker.x <= xMax).forEach((marker) => {
+    const x = xAt(marker.x);
+    context.strokeStyle = 'rgba(29, 29, 31, .24)';
+    context.setLineDash([4, 4]);
+    context.beginPath(); context.moveTo(x, plot.top); context.lineTo(x, plot.bottom); context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = '#6e6e73';
+    context.font = '10px Pretendard, system-ui, sans-serif';
+    context.textAlign = 'center';
+    const labelWidth = context.measureText(marker.label).width;
+    const labelX = Math.max(plot.left + labelWidth / 2, Math.min(plot.right - labelWidth / 2, x));
+    const lane = labelEnds.findIndex((end) => end + 4 < labelX - labelWidth / 2);
+    if (lane >= 0) {
+      context.fillText(marker.label, labelX, plot.top + 11 + lane * 12);
+      labelEnds[lane] = labelX + labelWidth / 2;
+    }
+  });
+  context.setLineDash([]);
+  context.strokeStyle = stroke;
+  context.lineWidth = 2.5;
+  let drawing = false;
+  const flushSegment = () => {
+    if (!drawing) return;
+    context.stroke();
+    drawing = false;
+  };
+  samples.forEach((sample) => {
+    const value = sample[valueKey];
+    if (!Number.isFinite(value)) { flushSegment(); return; }
+    const x = xAt(sample.x);
+    const y = yAt(value);
+    if (!drawing) { context.beginPath(); context.moveTo(x, y); drawing = true; }
+    else context.lineTo(x, y);
+  });
+  flushSegment();
+}
+
+function renderDemoView() {
+  if (!demoViewState) return;
+  const result = demoViewState.result;
+  const csv = demoViewState.csv || {};
+  const lastStageLabel = demoViewState.stage?.label || '관측 대기';
+  const stageLabel = demoViewState.connection === 'disconnected' ? '연결 끊김' : lastStageLabel;
+  setText('demoStageValue', stageLabel);
+  const connectionLabel = demoViewState.connection === 'live' ? '실시간 연결' : demoViewState.connection === 'disconnected' ? '재연결 대기' : '수집기 연결 중';
+  const lastStageNote = demoViewState.connection === 'disconnected' ? ` · 마지막 상태 ${lastStageLabel}` : '';
+  setText('demoStageNote', `${connectionLabel}${lastStageNote}`);
+  setText('demoLiveVolume', Number.isFinite(parseFiniteNumber(csv.injected_volume_ml)) ? parseFiniteNumber(csv.injected_volume_ml).toFixed(2) : '-');
+  const elapsed = parseFiniteNumber(csv.recording_elapsed_s ?? csv.pump_elapsed_s);
+  setText('demoElapsedSeconds', Number.isFinite(elapsed) ? elapsed.toFixed(1) : '-');
+  setText('calcFinalVolumeValue', Number.isFinite(result.volumeMl) ? result.volumeMl.toFixed(3) : '-');
+  setText('calcPredictedEquivalenceValue', Number.isFinite(result.predictedVolumeMl) ? result.predictedVolumeMl.toFixed(3) : '-');
+  setText('calcSampleConcentrationValue', Number.isFinite(result.concentrationM) ? result.concentrationM.toFixed(5) : '-');
+  setText('demoCsvStatus', result.csvLabel);
+  setText('demoOutcomeBadge', result.label);
+  const badge = $('demoOutcomeBadge');
+  if (badge) badge.dataset.outcome = result.outcome;
+  drawTrend('colorTrendCanvas', 'colorTrendEmpty', 'color', '#0066cc', 'ΔRGB');
+  drawTrend('thermalTrendCanvas', 'thermalTrendEmpty', 'thermalC', '#b54708', '°C');
+}
+
+function updateDemoCsvStatus(csv) {
+  if (!demoViewApi || !demoViewState) return;
+  demoViewApi.applyCsvStatus(demoViewState, csv);
+  renderDemoView();
+}
+
+function updateDemoLiveSample(data, accepted) {
+  if (!accepted || !demoViewApi || !demoViewState) return;
+  demoViewState.connection = 'live';
+  demoViewApi.appendSample(demoViewState, data, hasTrustedCelsiusTemperature(data));
+  renderDemoView();
 }
 
 function showVisibleCandidateNotice(kind, title, body) {
@@ -190,6 +372,7 @@ function updateCsvDownloadLinks(filename = 'auto-titration-live.csv') {
 }
 
 function setPreviewSources() {
+  if (remoteControlMode) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
   const visible = $('visiblePreview');
   if (visible) visible.src = endpoint('/stream/visible.mjpg');
   const thermal = $('thermalPreview');
@@ -201,7 +384,70 @@ function setPreviewSources() {
   setBackendBaseStatus(`백엔드: ${backendBaseDisplay()}`);
 }
 
-function triggerCsvAutoDownload() {
+function csvSessionDownloadKey(csv) {
+  const sessionId = csv?.session_id;
+  if (sessionId === null || sessionId === undefined || String(sessionId).trim() === '') return '';
+  const startedEpoch = csv?.started_epoch_s;
+  const startIdentity = startedEpoch === null || startedEpoch === undefined ? '' : String(startedEpoch);
+  return `${liveStreamBase}\n${String(sessionId)}\n${startIdentity}`;
+}
+
+function csvStatusSourcePriority(source) {
+  return { live: 1, get: 2, post: 3 }[source] || 0;
+}
+
+function csvStatusVersion(csv) {
+  return parseFiniteNumber(csv?.updated_epoch_s);
+}
+
+function csvSessionStartedEpoch(csv) {
+  return parseFiniteNumber(csv?.started_epoch_s);
+}
+
+function shouldAcceptCsvStatus(csv, source) {
+  if (!latestCsvStatus) return true;
+  const incomingStart = csvSessionStartedEpoch(csv);
+  const currentStart = csvSessionStartedEpoch(latestCsvStatus);
+  if (Number.isFinite(incomingStart) && Number.isFinite(currentStart) && incomingStart !== currentStart) {
+    return incomingStart > currentStart;
+  }
+
+  const incomingSession = csv?.session_id;
+  const currentSession = latestCsvStatus.session_id;
+  if (
+    incomingSession !== null
+    && incomingSession !== undefined
+    && currentSession !== null
+    && currentSession !== undefined
+    && String(incomingSession) !== String(currentSession)
+  ) {
+    if (Number.isFinite(incomingStart) && !Number.isFinite(currentStart)) return true;
+    if (!Number.isFinite(incomingStart) && !Number.isFinite(currentStart)) {
+      const incomingNumber = Number(incomingSession);
+      const currentNumber = Number(currentSession);
+      return Number.isFinite(incomingNumber) && Number.isFinite(currentNumber) && incomingNumber > currentNumber;
+    }
+    return false;
+  }
+
+  const incomingVersion = csvStatusVersion(csv);
+  const currentVersion = csvStatusVersion(latestCsvStatus);
+  if (Number.isFinite(incomingVersion) && Number.isFinite(currentVersion)) {
+    if (incomingVersion !== currentVersion) return incomingVersion > currentVersion;
+    return csvStatusSourcePriority(source) > csvStatusSourcePriority(latestCsvStatusSource);
+  }
+  if (Number.isFinite(incomingVersion)) return true;
+  if (Number.isFinite(currentVersion)) {
+    return !(latestCsvStatus.state === 'stopped' && csv?.state === 'recording');
+  }
+  return !(latestCsvStatus.state === 'stopped' && csv?.state === 'recording');
+}
+
+function triggerCsvAutoDownload(csv = latestCsvStatus) {
+  if (remoteControlMode) return false;
+  const downloadKey = csvSessionDownloadKey(csv);
+  if (!downloadKey || downloadedCsvSessions.has(downloadKey)) return false;
+  downloadedCsvSessions.add(downloadKey);
   const filename = 'auto-titration-live.csv';
   const href = updateCsvDownloadLinks(filename);
 
@@ -212,7 +458,7 @@ function triggerCsvAutoDownload() {
   document.body.appendChild(autoLink);
   autoLink.click();
   autoLink.remove();
-  setText('previewStatus', 'CSV 자동 다운로드 시작');
+  setText('previewStatus', 'CSV 자동 다운로드 시작 요청');
   return true;
 }
 
@@ -242,6 +488,9 @@ function scheduleLocalBackendFailover(events) {
   localFailoverTimer = window.setTimeout(() => {
     if (events !== liveEvents || lastFrameAt) return;
     liveStreamBase = proxyBackendBase();
+    latestCsvStatus = null;
+    latestCsvStatusSource = '';
+    resetDemoViewForBackend();
     const input = $('backendBaseInput');
     if (input) input.value = liveStreamBase || '.';
     writeStoredBackendBase(liveStreamBase);
@@ -291,37 +540,52 @@ function celsiusSummaryLooksAllZero(data = {}) {
   return parsed.every((value) => Math.abs(value) <= 0.05);
 }
 
-function isDeviceGlobalSummaryTemperature(data = {}) {
+function celsiusAuthorizationFrom(data = {}) {
   const summary = data.temperature_summary && typeof data.temperature_summary === 'object'
     ? data.temperature_summary
     : {};
   const provenance = String(data.temperature_provenance ?? summary.provenance ?? '').trim();
   const scope = String(data.temperature_scope ?? summary.scope ?? '').trim();
-  return provenance === 'device_global_summary' && scope === 'device_global_summary';
-}
-
-function hasDeviceGlobalSummaryTrustPolicy(data = {}) {
-  return [
-    'temperature_provenance',
-    'temperature_scope',
-    'temperature_summary',
-    'full_matrix_temperature_status',
-  ].some((field) => Object.prototype.hasOwnProperty.call(data, field));
+  if (provenance === 'official_f2_analyzer_measurement_stats' && ['rectangle', 'fullscreen'].includes(scope)) {
+    return data.official_measurement_status === 'READY'
+      && data.official_measurement_matches_current_frame === true
+      && data.official_measurement_temporal_scope === 'current_frame'
+      && data.official_measurement_age_frames === 0
+      ? { provenance, scope }
+      : null;
+  }
+  if (
+    (provenance === 'device_global_summary' && scope === 'device_global_summary')
+    || (provenance === 'windows_official_mini2_roi_scalar' && scope === 'thermal_roi')
+  ) {
+    return { provenance, scope };
+  }
+  return null;
 }
 
 function hasTrustedCelsiusTemperature(data = {}) {
-  if (!hasFiniteNumber(data.temperature_avg_c) || isLikelyInvalidMini2ZeroCelsius(data)) return false;
-  const temp = parseFiniteNumber(data.temperature_avg_c);
+  const avg = parseFiniteNumber(data.temperature_avg_c);
+  const min = parseFiniteNumber(data.temperature_min_c);
+  const max = parseFiniteNumber(data.temperature_max_c);
+  if (
+    data.celsius_allowed !== true
+    || data.full_matrix_celsius_allowed !== false
+    || !celsiusAuthorizationFrom(data)
+    || !Number.isFinite(avg)
+    || !Number.isFinite(min)
+    || !Number.isFinite(max)
+    || min > avg
+    || avg > max
+    || isLikelyInvalidMini2ZeroCelsius(data)
+  ) {
+    return false;
+  }
+  const temp = avg;
   const raw = parseFiniteNumber(data.raw_avg ?? data.thermal_raw_roi_p50);
   if (Math.abs(temp) <= 0.05 && Number.isFinite(raw) && Math.abs(raw) > 1 && celsiusSummaryLooksAllZero(data)) {
     return false;
   }
-  const androidBridgeActive = typeof window !== 'undefined' && Boolean(window.AutoTitrationAndroid);
-  const deviceSummaryPolicyRequired = androidBridgeActive || hasDeviceGlobalSummaryTrustPolicy(data);
-  if (!deviceSummaryPolicyRequired) return data.celsius_allowed !== false && data.full_matrix_celsius_allowed !== true;
-  return data.celsius_allowed === true
-    && data.full_matrix_celsius_allowed !== true
-    && isDeviceGlobalSummaryTemperature(data);
+  return true;
 }
 
 function formatNumber(value, digits = 1) {
@@ -503,12 +767,6 @@ function predictedEquivalencePhFromCsv(csv) {
   });
 }
 
-function formatPh(value, digits = 2) {
-  const parsed = parseFiniteNumber(value);
-  if (!Number.isFinite(parsed)) return '-';
-  return parsed.toFixed(digits);
-}
-
 function readNumericInput(id, fallback = Number.NaN) {
   const value = parseFiniteNumber($(id)?.value);
   return Number.isFinite(value) ? value : fallback;
@@ -524,12 +782,9 @@ function currentChemistryNumbers() {
   };
 }
 
-function csvPredictedPh(csv) {
-  return predictedEquivalencePhFromCsv(csv);
-}
-
 function predictionSourceLabel(csv) {
   const source = String(csv?.predicted_equivalence_source || '').trim();
+  if (source === 'type_conditioned_sensor_endpoint_ranker') return '적정 종류별 시계열 모델';
   if (source === 'typewise_frame_zone_classifier') return '적정 종류별 분류 모델';
   if (source === 'ml_json_regression_model') return '모델 예측';
   if (source === 'live_feature_peak_estimator') return '센서 peak 추정';
@@ -537,21 +792,68 @@ function predictionSourceLabel(csv) {
   return '';
 }
 
+function predictionReadinessReasonLabel(reason) {
+  const labels = {
+    insufficient_usable_sensor_time_volume_observations: '사용 가능한 센서·시간·주입량 관측이 부족합니다',
+    insufficient_recorded_time_progression: '기록 시간이 충분히 진행되지 않았습니다',
+    insufficient_recording_time_span: '기록 시간이 충분히 진행되지 않았습니다',
+    insufficient_recorded_volume_progression: '주입량 변화가 충분하지 않습니다',
+    no_sensor_variation: '센서 변화가 감지되지 않았습니다',
+    flat_recorded_sensor_signals: '센서 변화가 감지되지 않았습니다',
+  };
+  const normalized = String(reason || '').trim();
+  return labels[normalized] || normalized || '충분한 예측 데이터가 없습니다';
+}
+
+function predictionValuesAvailable(csv) {
+  const status = String(csv?.predicted_equivalence_status || '').trim();
+  return !status || status === 'available';
+}
+
+function predictionReadinessStatusLabel(csv) {
+  const status = String(csv?.predicted_equivalence_status || '').trim();
+  const reason = predictionReadinessReasonLabel(csv?.predicted_equivalence_reason);
+  if (status === 'withheld') return `예측 보류 · ${reason}`;
+  if (status === 'unavailable') return `예측 사용 불가 · ${reason}`;
+  if (status === 'pending') return `예측 준비 중 · ${reason}`;
+  return '';
+}
+
 function updateConcentrationModePreview(csv = latestCsvStatus) {
   const predictedVolume = parseFiniteNumber(csv?.predicted_equivalence_volume_ml);
   const concentration = parseFiniteNumber(csv?.sample_concentration_from_predicted_equivalence_M);
-  const ph = csvPredictedPh(csv);
   const sourceLabel = predictionSourceLabel(csv);
+  const valuesAvailable = predictionValuesAvailable(csv);
+  const readinessLabel = predictionReadinessStatusLabel(csv);
 
-  setText('calcPredictedEquivalenceValue', formatMl(predictedVolume, 3));
-  setText('calcSampleConcentrationValue', formatMolar(concentration, 5));
-  setText('calcPredictedPhValue', formatPh(ph, 2));
-  setText('predictedPhValue', formatPh(ph, 2));
+  const finalValuesAvailable = valuesAvailable && csv?.state === 'stopped';
+  setText('calcPredictedEquivalenceValue', finalValuesAvailable ? formatMl(predictedVolume, 3) : '-');
+  setText('calcSampleConcentrationValue', finalValuesAvailable ? formatMolar(concentration, 5) : '-');
+  const terminalVolume = csv?.state === 'stopped'
+    ? parseFiniteNumber(csv?.injected_volume_ml)
+    : Number.NaN;
+  setText('calcFinalVolumeValue', Number.isFinite(terminalVolume) ? terminalVolume.toFixed(3) : '-');
 
-  if (Number.isFinite(predictedVolume) && Number.isFinite(concentration)) {
-    const warning = csv?.predicted_equivalence_pH_warning ? ` · ${csv.predicted_equivalence_pH_warning}` : '';
-    const prefix = sourceLabel ? `${sourceLabel} 완료` : '예측 계산 완료';
-    setText('calcModeStatus', warning ? `${prefix}${warning}` : prefix);
+  const terminalFault = csv?.state === 'stopped'
+    && (csv?.auto_stop_state === 'error' || /failed|error|missing/.test(String(csv?.auto_stop_reason || '')));
+  if (terminalFault) {
+    setText('calcModeStatus', readinessLabel ? `오류로 종료 · ${readinessLabel}` : '오류로 종료 · 계산값은 참고용');
+  } else if (readinessLabel) {
+    setText('calcModeStatus', readinessLabel);
+  } else if (Number.isFinite(predictedVolume) && Number.isFinite(concentration)) {
+    const source = sourceLabel || '예측 계산';
+    const stopReason = String(csv?.auto_stop_reason || '');
+    if (csv?.state === 'stopped' && (csv?.auto_stop_state === 'error' || /failed|error|missing/.test(stopReason))) {
+      setText('calcModeStatus', '오류로 종료 · 계산값은 참고용');
+    } else if (csv?.state === 'stopped' && csv?.auto_stop_state === 'triggered' && stopReason === 'persistent_color_change') {
+      setText('calcModeStatus', `${source} 완료`);
+    } else if (csv?.state === 'stopped' && csv?.auto_stop_state === 'triggered') {
+      setText('calcModeStatus', '안전 정지 · 계산값 확인');
+    } else if (csv?.state === 'stopped') {
+      setText('calcModeStatus', '수동 종료 · 계산값 확인');
+    } else {
+      setText('calcModeStatus', `${source} 준비됨`);
+    }
   } else if (csv?.state === 'recording' || csv?.recording) {
     setText('calcModeStatus', '녹화 중 · 종료하면 자동 계산');
   } else if (csv?.state === 'stopped') {
@@ -572,7 +874,7 @@ function updateConcentrationCalculationPreview({ writeTheory = true } = {}) {
     setText('calculatedConcentrationValue', '-');
     const label = $('calculatedConcentrationValue');
     if (label) {
-      label.title = `예측 농도 대기 · 이론 당량점 검산값 ${formatMl(calculatedTheory, 2)}`;
+      label.title = '예측 농도 대기';
     }
   } else {
     setText('calculatedConcentrationValue', '-');
@@ -585,7 +887,7 @@ function setAppMode(mode) {
   const normalized = mode === 'calculator' ? 'calculator' : 'csv';
   currentAppMode = normalized;
   document.body.dataset.appMode = normalized;
-  const calculatorMode = normalized === 'calculator';
+  const calculatorMode = !remoteControlMode && normalized === 'calculator';
 
   document.querySelectorAll('.csv-mode-only').forEach((element) => {
     element.classList.toggle('mode-hidden', calculatorMode);
@@ -595,6 +897,8 @@ function setAppMode(mode) {
   if (calculatorPanel) calculatorPanel.hidden = !calculatorMode;
   const sensorGrid = $('sensorGrid');
   if (sensorGrid) sensorGrid.hidden = calculatorMode;
+  const resultsView = $('resultsView');
+  if (resultsView) resultsView.hidden = !calculatorMode;
 
   const csvButton = $('csvCollectionModeButton');
   const calculatorButton = $('concentrationCalculationModeButton');
@@ -606,7 +910,10 @@ function setAppMode(mode) {
     calculatorButton.classList.toggle('is-active', calculatorMode);
     calculatorButton.setAttribute('aria-selected', calculatorMode ? 'true' : 'false');
   }
-  if (calculatorMode) updateConcentrationModePreview();
+  if (calculatorMode) {
+    updateConcentrationModePreview();
+    renderDemoView(); // Re-size the plots after revealing the result panel.
+  }
 }
 
 function setWaiting(message) {
@@ -625,9 +932,17 @@ function csvStateLabel(csv) {
 function autoStopLabel(csv) {
   const state = String(csv?.auto_stop_state || 'disabled');
   const reason = String(csv?.auto_stop_reason || '');
+  const pulseState = String(csv?.auto_stop_pulse_state || '');
   if (state === 'triggered') {
-    return reason === 'persistent_color_change' ? '색 변화 감지 정지' : '최대량 안전정지';
+    if (reason === 'persistent_color_change') return '색 변화 감지 정지';
+    if (reason === 'pulse_control_failed') return '미세 주입 제어 오류 정지';
+    if (reason === 'emergency_stop') return '비상 정지';
+    if (reason.includes('maximum_volume')) return '최대량 안전정지';
+    return '자동 안전정지';
   }
+  if (pulseState === 'pulse_injecting') return '미세 주입 중';
+  if (pulseState === 'pulse_settling') return '미세 주입 · 혼합 대기';
+  if (pulseState === 'slow_continuous') return '저속 연속 주입 중 · 명목 유량';
   if (state === 'armed_calibrating') return '초기 색 보정 중';
   if (state === 'armed_confirming') return '색 변화 확인 중';
   if (state === 'armed') return '색 변화 감시 중';
@@ -669,17 +984,31 @@ function applyCollectorHealth(health) {
   setText('healthThermalValue', mini2Text);
   setText('healthCsvValue', `${csvStateLabel(csv)} · ${formatNumber(csv.row_count ?? 0, 0)}행`);
   if (health.pump && shouldApplyPumpHealthLabel(health.pump)) setText('pumpCommandStatus', pumpHealthLabel(health.pump));
+  const guard = health.absolute_pump_guard || {};
+  if (guard.absolute_guard_reason === 'absolute_deadline_reached') {
+    const seconds = parseFiniteNumber(guard.absolute_guard_effective_maximum_run_time_s);
+    setText(
+      'pumpCommandStatus',
+      `안전 제한 정지${Number.isFinite(seconds) ? ` · ${seconds.toFixed(1)}초` : ''}`,
+    );
+  } else if (guard.absolute_guard_state === 'stop_unconfirmed') {
+    setText('pumpCommandStatus', `정지 확인 실패 · ${guard.absolute_guard_error || '-'}`);
+  }
   const hints = Array.isArray(health.action_hints) ? health.action_hints : [];
   setText('healthActionValue', hints[0] || '상태 확인 중');
 }
 
 async function refreshCollectorHealth() {
+  const requestBackendRevision = backendRevision;
   try {
     const response = await fetch(endpoint('/api/collector-health'), { cache: 'no-store' });
+    if (requestBackendRevision !== backendRevision) return null;
     const payload = await response.json().catch(() => ({}));
+    if (requestBackendRevision !== backendRevision) return null;
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `health ${response.status}`);
     applyCollectorHealth(payload);
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('healthCollectorValue', '연결 안 됨');
     setText('healthVisibleValue', '대기');
     setText('healthThermalValue', '대기');
@@ -688,17 +1017,38 @@ async function refreshCollectorHealth() {
   }
 }
 
-function applyCsvStatus(csv) {
+function applyCsvStatus(csv, { source = '' } = {}) {
   if (!csv) return;
+  if (!shouldAcceptCsvStatus(csv, source)) return false;
   const previousState = latestCsvStatus?.state;
-  latestCsvStatus = csv;
+  const previousSessionId = latestCsvStatus?.session_id;
+  const previousStartedEpoch = latestCsvStatus?.started_epoch_s;
+  const normalizedCsv = { ...csv };
+  if (
+    (normalizedCsv.session_id === null || normalizedCsv.session_id === undefined)
+    && previousSessionId !== null
+    && previousSessionId !== undefined
+  ) {
+    normalizedCsv.session_id = previousSessionId;
+  }
+  if (
+    (normalizedCsv.started_epoch_s === null || normalizedCsv.started_epoch_s === undefined)
+    && previousStartedEpoch !== null
+    && previousStartedEpoch !== undefined
+  ) {
+    normalizedCsv.started_epoch_s = previousStartedEpoch;
+  }
+  csv = normalizedCsv;
+  latestCsvStatus = normalizedCsv;
+  latestCsvStatusSource = source;
   setText('csvRowCount', formatNumber(csv.row_count, 0));
   const rowsPerSecond = parseFiniteNumber(csv.csv_rows_per_s);
   setText('csvRowsPerSecondValue', Number.isFinite(rowsPerSecond) ? `${rowsPerSecond.toFixed(1)}/s` : '-');
   setText('csvPathLabel', csv.path || '-');
   setText('csvStateLabel', csvStateLabel(csv));
   setText('autoStopStatus', autoStopLabel(csv));
-  if (csv.auto_stop_state === 'triggered') {
+  const csvSessionKey = csvSessionDownloadKey(csv);
+  if (csv.auto_stop_state === 'triggered' && csvSessionKey !== pumpStopCsvSessionKey) {
     const volume = parseFiniteNumber(csv.auto_stop_trigger_volume_ml);
     setText(
       'pumpCommandStatus',
@@ -706,7 +1056,10 @@ function applyCsvStatus(csv) {
     );
   }
   setText('pumpVolumeValue', formatMl(csv.injected_volume_ml));
-  if (hasFiniteNumber(csv.sample_concentration_from_predicted_equivalence_M)) {
+  if (
+    predictionValuesAvailable(csv)
+    && hasFiniteNumber(csv.sample_concentration_from_predicted_equivalence_M)
+  ) {
     setText('calculatedConcentrationValue', formatMolar(csv.sample_concentration_from_predicted_equivalence_M));
     const label = $('calculatedConcentrationValue');
     if (label) {
@@ -722,24 +1075,36 @@ function applyCsvStatus(csv) {
     setText('calculatedConcentrationValue', '-');
     const label = $('calculatedConcentrationValue');
     if (label) {
-      label.title = hasFiniteNumber(csv.sample_concentration_from_injected_M)
-        ? '예측 농도 대기 · 현재 주입량 역산값은 최종 농도 표시에서 제외'
-        : '예측 농도 대기';
+      const readinessLabel = predictionReadinessStatusLabel(csv);
+      label.title = readinessLabel || (
+        hasFiniteNumber(csv.sample_concentration_from_injected_M)
+          ? '예측 농도 대기 · 현재 주입량 역산값은 최종 농도 표시에서 제외'
+          : '예측 농도 대기'
+      );
     }
   }
   updateConcentrationModePreview(csv);
   setText('equivalenceDistanceValue', formatMl(csv.distance_to_equivalence_ml));
   setText('equivalenceLabelValue', csv.equivalence_window_label || '-');
-  const startButton = $('csvStartButton');
-  const stopButton = $('csvStopButton');
-  const busy = Boolean(csv.recording || csv.finalizing || csv.state === 'finalizing');
-  if (startButton) startButton.disabled = busy || !latestRoiRecordable || !latestRoiComplete;
-  if (stopButton) stopButton.disabled = !csv.recording;
+  updateCsvControlButtons(csv);
   updateCsvDownloadLinks('auto-titration-live.csv');
-  if (previousState === 'finalizing' && csv.state === 'stopped') {
-    triggerCsvAutoDownload();
+  updateDemoCsvStatus(csv);
+  if (['recording', 'finalizing'].includes(previousState) && csv.state === 'stopped') {
+    triggerCsvAutoDownload(csv);
     setAppMode('calculator');
   }
+  return true;
+}
+
+function updateCsvControlButtons(csv = latestCsvStatus) {
+  const startButton = $('csvStartButton');
+  const stopButton = $('csvStopButton');
+  const busy = Boolean(csv?.recording || csv?.finalizing || csv?.state === 'finalizing');
+  if (startButton) {
+    startButton.disabled = busy || Boolean(csvStartInFlight || csvStopInFlight)
+      || !latestRoiRecordable || !latestRoiComplete;
+  }
+  if (stopButton) stopButton.disabled = !(csv?.recording || csvStartInFlight);
 }
 
 function readPositiveNumberInput(id, label) {
@@ -783,6 +1148,7 @@ function applyTitrationTypePreset({ lookup = true } = {}) {
   const preset = TITRATION_SUBSTANCE_PRESETS[type] || TITRATION_SUBSTANCE_PRESETS.weak_acid_strong_base;
   const sampleChanged = setSelectValueIfPresent('sampleSubstanceInput', preset.sample);
   setSelectValueIfPresent('standardSolutionNameInput', preset.standard);
+  setSelectValueIfPresent('indicatorSelect', preset.indicator);
   updateConcentrationCalculationPreview({ writeTheory: true });
   if (lookup && sampleChanged) scheduleChemistryConstantsLookup(0);
 }
@@ -932,26 +1298,53 @@ function buildChemistryMetadataPayload() {
   return payload;
 }
 
+function buildPumpSafetyPayload() {
+  return {
+    maximum_pump_rate_ml_per_s: 1.05,
+    absolute_maximum_volume_ml: 100.0,
+    absolute_maximum_run_time_s: 120.0,
+  };
+}
+
 function buildPumpTimelineStartPayload() {
   const calculatedTheory = updateConcentrationCalculationPreview({ writeTheory: false });
   const manualTheory = Number($('theoryEquivalenceInput')?.value);
   const theoryVolume = Number.isFinite(manualTheory) && manualTheory > 0 ? manualTheory : calculatedTheory;
+  const autoStopEnabled = Boolean($('autoStopEnabledInput')?.checked);
+  const slowStageEnabled = autoStopEnabled && Boolean($('slowStageEnabledInput')?.checked);
+  const slowRateSteps = Number($('slowRateStepsInput')?.value || 25);
   return {
     pump_rate_ml_per_s: readPositiveNumberInput('pumpRateInput', '펌프 유량'),
+    ...buildPumpSafetyPayload(),
+    manual_unbounded: !autoStopEnabled,
     theoretical_equivalence_volume_ml: Number.isFinite(theoryVolume)
       ? Number(theoryVolume.toFixed(6))
       : readPositiveNumberInput('theoryEquivalenceInput', '이론 당량점'),
     equivalence_window_ml: readPositiveNumberInput('equivalenceWindowInput', '당량점 허용범위'),
-    auto_stop_enabled: Boolean($('autoStopEnabledInput')?.checked),
+    auto_stop_enabled: autoStopEnabled,
     // Auto-stop learns the starting ROI color and waits for a live-model
     // confirmation plus a persistent color transition. Theory is not a gate.
     auto_stop_confirmation_delay_s: 0.4,
     auto_stop_maximum_volume_ml: 100.0,
+    // At the live-model approach threshold, continuous pumping stops. The
+    // firmware then injects five full steps at a time and waits before the
+    // existing persistent-color endpoint confirmation runs again.
+    auto_stop_pulse_enabled: autoStopEnabled,
+    auto_stop_pulse_approach_score: 0.20,
+    auto_stop_pulse_steps: 5,
+    auto_stop_pulse_settle_time_s: 0.50,
+    auto_stop_slow_stage_enabled: slowStageEnabled,
+    auto_stop_slow_onset_score: 0.10,
+    auto_stop_slow_onset_duration_s: 0.50,
+    auto_stop_slow_rate_steps_per_s: slowRateSteps,
+    pulse_nominal_ml_per_step: 0.0099,
+    pulse_ml_per_step_upper_bound: 0.0105,
     ...buildChemistryMetadataPayload(),
   };
 }
 
 async function lookupChemistryConstants({ silent = false } = {}) {
+  const requestBackendRevision = backendRevision;
   const query = readTextInput('sampleSubstanceInput');
   const requestSerial = ++constantsLookupSerial;
   selectedConstantsCandidate = null;
@@ -978,6 +1371,7 @@ async function lookupChemistryConstants({ silent = false } = {}) {
       body: JSON.stringify({ query, limit: 8 }),
     });
     const payload = await response.json().catch(() => ({}));
+    if (requestBackendRevision !== backendRevision) return null;
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `상수 API ${response.status}`);
     if (requestSerial !== constantsLookupSerial || query !== readTextInput('sampleSubstanceInput')) return;
     latestConstantsLookup = payload;
@@ -989,6 +1383,7 @@ async function lookupChemistryConstants({ silent = false } = {}) {
     }
     autoSelectRoomTemperatureCandidate(candidates);
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('constantsLookupStatus', `실패 · ${error.message}`);
   }
 }
@@ -1031,21 +1426,57 @@ function selectConstantsCandidate() {
   setText('constantsLookupStatus', `선택됨 · ${constantsCandidateLabel(selectedConstantsCandidate)}`);
 }
 
-async function postCsvControl(path, pendingText, body = {}) {
+function csvOperationFailureLabel(path) {
+  return path.endsWith('/stop') ? '녹화 종료 실패' : '녹화 시작 실패';
+}
+
+async function postCsvControl(path, pendingText, body, requestSequence) {
+  const requestBackendRevision = backendRevision;
   setText('csvStateLabel', pendingText);
-  const response = await fetch(endpoint(path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || `CSV API ${response.status}`);
+  try {
+    if (remoteControlMode && path === '/api/csv/start') {
+      const configResponse = await fetch(endpoint('/api/remote/config'), { cache: 'no-store' });
+      if (requestBackendRevision !== backendRevision) return null;
+      const shared = await configResponse.json().catch(() => ({}));
+      if (requestBackendRevision !== backendRevision) return null;
+      if (requestSequence !== csvControlSequence) return null;
+      if (!configResponse.ok || !shared.ok || !shared.config) {
+        throw new Error('노트북의 실험 설정이 아직 동기화되지 않았습니다. 설정과 연결 상태를 확인하세요');
+      }
+      body = shared.config;
+    }
+    const response = await fetch(endpoint(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (requestBackendRevision !== backendRevision) return null;
+    if (requestSequence !== csvControlSequence) return null;
+    if (!response.ok || payload.ok === false) {
+      const rawError = String(payload.error || `CSV API ${response.status}`);
+      let explanation = '';
+      if (rawError.includes('acknowledged web-control firmware')) {
+        explanation = '미세 주입 펌웨어 확인 응답을 받지 못했습니다. 업로드 후 실행 중인 수집기를 다시 시작해 주세요.';
+      } else if (rawError.includes('baseline timed out')) {
+        explanation = '펌프 시작 전 초기색 수집 시간이 초과되었습니다. 카메라 영상과 ROI 고정을 확인해 주세요.';
+      } else if (rawError.includes('model_unavailable') || rawError.includes('model validation failed')) {
+        explanation = '자동정지용 모델을 사용할 수 없습니다. 실험 종료 후 농도 계산용 모델과는 별도입니다.';
+      }
+      const message = explanation ? `${explanation} (${rawError})` : rawError;
+      setText('csvStateLabel', `${csvOperationFailureLabel(path)} · ${message}`);
+      throw new Error(message);
+    }
+    if (payload.roi) applyRoiStatus(payload.roi);
+    if (path.endsWith('/start')) pumpStopCsvSessionKey = '';
+    applyCsvStatus(payload.csv, { source: 'post' });
+    if (payload.pump) applyPumpCommandStatus(payload.pump);
+    return payload.csv;
+  } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
+    if (requestSequence !== csvControlSequence) return null;
+    throw error;
   }
-  if (payload.roi) applyRoiStatus(payload.roi);
-  applyCsvStatus(payload.csv);
-  if (payload.pump) applyPumpCommandStatus(payload.pump);
-  return payload.csv;
 }
 
 
@@ -1057,7 +1488,10 @@ function shouldApplyPumpHealthLabel(pump) {
 
 function pumpHealthLabel(pump) {
   if (!pump) return '대기';
-  if (pump.connected) return `연결됨 · ${pump.port || 'COM'}`;
+  if (pump.connected) {
+    const command = pump.last_command ? ` · 마지막 ${pump.last_command}` : '';
+    return `연결됨 · ${pump.port || 'COM'}${command}`;
+  }
   if (pump.likely_busy) return '포트 사용 중 · IDE 닫기';
   if (pump.status === 'waiting_for_port') return '자동재시도 · USB 대기';
   if (pump.status === 'error' || pump.status === 'busy') return `연결 실패 · ${pump.message || pump.last_error || '-'}`;
@@ -1070,8 +1504,10 @@ function pumpCommandLabel(pump) {
   const command = pump.command ? String(pump.command) : '-';
   if (pump.status === 'disabled') return `미설정 · ${command}`;
   if (pump.status === 'error') return `오류 · ${pump.error || command}`;
-  if (pump.action === 'start') return `주입 중 · ${command}`;
-  if (pump.action === 'retract') return `되감기 · ${command}`;
+  const guardSeconds = parseFiniteNumber(pump.absolute_guard?.absolute_guard_effective_maximum_run_time_s);
+  const guardSuffix = Number.isFinite(guardSeconds) ? ` · 최대 ${guardSeconds.toFixed(1)}초` : '';
+  if (pump.action === 'start') return `주입 중 · ${command}${guardSuffix}`;
+  if (pump.action === 'retract') return `되감기 · ${command}${guardSuffix}`;
   if (pump.action === 'stop') return `펌프 정지 · ${command}`;
   return pump.sent ? `전송 · ${command}` : '대기';
 }
@@ -1085,59 +1521,158 @@ function applyPumpCommandStatus(pump) {
   }
 }
 
-async function sendPumpCommand(path, pendingText) {
-  setText('pumpCommandStatus', pendingText);
-  const response = await fetch(endpoint(path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (payload.pump) applyPumpCommandStatus(payload.pump);
-  if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error || payload.pump?.error || `펌프 API ${response.status}`);
-  }
-  return payload.pump;
+function updatePumpCommandButtons() {
+  const motionBlocked = Boolean(
+    pumpMotionInFlight || pumpStopInFlight || csvStartInFlight || csvStopInFlight,
+  );
+  const dispenseButton = $('serialPumpDispenseButton');
+  const retractButton = $('serialPumpRetractButton');
+  const stopButton = $('serialPumpStopButton');
+  if (dispenseButton) dispenseButton.disabled = motionBlocked;
+  if (retractButton) retractButton.disabled = motionBlocked;
+  if (stopButton) stopButton.disabled = false;
 }
 
-async function startCsvRecording() {
+function sendPumpCommand(path, pendingText) {
+  const requestBackendRevision = backendRevision;
+  const isStop = path.endsWith('/stop');
+  if (isStop && pumpStopInFlight) return pumpStopInFlight;
+  if (isStop && (csvStartInFlight || csvStopInFlight)) csvControlSequence += 1;
+  if (!isStop && (csvStartInFlight || csvStopInFlight)) return Promise.resolve(null);
+  if (!isStop && pumpStopInFlight) return Promise.resolve(null);
+  if (!isStop && pumpMotionInFlight) {
+    return path === pumpMotionPath ? pumpMotionInFlight : Promise.resolve(null);
+  }
+
+  const requestSequence = ++pumpCommandSequence;
+  if (!isStop) pumpStopCsvSessionKey = '';
+  setText('pumpCommandStatus', pendingText);
+  const safetyPayload = isStop ? {} : { manual_unbounded: true };
+  const request = (async () => {
+    try {
+      const response = await fetch(endpoint(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(safetyPayload),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (requestSequence !== pumpCommandSequence || requestBackendRevision !== backendRevision) return null;
+      if (payload.pump) applyPumpCommandStatus(payload.pump);
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || payload.pump?.error || `펌프 API ${response.status}`);
+      }
+      if (isStop) pumpStopCsvSessionKey = csvSessionDownloadKey(latestCsvStatus);
+      return payload.pump;
+    } catch (error) {
+      if (requestSequence !== pumpCommandSequence || requestBackendRevision !== backendRevision) return null;
+      throw error;
+    }
+  })();
+
+  if (isStop) pumpStopInFlight = request;
+  else {
+    pumpMotionInFlight = request;
+    pumpMotionPath = path;
+  }
+  updatePumpCommandButtons();
+  request.finally(() => {
+    if (isStop && pumpStopInFlight === request) pumpStopInFlight = null;
+    if (!isStop && pumpMotionInFlight === request) {
+      pumpMotionInFlight = null;
+      pumpMotionPath = '';
+    }
+    updatePumpCommandButtons();
+  }).catch(() => {});
+  return request;
+}
+
+function startCsvRecording() {
+  if (csvStartInFlight) return csvStartInFlight;
+  if (csvStopInFlight) return csvStopInFlight;
   setAppMode('csv');
   stopAutoRoiSetup();
   if (!latestRoiRecordable || !latestRoiComplete) {
     setText('csvStateLabel', 'ROI 고정 필요');
     setText('previewStatus', '두 ROI를 잡고 ROI 고정을 누르세요');
-    return;
+    return Promise.resolve(null);
   }
+  const requestSequence = ++csvControlSequence;
+  setText('pumpCommandStatus', '녹화 시작 → b');
+  let body;
   try {
-    setText('pumpCommandStatus', '녹화 시작 → b');
-    await postCsvControl('/api/csv/start', '시작 중', buildPumpTimelineStartPayload());
+    body = remoteControlMode ? {} : buildPumpTimelineStartPayload();
   } catch (error) {
-    setText('csvStateLabel', `시작 실패 · ${error.message}`);
-    setText('pumpCommandStatus', `시작 실패 · ${error.message}`);
+    setText('csvStateLabel', `녹화 시작 실패 · ${error.message}`);
+    setText('pumpCommandStatus', `녹화 시작 실패 · ${error.message}`);
+    return Promise.resolve(null);
   }
+  const request = postCsvControl(
+    '/api/csv/start',
+    '시작 중',
+    body,
+    requestSequence,
+  ).catch((error) => {
+    if (requestSequence === csvControlSequence) {
+      setText('csvStateLabel', `녹화 시작 실패 · ${error.message}`);
+      setText('pumpCommandStatus', `녹화 시작 실패 · ${error.message}`);
+    }
+    return null;
+  });
+  csvStartInFlight = request;
+  updateCsvControlButtons();
+  updatePumpCommandButtons();
+  request.finally(() => {
+    if (csvStartInFlight === request) csvStartInFlight = null;
+    updateCsvControlButtons();
+    updatePumpCommandButtons();
+  });
+  return request;
 }
 
-async function stopCsvRecording() {
-  try {
-    setText('pumpCommandStatus', '녹화 종료 → c');
-    const csv = await postCsvControl('/api/csv/stop', '종료 중');
-    if (csv?.state === 'stopped') {
-      triggerCsvAutoDownload();
-      setAppMode('calculator');
-    }
-  } catch (error) {
-    setText('csvStateLabel', `종료 실패 · ${error.message}`);
-    setText('pumpCommandStatus', `종료 실패 · ${error.message}`);
+function completeCsvStop(csv) {
+  if (csv?.state === 'stopped') {
+    triggerCsvAutoDownload();
+    setAppMode('calculator');
   }
+  return csv;
+}
+
+function stopCsvRecording() {
+  if (csvStopInFlight) return csvStopInFlight;
+  pumpCommandSequence += 1;
+  const requestSequence = ++csvControlSequence;
+  setText('pumpCommandStatus', '녹화 종료 → c');
+  const request = postCsvControl('/api/csv/stop', '종료 중', {}, requestSequence)
+    .then(completeCsvStop)
+    .catch((error) => {
+      if (requestSequence === csvControlSequence) {
+        setText('csvStateLabel', `녹화 종료 실패 · ${error.message}`);
+        setText('pumpCommandStatus', `녹화 종료 실패 · ${error.message}`);
+      }
+      return null;
+    });
+  csvStopInFlight = request;
+  updateCsvControlButtons();
+  updatePumpCommandButtons();
+  request.finally(() => {
+    if (csvStopInFlight === request) csvStopInFlight = null;
+    updateCsvControlButtons();
+    updatePumpCommandButtons();
+  });
+  return request;
 }
 
 async function refreshCsvStatus() {
+  const requestBackendRevision = backendRevision;
   try {
     const response = await fetch(endpoint('/api/csv/status'), { cache: 'no-store' });
+    if (requestBackendRevision !== backendRevision) return null;
     const payload = await response.json();
+    if (requestBackendRevision !== backendRevision) return null;
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `CSV API ${response.status}`);
-    applyCsvStatus(payload.csv);
+    applyCsvStatus(payload.csv, { source: 'get' });
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('csvPathLabel', `CSV 대기 · ${error.message}`);
   }
 }
@@ -1245,6 +1780,7 @@ function refreshRoiOverlays() {
 
 
 async function sendRoiRect(target, rect) {
+  const requestBackendRevision = backendRevision;
   setText('previewStatus', `${target} ROI 저장 중 · ${rect.x},${rect.y},${rect.width},${rect.height}`);
   if (target === 'visible') {
     showVisibleCandidateNotice(
@@ -1259,6 +1795,7 @@ async function sendRoiRect(target, rect) {
     body: JSON.stringify({ target, ...rect }),
   });
   const payload = await response.json().catch(() => ({}));
+  if (requestBackendRevision !== backendRevision) return null;
   if (!response.ok || payload.ok === false) {
     throw new Error(payload.error || `ROI API 오류 ${response.status}`);
   }
@@ -1274,6 +1811,7 @@ async function sendRoiRect(target, rect) {
 }
 
 async function postRoiAction(path, body = {}, pendingText = 'ROI 처리 중') {
+  const requestBackendRevision = backendRevision;
   setText('roiSettingsStatus', pendingText);
   const response = await fetch(endpoint(path), {
     method: 'POST',
@@ -1281,6 +1819,7 @@ async function postRoiAction(path, body = {}, pendingText = 'ROI 처리 중') {
     body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
+  if (requestBackendRevision !== backendRevision) return null;
   if (!response.ok || payload.ok === false) throw new Error(payload.error || `ROI API ${response.status}`);
   if (payload.roi) applyRoiStatus(payload.roi);
   return payload;
@@ -1367,6 +1906,7 @@ function autoRoiFailureUsesMissingYolo(reason = '') {
 }
 
 async function requestAutoRoiCandidate() {
+  const requestBackendRevision = backendRevision;
   if (!autoRoiSetupEnabled || autoRoiRequestInFlight) return;
   if (latestRoiLocked || latestLiveMetadata.roi_state === 'recording') {
     stopAutoRoiSetup();
@@ -1384,6 +1924,7 @@ async function requestAutoRoiCandidate() {
       target = 'visible';
     }
     const payload = await postRoiAction('/api/roi-auto-candidate', { target }, '자동 ROI 찾는 중');
+    if (requestBackendRevision !== backendRevision) return null;
     const roi = payload.roi || {};
     const visibleReady = Boolean(roi.visible_roi_ready);
     const thermalReady = Boolean(roi.thermal_roi_ready);
@@ -1412,16 +1953,18 @@ async function requestAutoRoiCandidate() {
     );
     scheduleAutoRoiCandidate(waitingForFrame ? 650 : AUTO_ROI_RETRY_MS);
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     stopAutoRoiSetup();
     setText('previewStatus', `자동 ROI 실패 · ${error.message}`);
     setText('roiSettingsStatus', '수동 ROI를 사용하세요');
     showVisibleCandidateNotice('error', '자동 ROI 실패', error.message);
   } finally {
-    autoRoiRequestInFlight = false;
+    if (requestBackendRevision === backendRevision) autoRoiRequestInFlight = false;
   }
 }
 
 async function toggleAutoRoiSetup() {
+  const requestBackendRevision = backendRevision;
   if (autoRoiSetupEnabled) {
     stopAutoRoiSetup();
     setText('roiSettingsStatus', '자동 ROI OFF · 직접 드래그');
@@ -1432,14 +1975,17 @@ async function toggleAutoRoiSetup() {
     return;
   }
   const ready = await enterRoiSetupMode();
+  if (requestBackendRevision !== backendRevision) return null;
   if (!ready) return;
   autoRoiSetupEnabled = true;
   updateAutoRoiSetupButton();
   setText('previewStatus', '자동 ROI 설정 중 · 비커를 화면에 놓으세요');
   await requestAutoRoiCandidate();
+  if (requestBackendRevision !== backendRevision) return null;
 }
 
 async function enterRoiSetupMode({ reset = false } = {}) {
+  const requestBackendRevision = backendRevision;
   if (latestLiveMetadata.roi_state === 'recording') {
     setText('previewStatus', '녹화 중 ROI 변경 불가');
     return false;
@@ -1450,19 +1996,23 @@ async function enterRoiSetupMode({ reset = false } = {}) {
   if (needsServerUnlock) {
     try {
       await postRoiAction('/api/roi-unlock', { reset }, reset ? 'ROI 재설정' : 'ROI 선택');
+      if (requestBackendRevision !== backendRevision) return null;
       if (reset) {
         latestLiveMetadata.visible_roi = '';
         latestLiveMetadata.thermal_roi = '';
         refreshRoiOverlays();
       }
     } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
       setText('roiSettingsStatus', `ROI 선택 실패 · ${error.message}`);
       return false;
     }
   }
   try {
     await setRoiAutoTracking('off', { updateStatus: false });
+    if (requestBackendRevision !== backendRevision) return null;
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('roiSettingsStatus', `자동추적 끄기 실패 · ${error.message}`);
   }
   setText('previewStatus', 'ROI 선택 · 두 화면에서 드래그');
@@ -1504,17 +2054,22 @@ function scheduleChemistryConstantsLookup(delayMs = 450) {
 }
 
 async function loadRoiSettings() {
+  const requestBackendRevision = backendRevision;
   try {
     const response = await fetch(endpoint('/api/settings'), { cache: 'no-store' });
+    if (requestBackendRevision !== backendRevision) return null;
     const payload = await response.json();
+    if (requestBackendRevision !== backendRevision) return null;
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `설정 API ${response.status}`);
     syncSettingsControls(payload.settings);
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('roiSettingsStatus', `설정 연결 대기 · ${error.message}`);
   }
 }
 
 async function setRoiAutoTracking(mode, { updateStatus = false, pendingText = '' } = {}) {
+  const requestBackendRevision = backendRevision;
   const requestedAutoMode = 'off';
   if (pendingText) setText('roiSettingsStatus', pendingText);
   const response = await fetch(endpoint('/api/settings'), {
@@ -1525,6 +2080,7 @@ async function setRoiAutoTracking(mode, { updateStatus = false, pendingText = ''
     }),
   });
   const payload = await response.json().catch(() => ({}));
+  if (requestBackendRevision !== backendRevision) return null;
   if (!response.ok || payload.ok === false) {
     throw new Error(payload.error || `설정 API 오류 ${response.status}`);
   }
@@ -1553,6 +2109,7 @@ function updateMini2RotateButton(degrees = thermalRotationDegreesFrom()) {
 }
 
 async function setThermalRotationDegrees(degrees, { resetRoi = true } = {}) {
+  const requestBackendRevision = backendRevision;
   const rotation = Number(degrees) === 180 ? 180 : 0;
   const response = await fetch(endpoint('/api/settings'), {
     method: 'POST',
@@ -1560,6 +2117,7 @@ async function setThermalRotationDegrees(degrees, { resetRoi = true } = {}) {
     body: JSON.stringify({ thermal_rotation_degrees: rotation }),
   });
   const payload = await response.json().catch(() => ({}));
+  if (requestBackendRevision !== backendRevision) return null;
   if (!response.ok || payload.ok === false) {
     throw new Error(payload.error || `설정 API 오류 ${response.status}`);
   }
@@ -1567,11 +2125,13 @@ async function setThermalRotationDegrees(degrees, { resetRoi = true } = {}) {
   syncSettingsControls(payload.settings, { updateStatus: false });
   if (resetRoi) {
     await enterRoiSetupMode({ reset: true });
+    if (requestBackendRevision !== backendRevision) return null;
   }
   return rotation;
 }
 
 async function toggleMini2Rotation() {
+  const requestBackendRevision = backendRevision;
   if (latestLiveMetadata.roi_state === 'recording') {
     setText('previewStatus', '녹화 중 회전 불가');
     return;
@@ -1580,21 +2140,26 @@ async function toggleMini2Rotation() {
   setText('previewStatus', `적외선 ${next}° 적용 중`);
   try {
     const applied = await setThermalRotationDegrees(next, { resetRoi: true });
+    if (requestBackendRevision !== backendRevision) return null;
     updateMini2RotateButton(applied);
     setText('previewStatus', `적외선 ${applied}° 적용 · ROI 재고정`);
     setText('roiSettingsStatus', '적외선 회전 · ROI 재선택');
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('previewStatus', `적외선 회전 실패 · ${error.message}`);
   }
 }
 
 async function applyRoiSettings(event) {
+  const requestBackendRevision = backendRevision;
   if (event) event.preventDefault();
   settingsDirty = true;
   setText('roiSettingsStatus', '자동추적 끄는 중');
   try {
     await setRoiAutoTracking('off', { updateStatus: true });
+    if (requestBackendRevision !== backendRevision) return null;
   } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
     setText('roiSettingsStatus', `설정 실패 · ${error.message}`);
   } finally {
     settingsDirty = false;
@@ -1644,6 +2209,7 @@ function addRoiDragHandler(imageId, overlayId, target) {
   });
   hitElement.addEventListener('pointerup', async (event) => {
     if (!roiDrag || roiDrag.imageId !== imageId) return;
+    const requestBackendRevision = backendRevision;
     const drag = roiDrag;
     roiDrag = null;
     hitElement.releasePointerCapture?.(event.pointerId);
@@ -1657,9 +2223,11 @@ function addRoiDragHandler(imageId, overlayId, target) {
         return;
       }
       await sendRoiRect(target, rect);
+      if (requestBackendRevision !== backendRevision) return;
       setText('roiSettingsStatus', `${target} ROI 저장`);
       refreshRoiOverlays();
     } catch (error) {
+      if (requestBackendRevision !== backendRevision) return;
       setText('previewStatus', `ROI 저장 실패 · ${error.message}`);
       if (target === 'visible') {
         showVisibleCandidateNotice('error', 'ROI 저장 실패', error.message);
@@ -1729,7 +2297,7 @@ function applyLiveMetadata(data) {
     hsvDeltaElement.title = `ΔH ${formatNumber(data.visible_H_delta, 1)} / ΔS ${formatNumber(data.visible_S_delta, 3)} / ΔV ${formatNumber(data.visible_V_delta, 3)}`;
   }
   setText('rgbDeltaValue', formatNumber(data.visible_color_delta, 2));
-  applyCsvStatus({
+  const csvAccepted = applyCsvStatus({
     row_count: data.csv_row_count,
     csv_rows_per_s: data.csv_rows_per_s,
     path: data.csv_path,
@@ -1737,6 +2305,8 @@ function applyLiveMetadata(data) {
     recording: data.csv_recording,
     finalizing: data.csv_finalizing,
     state: data.csv_state,
+    session_id: data.csv_session_id,
+    started_epoch_s: data.csv_recording_started_epoch_s ?? data.csv_started_epoch_s,
     pump_elapsed_s: data.pump_elapsed_s,
     pump_rate_ml_per_s: data.pump_run_rate_ml_per_s,
     injected_volume_ml: data.injected_volume_ml,
@@ -1762,13 +2332,31 @@ function applyLiveMetadata(data) {
 	    theoretical_equivalence_pH: data.theoretical_equivalence_pH,
 	    predicted_equivalence_pH: data.predicted_equivalence_pH,
 	    predicted_equivalence_pH_warning: data.predicted_equivalence_pH_warning,
+	    predicted_equivalence_status: data.predicted_equivalence_status,
+	    predicted_equivalence_reason: data.predicted_equivalence_reason,
 	    calculated_theoretical_equivalence_volume_ml: data.calculated_theoretical_equivalence_volume_ml,
 	    sample_concentration_from_theoretical_equivalence_M: data.sample_concentration_from_theoretical_equivalence_M,
 	    equivalence_formula: data.equivalence_formula,
 	    csv_event_note: data.csv_event_note,
 	    csv_mark_sequence: data.csv_mark_sequence,
 	    recording_elapsed_s: data.csv_recording_elapsed_s,
-	  });
+	    auto_stop_enabled: data.auto_stop_enabled,
+	    auto_stop_state: data.auto_stop_state,
+	    auto_stop_reason: data.auto_stop_reason,
+	    auto_stop_trigger_volume_ml: data.auto_stop_trigger_volume_ml,
+	    auto_stop_pulse_enabled: data.auto_stop_pulse_enabled,
+	    auto_stop_pulse_state: data.auto_stop_pulse_state,
+	    auto_stop_pulse_reason: data.auto_stop_pulse_reason,
+	    auto_stop_pulse_count: data.auto_stop_pulse_count,
+	    auto_stop_slow_stage_enabled: data.auto_stop_slow_stage_enabled,
+	    auto_stop_slow_rate_steps_per_s: data.auto_stop_slow_rate_steps_per_s,
+	    auto_stop_slow_nominal_rate_ml_per_s: data.auto_stop_slow_nominal_rate_ml_per_s,
+	    pump_dosing_stage: data.pump_dosing_stage,
+	    pump_state: data.pump_state,
+	    pump_nominal_rate_ml_per_s: data.pump_nominal_rate_ml_per_s,
+	    pump_rate_basis: data.pump_rate_basis,
+	  }, { source: 'live' });
+  updateDemoLiveSample(data, csvAccepted);
 
   setText('statusLabel', data.status_label || '-');
   syncSettingsControls(data, { updateStatus: false });
@@ -1814,9 +2402,12 @@ function applyLiveMetadata(data) {
   const captureStatus = Number.isFinite(captureFps) ? ` · ${captureFps.toFixed(1)} fps` : '';
   const backlogStatus = recordingBacklog > 0 ? ` · 처리 대기 ${recordingBacklog}` : '';
   const dropStatus = recordingDrops > 0 ? ` · 기록 누락 ${recordingDrops}` : '';
+  const previewDetail = `frame ${data.frame_id ?? '-'}${captureStatus}${backlogStatus}${dropStatus}`;
+  const previewLabel = $('previewStatus');
+  if (previewLabel) previewLabel.title = previewDetail;
   setText(
     'previewStatus',
-    `연결 · frame ${data.frame_id ?? '-'}${captureStatus}${backlogStatus}${dropStatus} · ROI ${roiStateLabel(effectiveData.roi_state)}`,
+    `영상 연결${recordingBacklog > 0 ? ' · 저장 처리 중' : ''}${dropStatus}${latestRoiRecordable ? '' : ' · ROI 설정 필요'}`,
   );
 }
 
@@ -1828,6 +2419,7 @@ function connectLiveStream() {
   }
 
   setWaiting('스트림 연결 중');
+  setDemoConnection('connecting');
   lastFrameAt = 0;
   let events;
   try {
@@ -1835,6 +2427,7 @@ function connectLiveStream() {
   } catch (error) {
     setWaiting(`스트림 주소 오류 · ${error.message}`);
     setBackendBaseStatus(`연결 실패: ${backendBaseDisplay()}`);
+    setDemoConnection('disconnected');
     return;
   }
   liveEvents = events;
@@ -1851,6 +2444,7 @@ function connectLiveStream() {
   });
   events.onerror = () => {
     if (events !== liveEvents) return;
+    setDemoConnection('disconnected');
     scheduleLocalBackendFailover(events);
     const staleMs = lastFrameAt ? Date.now() - lastFrameAt : Infinity;
     setWaiting(staleMs > 2500 ? '프레임 멈춤' : '재연결 중');
@@ -1862,7 +2456,12 @@ function saveBackendBase(event) {
   if (event) event.preventDefault();
   const input = $('backendBaseInput');
   try {
-    liveStreamBase = normalizeBackendBase(input?.value || defaultBackendBase());
+    const nextBackendBase = normalizeBackendBase(input?.value || defaultBackendBase());
+    const backendChanged = nextBackendBase !== liveStreamBase;
+    liveStreamBase = nextBackendBase;
+    latestCsvStatus = null;
+    latestCsvStatusSource = '';
+    if (backendChanged) resetDemoViewForBackend();
     if (input) input.value = liveStreamBase || '.';
     writeStoredBackendBase(liveStreamBase);
     setBackendBaseStatus(`저장됨: ${backendBaseDisplay()}`);
@@ -2025,19 +2624,24 @@ function addRoiSetupHandlers() {
   }
   if (lockButton) {
     lockButton.addEventListener('click', async () => {
+      const requestBackendRevision = backendRevision;
       try {
         stopAutoRoiSetup();
         const payload = await postRoiAction('/api/roi-lock', {}, 'ROI 고정 중');
+        if (!payload || requestBackendRevision !== backendRevision) return;
         roiSetupMode = false;
         let trackingStatus = '자동추적 off';
         try {
           await setRoiAutoTracking('off', { updateStatus: false });
+          if (requestBackendRevision !== backendRevision) return;
         } catch (settingsError) {
+          if (requestBackendRevision !== backendRevision) return;
           trackingStatus = `자동추적 끄기 실패 · ${settingsError.message}`;
         }
         setText('previewStatus', `ROI 고정 · ${trackingStatus}`);
         setText('roiSettingsStatus', `ROI 고정 · ${trackingStatus}`);
       } catch (error) {
+        if (requestBackendRevision !== backendRevision) return;
         setText('roiSettingsStatus', `잠금 실패 · ${error.message}`);
       }
     });
@@ -2086,4 +2690,75 @@ if (isAndroidWebViewBridge()) {
   addRoiDragHandler('visiblePreview', 'visibleRoiOverlay', 'visible');
   addRoiDragHandler('thermalPreview', 'thermalRoiOverlay', 'thermal');
 }
-window.addEventListener('resize', refreshRoiOverlays);
+window.addEventListener('resize', () => {
+  refreshRoiOverlays();
+  renderDemoView();
+});
+
+
+// Notebook-only settings sync; never sends a recording or motion request.
+let remoteSettingsSyncing = false;
+let remoteSettingsRevision = 0;
+let remoteSettingsTimer = null;
+
+async function syncRemoteSettings() {
+  const requestBackendRevision = backendRevision;
+  if (remoteControlMode || isAndroidWebViewBridge() || remoteSettingsSyncing) return;
+  if (latestCsvStatus?.recording || latestCsvStatus?.finalizing) return;
+  remoteSettingsSyncing = true;
+  const revision = remoteSettingsRevision;
+  const backend = liveStreamBase;
+  try {
+    let body = null;
+    let invalidReason = '';
+    try {
+      body = buildPumpTimelineStartPayload();
+    } catch (error) {
+      invalidReason = error.message;
+    }
+    const response = await fetch(endpoint('/api/remote/config'), { cache: 'no-store' });
+    if (requestBackendRevision !== backendRevision) return null;
+    const current = await response.json().catch(() => ({}));
+    if (requestBackendRevision !== backendRevision) return null;
+    if (!response.ok || !current.ok) throw new Error('원격 설정 연결 대기');
+    if (revision !== remoteSettingsRevision || backend !== liveStreamBase) return;
+    if (JSON.stringify(current.config || null) !== JSON.stringify(body)) {
+      const saved = await fetch(endpoint('/api/remote/config'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || { clear: true }),
+      });
+      const result = await saved.json().catch(() => ({}));
+      if (requestBackendRevision !== backendRevision) return null;
+      if (!saved.ok || !result.ok) throw new Error(result.error || '원격 설정 동기화 대기');
+    }
+    if (revision === remoteSettingsRevision && backend === liveStreamBase) {
+      setText('remoteSettingsStatus', invalidReason
+        ? `원격 시작 보류 · ${invalidReason}`
+        : '원격 설정 자동 동기화됨');
+    }
+  } catch (error) {
+    if (requestBackendRevision !== backendRevision) return null;
+    if (backend === liveStreamBase) setText('remoteSettingsStatus', error.message);
+  } finally {
+    if (requestBackendRevision === backendRevision) remoteSettingsSyncing = false;
+  }
+}
+
+function scheduleRemoteSettingsSync() {
+  remoteSettingsRevision += 1;
+  if (remoteSettingsTimer !== null) window.clearTimeout(remoteSettingsTimer);
+  remoteSettingsTimer = window.setTimeout(() => {
+    remoteSettingsTimer = null;
+    syncRemoteSettings();
+  }, 400);
+}
+
+if (!remoteControlMode && !isAndroidWebViewBridge()) {
+  for (const id of ['pumpTimelineForm', 'chemistryModelForm']) {
+    $(id)?.addEventListener('input', scheduleRemoteSettingsSync);
+    $(id)?.addEventListener('change', scheduleRemoteSettingsSync);
+  }
+  scheduleRemoteSettingsSync();
+  // Rechecks server state so reconnect/server restart repairs the shared config.
+  window.setInterval(syncRemoteSettings, 2000);
+}

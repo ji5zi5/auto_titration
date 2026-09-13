@@ -8,6 +8,11 @@ from typing import Mapping
 
 import numpy as np
 
+try:  # Camera deployments already depend on OpenCV; import before recording starts.
+    import cv2 as _cv2  # type: ignore
+except ImportError:  # pragma: no cover - exercised only in dependency-free installs.
+    _cv2 = None
+
 
 @dataclass(frozen=True)
 class Roi:
@@ -34,6 +39,17 @@ class Roi:
 
 def rgb_to_hsv(rgb: np.ndarray) -> np.ndarray:
     """Convert RGB uint8/float image to HSV with H degrees and S/V in 0..1."""
+
+    # OpenCV performs the same RGB->HSV transform in compiled code and is
+    # already required by the camera collector.  Returning float64 keeps the
+    # downstream mean/rounding behavior stable.  The NumPy implementation below
+    # remains the dependency-free fallback used in minimal test environments.
+    try:
+        normalized = np.ascontiguousarray(np.asarray(rgb), dtype=np.float32) / np.float32(255.0)
+        if _cv2 is not None and normalized.ndim == 3 and normalized.shape[-1] == 3 and normalized.size:
+            return _cv2.cvtColor(normalized, _cv2.COLOR_RGB2HSV).astype(np.float64)
+    except (AttributeError, TypeError, ValueError):
+        pass
 
     arr = rgb.astype(np.float64) / 255.0
     r = arr[..., 0]
@@ -72,8 +88,8 @@ class ColorFeatureExtractor:
         previous: Mapping[str, float] | None = None,
     ) -> dict[str, float]:
         cropped = roi.crop(frame_rgb)
-        rgb_mean = cropped.astype(np.float64).mean(axis=(0, 1))
-        hsv_mean = rgb_to_hsv(cropped).mean(axis=(0, 1))
+        rgb_mean = np.mean(cropped, axis=(0, 1), dtype=np.float64)
+        hsv_mean = np.mean(rgb_to_hsv(cropped), axis=(0, 1), dtype=np.float64)
 
         features = {
             "R_mean": round(float(rgb_mean[0]), 6),

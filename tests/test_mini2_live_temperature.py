@@ -58,6 +58,8 @@ class Mini2LiveTemperatureTests(unittest.TestCase):
         self.assertEqual(parts.raw_matrix.shape, MINI2_MATRIX_SHAPE)
         self.assertEqual(len(parts.addline_tag1), 1024)
         self.assertEqual(parts.addline_tag1, full[MINI2_IR_HEIGHT : MINI2_IR_HEIGHT + 2, :].tobytes())
+        self.assertTrue(np.shares_memory(parts.raw_matrix, parts.full_frame_u16))
+        self.assertFalse(parts.raw_matrix.flags.writeable)
 
     def test_affine_converter_builds_celsius_matrix_and_features_without_serializing_array(self):
         raw = extract_mini2_raw_matrix(self.make_raw_bytes(5000))

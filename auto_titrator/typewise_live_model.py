@@ -19,6 +19,74 @@ import numpy as np
 
 PREDICTION_SOURCE = "typewise_frame_zone_classifier"
 
+_FORBIDDEN_FEATURE_EXACT = {
+    "actual_ml",
+    "delta_ml",
+    "distance_to_equivalence_ml",
+    "equivalence_window_label",
+    "sample_concentration_m",
+    "status_label",
+    "theoretical_equivalence_volume_ml",
+    "zone_label",
+}
+_FORBIDDEN_FEATURE_PARTS = (
+    "actual_equivalence",
+    "endpoint",
+    "final_run",
+    "known_sample",
+    "sample_concentration",
+    "sample_molarity",
+    "distance_to_endpoint",
+    "distance_to_equivalence",
+    "equivalence",
+    "ground_truth",
+    "progress",
+    "theory",
+    "theoretical_",
+    "zone_label",
+)
+_FORBIDDEN_FEATURE_SUFFIXES = ("_fraction", "_label", "_target")
+_SENSOR_FEATURE_PREFIXES = ("visible_", "thermal_")
+
+# Hardware-control artifacts may use arbitrary measured visible/thermal
+# features, but every non-sensor input must be explicitly known to exist at
+# runtime. Keep this manifest independent from the artifact so a retrained or
+# tampered pickle cannot declare an endpoint/theory value safe by itself.
+_RUNTIME_KNOWN_NON_SENSOR_FEATURES = {
+    "abs_sync_offset_ms",
+    "activity_model",
+    "chemistry_model",
+    "commanded_volume_ml",
+    "confirmed_injected_volume_ml",
+    "constants_candidate_count",
+    "constants_confirmation_status",
+    "constants_lookup_ambiguous",
+    "indicator",
+    "indicator_transition_high_ph",
+    "indicator_transition_low_ph",
+    "injected_volume_ml",
+    "preview_visible_latency_ms",
+    "processing_latency_ms",
+    "pump_run_rate_ml_per_s",
+    "roi_source",
+    "roi_state",
+    "sample_name",
+    "sample_volume_ml",
+    "source_quality",
+    "sync_offset_ms",
+    "sync_quality",
+    "titrant_concentration_m",
+    "titrant_name",
+    "titrant_valence",
+    "titration_is_strong_acid_strong_base",
+    "titration_is_strong_acid_weak_base",
+    "titration_is_weak_acid_strong_base",
+    "titration_is_weak_acid_weak_base",
+    "titration_type",
+    "training_quality_score",
+    "valid_for_training",
+}
+
 
 def _safe_float(value: Any) -> float | None:
     if value in (None, ""):
@@ -30,6 +98,43 @@ def _safe_float(value: Any) -> float | None:
     if not math.isfinite(number):
         return None
     return number
+
+
+def forbidden_hardware_control_features(feature_columns: Sequence[str]) -> list[str]:
+    """Return artifact inputs not approved for live hardware control."""
+
+    blocked: list[str] = []
+    for column in feature_columns:
+        name = str(column).strip().lower()
+        has_forbidden_alias = (
+            name in _FORBIDDEN_FEATURE_EXACT
+            or any(part in name for part in _FORBIDDEN_FEATURE_PARTS)
+            or any(name.endswith(suffix) for suffix in _FORBIDDEN_FEATURE_SUFFIXES)
+        )
+        is_sensor = name.startswith(_SENSOR_FEATURE_PREFIXES)
+        if has_forbidden_alias or (
+            not is_sensor and name not in _RUNTIME_KNOWN_NON_SENSOR_FEATURES
+        ):
+            blocked.append(str(column))
+    return blocked
+
+
+def validate_hardware_control_model(model: Mapping[str, Any]) -> None:
+    """Reject an artifact that is unsafe to use as an automatic-stop input."""
+
+    feature_columns = model.get("feature_columns")
+    if not isinstance(feature_columns, list) or not feature_columns:
+        raise ValueError("hardware-control typewise model has no feature_columns")
+    if not isinstance(model.get("models"), Mapping):
+        raise ValueError("hardware-control typewise model has no models mapping")
+    blocked = forbidden_hardware_control_features(feature_columns)
+    if blocked:
+        raise ValueError(f"forbidden hardware-control model feature(s): {', '.join(blocked)}")
+    sensor_columns = [
+        str(column) for column in feature_columns if str(column).lower().startswith(_SENSOR_FEATURE_PREFIXES)
+    ]
+    if not sensor_columns:
+        raise ValueError("hardware-control typewise model requires at least one sensor feature")
 
 
 def load_typewise_model(path: str | Path | None) -> dict[str, Any] | None:
@@ -46,6 +151,11 @@ def load_typewise_model(path: str | Path | None) -> dict[str, Any] | None:
         raise ValueError(f"unsupported typewise live model artifact: {model_path}")
     if not isinstance(model.get("models"), dict) or not isinstance(model.get("feature_columns"), list):
         raise ValueError(f"invalid typewise live model artifact: {model_path}")
+    blocked = forbidden_hardware_control_features(model["feature_columns"])
+    if blocked:
+        raise ValueError(
+            f"forbidden typewise live model feature(s) in {model_path}: {', '.join(blocked)}"
+        )
     return model
 
 
@@ -57,6 +167,54 @@ def feature_dict_from_row(row: Mapping[str, Any], feature_columns: Sequence[str]
         else:
             features[column] = _safe_float(row.get(column)) or 0.0
     return features
+
+
+def _hardware_control_feature_dict_from_row(
+    row: Mapping[str, Any],
+    feature_columns: Sequence[str],
+    categorical_columns: set[str],
+    *,
+    row_index: int,
+) -> dict[str, float | str]:
+    features: dict[str, float | str] = {}
+    for column in feature_columns:
+        is_sensor = str(column).lower().startswith(_SENSOR_FEATURE_PREFIXES)
+        if is_sensor:
+            number = _safe_float(row.get(column))
+            if number is None:
+                raise ValueError(
+                    f"missing or non-finite required sensor feature {column!r} in row {row_index}"
+                )
+            features[column] = number
+            continue
+        if column in categorical_columns:
+            # Optional run metadata was trained with an empty-string category.
+            # Endpoint truth leakage is rejected by the artifact schema above;
+            # only live sensor values must fail closed when absent.
+            features[column] = str(row.get(column) or "").strip()
+            continue
+        number = _safe_float(row.get(column))
+        features[column] = 0.0 if number is None else number
+    return features
+
+
+def _model_entry(
+    model: Mapping[str, Any],
+    titration_type: str,
+    *,
+    strict_hardware_control: bool,
+) -> tuple[str, Mapping[str, Any]]:
+    raw_type = str(titration_type or "").strip()
+    if strict_hardware_control and not raw_type:
+        raise ValueError("titration_type is required for hardware-control scoring")
+    type_key = raw_type or "strong_acid_strong_base"
+    models = model.get("models") or {}
+    entry = models.get(type_key)
+    if entry is None and not strict_hardware_control:
+        entry = models.get("default")
+    if not isinstance(entry, Mapping):
+        raise ValueError(f"no typewise model for titration_type={type_key!r}")
+    return type_key, entry
 
 
 def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
@@ -151,35 +309,100 @@ def _positive_scores(estimator: Any, features: Sequence[Mapping[str, Any]]) -> n
     return 1.0 / (1.0 + np.exp(-raw))
 
 
-def predict_typewise_equivalence(model: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], titration_type: str) -> dict[str, Any]:
-    """Predict one equivalence volume from a finished live CSV row sequence."""
+def score_typewise_rows(
+    model: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    titration_type: str,
+    *,
+    strict_hardware_control: bool = False,
+) -> dict[str, Any]:
+    """Return causal per-row scores, optionally enforcing auto-stop safety."""
 
-    type_key = str(titration_type or "").strip() or "strong_acid_strong_base"
-    models = model.get("models") or {}
-    entry = models.get(type_key) or models.get("default")
-    if not isinstance(entry, Mapping):
-        raise ValueError(f"no typewise model for titration_type={type_key!r}")
-
-    feature_columns = list(model.get("feature_columns") or [])
-    categorical_columns = set(model.get("categorical_columns") or [])
+    if strict_hardware_control:
+        validate_hardware_control_model(model)
+    type_key, entry = _model_entry(
+        model, titration_type, strict_hardware_control=strict_hardware_control
+    )
     estimator = entry.get("estimator")
     if estimator is None:
         raise ValueError(f"typewise model entry has no estimator: {type_key}")
+    if not rows:
+        raise ValueError("at least one live row is required")
+    feature_columns = list(model.get("feature_columns") or [])
+    categorical_columns = set(model.get("categorical_columns") or [])
+    if strict_hardware_control:
+        features = [
+            _hardware_control_feature_dict_from_row(
+                row, feature_columns, categorical_columns, row_index=index
+            )
+            for index, row in enumerate(rows)
+        ]
+    else:
+        features = [feature_dict_from_row(row, feature_columns, categorical_columns) for row in rows]
+    scores = _positive_scores(estimator, features)
+    if len(scores) != len(rows) or (strict_hardware_control and not np.all(np.isfinite(scores))):
+        raise ValueError("typewise estimator returned invalid hardware-control scores")
+    return {
+        "scores": [float(np.clip(score, 0.0, 1.0)) for score in scores],
+        "titration_type": type_key,
+        "model_key": str(entry.get("selected_method_key") or ""),
+        "model_name": str(entry.get("model_name") or ""),
+        "window_ml": entry.get("window_ml"),
+    }
 
-    feature_rows: list[dict[str, float | str]] = []
+
+def score_typewise_rows_for_hardware_control(
+    model: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    titration_type: str,
+) -> dict[str, Any]:
+    """Fail-closed scoring API intended for automatic pump-stop callers."""
+
+    return score_typewise_rows(
+        model,
+        rows,
+        titration_type,
+        strict_hardware_control=True,
+    )
+
+
+def predict_typewise_equivalence(
+    model: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    titration_type: str,
+    *,
+    strict_hardware_control: bool = False,
+) -> dict[str, Any]:
+    """Predict one equivalence volume from a finished live CSV row sequence."""
+
+    if strict_hardware_control:
+        validate_hardware_control_model(model)
+    type_key, entry = _model_entry(
+        model, titration_type, strict_hardware_control=strict_hardware_control
+    )
+
+    score_rows: list[Mapping[str, Any]] = []
     current_volumes: list[float] = []
     original_indices: list[int] = []
     for index, row in enumerate(rows):
         volume = _safe_float(row.get("injected_volume_ml"))
         if volume is None:
             continue
-        feature_rows.append(feature_dict_from_row(row, feature_columns, categorical_columns))
+        score_rows.append(row)
         current_volumes.append(volume)
         original_indices.append(index)
-    if not feature_rows:
+    if not score_rows:
         raise ValueError("no rows with injected_volume_ml for typewise live prediction")
 
-    scores = _positive_scores(estimator, feature_rows)
+    scores = np.asarray(
+        score_typewise_rows(
+            model,
+            score_rows,
+            type_key,
+            strict_hardware_control=strict_hardware_control,
+        )["scores"],
+        dtype=float,
+    )
     current = np.asarray(current_volumes, dtype=float)
     aggregate_mode = str(entry.get("aggregate_mode") or "top10")
     predicted, local_indices = aggregate_classifier_scores(current, scores, aggregate_mode)

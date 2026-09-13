@@ -1,0 +1,103 @@
+{
+  "status": "pass",
+  "decision": "RETAIN_INCUMBENT",
+  "artifact": {
+    "path": "data/labeled/type-conditioned-sensor-endpoint-ranker.pkl",
+    "sha256": "378a19b3aead649bfe783b42518792001c3de33aebcb51bcecd47d60067e3f90",
+    "deployment_strategy": "median_of_12_leave_one_run_out_rankers"
+  },
+  "metrics": {
+    "selected_posthoc_development_mape_percent": 0.295,
+    "native_replay_mape_percent_not_generalization": 1.1056003472222218,
+    "dense_25fps_simulation_mape_percent_not_generalization": 1.1922052083333323,
+    "dense_mean_abs_drift_ml": 0.25214383333333235,
+    "dense_max_abs_drift_ml": 1.0426479999999998,
+    "strict_nested_partial_pooling_mape_percent": 20.353947638888886,
+    "july_selected_repeatability_cv_percent_not_accuracy": 0.9611503693940324,
+    "latency_seconds": {
+      "samples": [
+        0.8743983709996428,
+        0.8894309440001962,
+        0.9118825840000682,
+        0.9037148880001951,
+        0.9011581619997742
+      ],
+      "p95_conservative_max_of_5": 0.9118825840000682
+    }
+  },
+  "dropout_abstentions": {
+    "visible": 12,
+    "thermal": 12,
+    "flat": 12
+  },
+  "july_rows": [
+    {
+      "source_file": "auto-titration-live-20260726-150424-session-5.csv",
+      "endpoint_ml": 18.495477,
+      "concentration_M": 0.09247738500000001
+    },
+    {
+      "source_file": "auto-titration-live-20260726-151233-session-7.csv",
+      "endpoint_ml": 18.822741,
+      "concentration_M": 0.094113705
+    },
+    {
+      "source_file": "auto-titration-live-20260726-151632-session-8.csv",
+      "endpoint_ml": 18.787986,
+      "concentration_M": 0.09393993
+    }
+  ],
+  "attempted_research": {
+    "strategy_study": "data/labeled/type-conditioned-sensor-endpoint-strategy-research.json",
+    "robustness_study": "data/labeled/type-conditioned-sensor-endpoint-robustness.json",
+    "partial_pooling_study": "data/labeled/type-conditioned-partial-pooling-research.json",
+    "july_inventory": "data/labeled/july-endpoint-run-inventory.json",
+    "fixed_modality_study": "data/ml/type_conditioned_sequence_modality_ablation/comparison.json",
+    "nested_modality_study": "data/ml/latest_sequence_modality_nested_comparison/comparison.json"
+  },
+  "checks": {
+    "artifact_schema": true,
+    "four_routes": true,
+    "incumbent_fold_median_strategy_retained": true,
+    "twelve_dispersion_folds_each": true,
+    "strategy_study_keeps_july_out_of_selection": true,
+    "incumbent_replay_baseline_not_regressed": true,
+    "partial_pooling_challenger_rejected": true,
+    "metadata_invariance": true,
+    "visible_dropout_abstains": true,
+    "thermal_dropout_abstains": true,
+    "flat_signal_abstains": true,
+    "dense_mean_drift_bounded": true,
+    "dense_max_drift_bounded": true,
+    "dense_prediction_uses_volume_resampling": true,
+    "exact_windows_buffer_path": true,
+    "july_inventory_all_runs": true,
+    "july_inventory_reproducible": true,
+    "july_not_accuracy_gate": true,
+    "modality_fixed_comparison_present": true,
+    "modality_nested_comparison_present": true,
+    "unvalidated_unimodal_routes_not_promoted": true,
+    "latency_p95_under_2s": true,
+    "artifact_reexport_prediction_deterministic": true,
+    "rollback_artifact_present": true,
+    "required_paths_tracked": true,
+    "tests_pass": true
+  },
+  "tests": {
+    "command": [
+      "/home/jio/code/auto_titration/.venv/bin/python3",
+      "-m",
+      "unittest",
+      "tests.test_type_conditioned_sensor_live_model",
+      "tests.test_typewise_live_model",
+      "tests.test_windows_live_collect",
+      "tests.test_website_assets",
+      "tests.test_dashboard_server"
+    ],
+    "returncode": 0,
+    "passed": true,
+    "count": 222,
+    "failure_tail": ""
+  },
+  "claim_boundary": "No accuracy challenger was promoted. The incumbent point strategy is retained with deterministic Windows 25 fps and sensor-quality hardening only. No independent wet-sample accuracy is claimed."
+}

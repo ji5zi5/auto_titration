@@ -1,0 +1,321 @@
+[
+  {
+    "source": "docs/WINDOWS_CODEX_HANDOFF.md",
+    "sha256": "ec5015896cc2e47458309ccb770e6a6666bf889e6794edae74883463c076c4df",
+    "chars": 16677,
+    "pages": [
+      "detail-windows-handoff-01",
+      "detail-windows-handoff-01-part-2",
+      "detail-windows-handoff-01-part-3",
+      "detail-windows-handoff-02",
+      "detail-windows-handoff-02-part-2",
+      "detail-windows-handoff-02-part-3",
+      "detail-windows-handoff-03"
+    ]
+  },
+  {
+    "source": "docs/PROJECT_STATUS_AND_REMAINING_WORK.md",
+    "sha256": "4cc0942cd02e1b1c360221c3c9a8c800d1cef3463d412e346a62c9210dfd67b4",
+    "chars": 25745,
+    "pages": [
+      "detail-project-status-01",
+      "detail-project-status-01-part-2",
+      "detail-project-status-01-part-3",
+      "detail-project-status-02",
+      "detail-project-status-02-part-2",
+      "detail-project-status-02-part-3",
+      "detail-project-status-03",
+      "detail-project-status-03-part-2",
+      "detail-project-status-03-part-3",
+      "detail-project-status-04"
+    ]
+  },
+  {
+    "source": "docs/WINDOWS_PREDICTION_READINESS.md",
+    "sha256": "296a0c910c8c2e19e79af78edd620385a916193aedebfe426981126122ece2fc",
+    "chars": 4485,
+    "pages": [
+      "detail-prediction-readiness-01"
+    ]
+  },
+  {
+    "source": "docs/site_fix_validation/README.md",
+    "sha256": "6d16245c9237b2468d2b4dd60781337627fb92cad4144bbfae73bc4291544ad1",
+    "chars": 2091,
+    "pages": [
+      "detail-site-validation-01"
+    ]
+  },
+  {
+    "source": "docs/LIVE_PERFORMANCE_VALIDATION.md",
+    "sha256": "0f0f2091ad323af29807fbfdb79a93644e4ddf2953f053fe3826f1b5dbf83d8c",
+    "chars": 1333,
+    "pages": [
+      "detail-performance-01"
+    ]
+  },
+  {
+    "source": "docs/AUTO_STOP_VALIDATION.md",
+    "sha256": "eb519a51ceb8e6f75dca5a9281f36ca61645984b51d2d79376a7920173956c42",
+    "chars": 9104,
+    "pages": [
+      "detail-auto-stop-01",
+      "detail-auto-stop-01-part-2",
+      "detail-auto-stop-01-part-3",
+      "detail-auto-stop-02"
+    ]
+  },
+  {
+    "source": "docs/STAGED_DOSING.md",
+    "sha256": "ef1a949bf6e2b095d2c0ec046de9177ac6de5cecb26021d893a749ee2c47384a",
+    "chars": 5672,
+    "pages": [
+      "detail-staged-dosing-01"
+    ]
+  },
+  {
+    "source": "mobile/android/README.md",
+    "sha256": "8aab083ff45b4b8c4f3ebc6ece515f14fd0d8c43d5dab76b53faa49055998904",
+    "chars": 4891,
+    "pages": [
+      "detail-android-runtime-01"
+    ]
+  },
+  {
+    "source": "docs/hikmicro_apk_androguard_summary.txt",
+    "sha256": "0d05bcc67eae9860f274ba3f245d289a7573d783867bdb59b008e2b2e5188843",
+    "chars": 3266,
+    "pages": [
+      "detail-android-reverse-engineering-01"
+    ]
+  },
+  {
+    "source": "docs/mobile_companion_runbook.md",
+    "sha256": "12d1034887043bebb84750214ecf77d046b454d95a399c601149ca30f331192b",
+    "chars": 1674,
+    "pages": [
+      "detail-mobile-companion-01"
+    ]
+  },
+  {
+    "source": "docs/ml_curve_equivalence_summary.md",
+    "sha256": "c4181780c4eb7428f31edae0e42bebe3033c64eb739daacf54d8917f6645fdd3",
+    "chars": 6514,
+    "pages": [
+      "detail-ml-curve-01",
+      "detail-ml-curve-01-part-2",
+      "detail-ml-curve-01-part-3"
+    ]
+  },
+  {
+    "source": "docs/ml_equivalence_result_detailed_summary.md",
+    "sha256": "cab28220e0c917ead2a5203e4d0a65bba6f68a92075e62bec093fa8fceefb153",
+    "chars": 8358,
+    "pages": [
+      "detail-ml-detailed-01",
+      "detail-ml-detailed-01-part-2",
+      "detail-ml-detailed-01-part-3",
+      "detail-ml-detailed-02"
+    ]
+  },
+  {
+    "source": "docs/ml_12_run_full_results.md",
+    "sha256": "5fb413537eb41725b3fed2d9309e191f09d11ebf57aa2a11373badbf58626ab6",
+    "chars": 2874,
+    "pages": [
+      "detail-ml-12-runs-01"
+    ]
+  },
+  {
+    "source": "docs/ml_model_zoo_equivalence_summary.md",
+    "sha256": "4704c3421ee5b7aa79d97b169747579af2abfdf15333cf76405b4252af83f772",
+    "chars": 2845,
+    "pages": [
+      "detail-ml-zoo-01"
+    ]
+  },
+  {
+    "source": "docs/ml_model_zoo_with_progress_summary.md",
+    "sha256": "2ccb8539926eb81fc44d33a75b1d83a1e24666dd950d1acbd8445cc120aa1f97",
+    "chars": 1407,
+    "pages": [
+      "detail-ml-progress-01"
+    ]
+  },
+  {
+    "source": "docs/ml_current_volume_no_progress.md",
+    "sha256": "765bff9003dc89e4c5105a288ad467d4371cf19eca38c04bad49cd676680f6f5",
+    "chars": 1021,
+    "pages": [
+      "detail-ml-current-volume-01"
+    ]
+  },
+  {
+    "source": "docs/ml_posthoc_typewise_model_selection.md",
+    "sha256": "f5af611cae889d19b1f051ef27b7755248b860f6e632052c41b05e452fafe644",
+    "chars": 3663,
+    "pages": [
+      "detail-ml-posthoc-01"
+    ]
+  },
+  {
+    "source": "docs/ml_injection_ablation_search.md",
+    "sha256": "b57e5cf0fb80421d572c57dac949c379ed2b59912a8732d84784a3b7f7f2be1d",
+    "chars": 3377,
+    "pages": [
+      "detail-ml-injection-01"
+    ]
+  },
+  {
+    "source": "docs/ml_protocol_calibrated_mape_under_5.md",
+    "sha256": "2a3163f193e9abc35d836d4fa5c5661eae177bac92d52d491d14545dad6e38db",
+    "chars": 2509,
+    "pages": [
+      "detail-ml-protocol-01"
+    ]
+  },
+  {
+    "source": "docs/endpoint_ml_maximize_report.md",
+    "sha256": "839e9e7e5c2b4a52c5ea724f779714edad74daf4be0bbbe7af96836e7dc7ccc8",
+    "chars": 2001,
+    "pages": [
+      "detail-ml-maximize-01"
+    ]
+  },
+  {
+    "source": "docs/boosting_endpoint_comparison_20260903.md",
+    "sha256": "54f10664fa38261ea76d5f6ab5b248b74dce4c33d5f15584339e241ec71fd6b7",
+    "chars": 3195,
+    "pages": [
+      "detail-ml-boosting-september-01"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/model_search_audit/README.md",
+    "sha256": "0cfefe4348320e101673448f4ca1903bdac9ebfd3830a4bd9f27119ce57e554a",
+    "chars": 2132,
+    "pages": [
+      "detail-ml-selection-audit-01"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/적정종류_조건부_모델_추가결과.md",
+    "sha256": "6a28bb39fdd9e192ae3f940e9d37ef0dcc14ee0199dbc4a999a178bf4f6e3ab5",
+    "chars": 3254,
+    "pages": [
+      "detail-ml-final-candidates-01"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/4차컨설팅_반영요약.md",
+    "sha256": "1d01224cc018b23108c0f418cb916c52dda7be4ff5d51bdd5ccfb13d7331857c",
+    "chars": 3911,
+    "pages": [
+      "detail-consultation-four-01"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/보고서_교체문안.md",
+    "sha256": "c1fcf5bd302f9247f0ad7de5972dddd55f3244e5f44fbb62d0fdb0c287728ebf",
+    "chars": 6778,
+    "pages": [
+      "detail-report-replacement-01",
+      "detail-report-replacement-01-part-2",
+      "detail-report-replacement-01-part-3"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/표_및_그림_캡션.md",
+    "sha256": "68b3c76f854119e48e0e4a9f6fe45b70e64f07d03c831bbc9d91307047d13390",
+    "chars": 6019,
+    "pages": [
+      "detail-report-captions-01",
+      "detail-report-captions-01-part-2"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/participant_indicator_correction_record.md",
+    "sha256": "58fc89eb0f4499bda837a6e629baea64d4837bf4cad7166768ea32c526175a69",
+    "chars": 436,
+    "pages": [
+      "detail-indicator-correction-01"
+    ]
+  },
+  {
+    "source": "docs/report_evidence_no_new_wet/pulse_replay_README.md",
+    "sha256": "1a02ee7191c38260c3dfcb6be921c0538b411aa2fa0b269e980000c87ffdaf99",
+    "chars": 1629,
+    "pages": [
+      "detail-pulse-replay-01"
+    ]
+  },
+  {
+    "source": "docs/science_fair_report_national_formatted.md",
+    "sha256": "b0b060439d43176f715fea12ad92286ab4c6f1c32088b042ab7d499e970ab706",
+    "chars": 34331,
+    "pages": [
+      "detail-report-main-01",
+      "detail-report-main-01-part-2",
+      "detail-report-main-01-part-3",
+      "detail-report-main-02",
+      "detail-report-main-02-part-2",
+      "detail-report-main-02-part-3",
+      "detail-report-main-03",
+      "detail-report-main-03-part-2",
+      "detail-report-main-03-part-3",
+      "detail-report-main-04",
+      "detail-report-main-04-part-2",
+      "detail-report-main-04-part-3",
+      "detail-report-main-05",
+      "detail-report-main-05-part-2",
+      "detail-report-main-05-part-3"
+    ]
+  },
+  {
+    "source": "docs/science_fair_report_national_submission_notes.md",
+    "sha256": "59e23f9d508f2ceecbf88f05d5855139b3c0ef182ffba90675d70cb8b28bb62a",
+    "chars": 4553,
+    "pages": [
+      "detail-report-submission-01"
+    ]
+  },
+  {
+    "source": "docs/report_laptop_app_development_draft.md",
+    "sha256": "d4652b3eab72403411852a6d6ce6505738ef5951268656a925a79810de5522b5",
+    "chars": 16267,
+    "pages": [
+      "detail-app-development-01",
+      "detail-app-development-01-part-2",
+      "detail-app-development-01-part-3",
+      "detail-app-development-02",
+      "detail-app-development-02-part-2",
+      "detail-app-development-02-part-3",
+      "detail-app-development-03"
+    ]
+  },
+  {
+    "source": "docs/poster_visuals/README.txt",
+    "sha256": "5459941fe74dd707a547b07054c0ad1011e8714e774137017cb63ec4d96c60a3",
+    "chars": 1822,
+    "pages": [
+      "detail-poster-figures-01"
+    ]
+  },
+  {
+    "source": "docs/report_images_organized/README.md",
+    "sha256": "d633512dbdcc797f3d6d7e6b3646292fec8c68fc3931ff84e26329efefedf916",
+    "chars": 6289,
+    "pages": [
+      "detail-report-image-map-01",
+      "detail-report-image-map-01-part-2"
+    ]
+  },
+  {
+    "source": "docs/report_revision_figures/README.md",
+    "sha256": "ddc4509580ddd5212b750071cd473d5db312bd7cf123b82ea3186da860d70e03",
+    "chars": 1743,
+    "pages": [
+      "detail-revision-figures-01"
+    ]
+  }
+]

@@ -117,7 +117,7 @@ Expected: All terms appear.
 Replace the current pump paragraph with text that includes exact commands:
 
 ```markdown
-시린지 펌프는 아두이노와 직접 연결하였다. 아두이노는 STEP, DIR, ENABLE 핀으로 스테퍼 모터 드라이버를 제어하고, 노트북 앱은 USB 시리얼 통신으로 아두이노에 명령을 보낸다. 현재 펌프 펌웨어는 `a`, `b`, `c` 명령을 사용한다. `a`는 역방향 회전, `b`는 정방향 회전, `c`는 정지 명령이다. 노트북 앱의 “녹화 시작”은 `b` 명령과 연결되고, “녹화 종료”는 `c` 명령과 연결되며, 별도 버튼으로 `a` 명령을 보내 시린지를 뒤로 당길 수 있다.
+시린지 펌프는 아두이노와 직접 연결하였다. 아두이노는 STEP, DIR, ENABLE 핀으로 스테퍼 모터 드라이버를 제어하고, 노트북 앱은 USB 시리얼 통신으로 아두이노에 명령을 보낸다. 현재 펌프 펌웨어는 `a`, `b`, `c` 명령을 사용한다. `a`는 되감기 방향, `b`는 원래 주입 방향, `c`는 정지 명령이다. 노트북 앱의 “녹화 시작”은 `b` 명령과 연결되고, “녹화 종료”는 `c` 명령과 연결되며, 별도 버튼으로 `a` 명령을 보내 시린지를 뒤로 당길 수 있다.
 ```
 
 - [ ] **Step 2: Expand Mini2 raw and Celsius paragraphs**

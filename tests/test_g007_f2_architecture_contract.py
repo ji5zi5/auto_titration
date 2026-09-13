@@ -46,37 +46,100 @@ class G007F2CallbackSchedulerClosureTests(unittest.TestCase):
         callback = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII$d.java").read_text(encoding="utf-8")
         self.assertNotIn("98304", callback)
         self.assertNotIn("221184", callback)
-        self.assertIn("Z2.a.a.p().e().contains(size)", callback)
+        self.assertIn("callbackEntry.acceptsPacketSize(size)", callback)
+        self.assertIn("callbackEntry.isCoding12()", callback)
+        self.assertNotIn("Z2.a.a.p()", callback)
         for size in ["41160", "183496", "400584"]:
             self.assertIn(size, callback)
 
     def test_preview_scheduler_and_processor_callback_installation_match_g007_dex_shape(self):
         preview = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
-        self.assertIn("scheduleAtFixedRate(new K2.e(this), 0L, 20L", preview)
         self.assertIn("Executors.newSingleThreadScheduledExecutor()", preview)
+        self.assertIn("final long schedulerEpoch = processingEpoch", preview)
+        self.assertIn("scheduleWithFixedDelay(", preview)
+        self.assertIn("if (isProcessingEpochCurrent(schedulerEpoch)) new K2.e(this).run()", preview)
+        self.assertIn("0L,\n                20L,\n                TimeUnit.MILLISECONDS", preview)
         callback_install = preview[preview.index("processor.j("):preview.index("        if (processor instanceof g3.d)")]
         expected_callback_order = ["X", "new K2.f(this)", "c0", "h0", "new K2.g(this)"]
         positions = [callback_install.index(token) for token in expected_callback_order]
         self.assertEqual(sorted(positions), positions)
-        self.assertIn("((g3.d) processor).o(new K2.h(this))", preview)
+        self.assertIn(
+            "((g3.d) processor).o(new K2.h(this, frame.processingEpoch))",
+            preview,
+        )
+        self.assertIn(
+            "if (!isProcessingEpochCurrentLocked(frame.processingEpoch)) return",
+            preview,
+        )
         self.assertIn("Arrays.hashCode", preview)
         self.assertIn("u0 % 100", preview)
 
     def test_fstream_callback_matches_official_timer_copy_count_and_size_publish_order(self):
         callback = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII$d.java").read_text(encoding="utf-8")
         expected_order = [
-            "PreviewManagerII.t(b, PreviewManagerII.i(b) + 1L)",
-            "if (b.h0() == 0L)",
             "int size = frameInfo.dwBufSize",
+            "if (frameInfo.pBuf == null || size < 0 || size > frameInfo.pBuf.length)",
+            "PreviewManagerII.beginCallback(b, c, this, userId, frameInfo)",
+            "if (callbackEntry == null) return",
             "byte[] copied = Arrays.copyOf(frameInfo.pBuf, size)",
             "Z2.g.a.A0(size)",
-            "if (Z2.a.a.p().e().contains(size))",
+            "PreviewManagerII.frameEnvelope(",
+            "callbackEntry.frameNumber",
+            "callbackEntry.processingEpoch",
+            "if (callbackEntry.acceptsPacketSize(size))",
+            "b.recordPacketSizeNotAllowed(",
         ]
         positions = [callback.index(token) for token in expected_order]
         self.assertEqual(sorted(positions), positions)
+        self.assertIn("PreviewManagerII.v(b, envelope)", callback)
+        self.assertIn("PreviewManagerII.u(b, envelope)", callback)
         self.assertNotIn("coerce", callback)
-        self.assertIn("> 40000L", callback)
-        self.assertIn("b.P0(0L)", callback)
+        invalid_packet_order = [
+            "b.recordPacketSizeNotAllowed(",
+            "b.consumeInvalidPacketCallbacks(",
+            "callbackEntry.processingEpoch,\n                            this",
+            "if (callbacks == null) return",
+            "if (callbacks.diagnosticCallback != null",
+            "callbacks.callbackIdentity))",
+            "callbacks.diagnosticCallback.accept(size, callbacks.elapsedMs)",
+            "if (callbacks.legacyCallback != null",
+            "callbacks.callbackIdentity))",
+            "callbacks.legacyCallback.invoke()",
+        ]
+        positions = []
+        cursor = 0
+        for token in invalid_packet_order:
+            cursor = callback.index(token, cursor)
+            positions.append(cursor)
+            cursor += len(token)
+        self.assertEqual(sorted(positions), positions)
+        self.assertNotIn("invalidPacketCallbacksForEpoch", callback)
+        self.assertNotIn("resetInvalidPacketTimeoutForEpoch", callback)
+        self.assertIn("catch (RuntimeException | LinkageError error)", callback)
+
+        preview = (MAIN_ROOT / "com/hik/viewer/manager/PreviewManagerII.java").read_text(encoding="utf-8")
+        consume = preview[
+            preview.index("    InvalidPacketCallbacks consumeInvalidPacketCallbacks("):
+            preview.index("    boolean isCallbackCurrent(", preview.index("    InvalidPacketCallbacks consumeInvalidPacketCallbacks("))
+        ]
+        consume_order = [
+            "synchronized (lifecycleLock)",
+            "!isProcessingEpochCurrentLocked(expectedEpoch)",
+            "callbackIdentity != C0",
+            "if ((now - startMs) <= 40000L || M() != 0) return null",
+            "firstCallbackAtMs = 0L",
+            "return new InvalidPacketCallbacks(",
+            "callbackIdentity",
+            "invalidPacketSizeTimeoutCallback",
+            "a0",
+        ]
+        positions = []
+        cursor = 0
+        for token in consume_order:
+            cursor = consume.index(token, cursor)
+            positions.append(cursor)
+            cursor += len(token)
+        self.assertEqual(sorted(positions), positions)
 
     def test_g3a_callback_slots_are_not_noop_and_are_cleared_by_k(self):
         g3a = (MAIN_ROOT / "g3/a.java").read_text(encoding="utf-8")

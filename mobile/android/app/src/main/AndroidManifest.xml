@@ -14,7 +14,11 @@
 
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@drawable/ic_launcher"
         android:label="Auto Titration Mobile"
+        android:roundIcon="@drawable/ic_launcher"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"

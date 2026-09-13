@@ -127,10 +127,15 @@ class FloatTextureView constructor(
                 val targetGravity = gravity()
                 d(targetGravity, true)
                 e?.invoke(targetGravity)
+                performClick()
                 true
             }
             else -> super.onTouchEvent(event)
         }
+    }
+
+    override fun performClick(): Boolean {
+        return super.performClick()
     }
 
     companion object {

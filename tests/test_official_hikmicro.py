@@ -1,5 +1,7 @@
 import io
 import struct
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -47,6 +49,48 @@ class FakeMtlibRuntime:
 
     def close(self, handle):
         self.closed.append(handle)
+
+
+class FastPointFakeMtlibRuntime(FakeMtlibRuntime):
+    def __init__(self):
+        super().__init__()
+        self.fast_processed = []
+
+    def process_single_point_scaled_int(
+        self,
+        handle,
+        process_type,
+        gray,
+        emissivity_q13,
+        reflected_q13,
+        distance_q13,
+    ):
+        self.fast_processed.append(
+            (handle, process_type, gray, emissivity_q13, reflected_q13, distance_q13)
+        )
+        return 0, int(gray) * 64
+
+    def process_points(self, handle, process_type, point_bytes, count):
+        raise AssertionError("fast single-point runtime path should avoid byte-buffer processing")
+
+
+class ConcurrentFastPointFakeMtlibRuntime(FastPointFakeMtlibRuntime):
+    def __init__(self):
+        super().__init__()
+        self._active_lock = threading.Lock()
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    def process_single_point_scaled_int(self, *args):
+        with self._active_lock:
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            time.sleep(0.002)
+            return super().process_single_point_scaled_int(*args)
+        finally:
+            with self._active_lock:
+                self.active_calls -= 1
 
 
 def fake_metadata() -> Mini2OfficialMetadata:
@@ -146,6 +190,43 @@ class OfficialHikmicroTests(unittest.TestCase):
         np.testing.assert_allclose(converted, raw_values.astype(np.float64))
         processed_counts = [count for _handle, _process_type, count, _point_bytes in runtime.processed]
         self.assertEqual(processed_counts, [1, 1, 1, 1])
+
+    def test_official_converter_uses_allocation_free_single_point_runtime_when_available(self):
+        runtime = FastPointFakeMtlibRuntime()
+        metadata = fake_metadata()
+        converter = OfficialMtlibConverter(metadata=metadata, runtime=runtime, batch_size=PIXELS)
+        raw_values = np.array([[10, 12, 10], [13, 12, 14]], dtype=np.uint16)
+
+        converted = converter.convert_values_with_addline(raw_values, metadata.tag1)
+
+        np.testing.assert_allclose(converted, raw_values.astype(np.float64))
+        self.assertEqual([item[2] for item in runtime.fast_processed], [10, 12, 13, 14])
+        self.assertTrue(all(item[3] == metadata.radiometric_q13["emissivity_q13"] for item in runtime.fast_processed))
+
+    def test_official_converter_serializes_shared_dll_handle_conversions(self):
+        runtime = ConcurrentFastPointFakeMtlibRuntime()
+        metadata = fake_metadata()
+        converter = OfficialMtlibConverter(metadata=metadata, runtime=runtime)
+        barrier = threading.Barrier(3)
+        results = []
+
+        def convert(values):
+            barrier.wait()
+            results.append(converter.convert_values_with_addline(values, metadata.tag1))
+
+        threads = [
+            threading.Thread(target=convert, args=(np.array([10, 11, 12], dtype=np.uint16),)),
+            threading.Thread(target=convert, args=(np.array([20, 21, 22], dtype=np.uint16),)),
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=1.0)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(results), 2)
+        self.assertEqual(runtime.max_active_calls, 1)
 
     def test_worker_loop_returns_float64_matrix_payload(self):
         runtime = FakeMtlibRuntime()

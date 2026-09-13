@@ -12,10 +12,13 @@ function element(id) {
       disabled: false,
       innerHTML: '',
       selectedOptions: [],
+      dataset: {},
       addEventListener() {},
       closest() { return null; },
       getBoundingClientRect() { return { left: 0, top: 0, width: 320, height: 240 }; },
-      classList: { remove() {}, add() {} },
+      classList: { remove() {}, add() {}, toggle() {} },
+      setAttribute(name, value) { this[name] = value; },
+      querySelector() { return null; },
       appendChild(child) {
         this.children = this.children || [];
         this.children.push(child);
@@ -32,18 +35,31 @@ const context = {
     addEventListener() {},
     setTimeout() { return 0; },
     clearTimeout() {},
+    setInterval() { return 0; },
   },
   document: {
+    body: { dataset: {} },
     getElementById: element,
-    createElement(tag) { return { tag, value: '', textContent: '' }; },
+    querySelectorAll() { return []; },
+    createElement(tag) { return { tag, value: '', textContent: '', dataset: {} }; },
   },
   EventSource: function EventSource() {
     return { addEventListener() {}, close() {}, set onerror(_) {} };
   },
   fetch: async () => ({ ok: true, json: async () => ({ ok: true }) }),
 };
+element('thermalPreview').dataset.placeholder = 'true';
+
 vm.createContext(context);
 vm.runInContext(source, context);
+if (element('thermalPreview').dataset.placeholder !== undefined) {
+  throw new Error('expected thermal preview placeholder marker to be cleared when stream source is set');
+}
+if (!element('thermalPreview').src.endsWith('/stream/thermal.mjpg')) {
+  throw new Error(`expected thermal stream src to be set, got ${element('thermalPreview').src}`);
+}
+element('sampleConcentrationInput').value = '0.100';
+element('sampleVolumeInput').value = '25.0';
 element('standardConcentrationInput').value = '0.100';
 element('sampleSubstanceInput').value = 'acetic acid';
 element('standardSolutionNameInput').value = 'NaOH';

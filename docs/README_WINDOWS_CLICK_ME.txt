@@ -6,6 +6,8 @@
 - launchers/windows/21_open_dashboard_server.bat
 - 웹 서버와 Mini2+일반 카메라 수집기를 같이 시작합니다.
 - 브라우저 주소: http://127.0.0.1:8765/
+- 8765가 다른 프로그램에서 사용 중이면 21번 BAT가 빈 포트를 자동 선택하고 창에 실제 Local URL을 표시합니다.
+- `Directory listing for /`가 보이면 다른 정적 서버 화면입니다. 기존 브라우저 탭을 닫고 21번 창에 출력된 `Verified Auto Titration dashboard` 주소를 여세요.
 - 폰 주소: 21번 창의 LAN URL, 예: http://192.168.0.15:8765/
 - 폰과 노트북은 같은 Wi-Fi에 있어야 합니다.
 - 폰 접속이 안 되면 Windows Defender Firewall에서 Python 또는 8765 포트를 허용합니다.

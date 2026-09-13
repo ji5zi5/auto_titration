@@ -85,14 +85,16 @@ class AndroidRoiParityContractTests(unittest.TestCase):
             'com.google.ai.edge.litert:litert:2.1.5',
             "$liteRtVersion",
             "hikmicroRedistributionApproved",
-            "Release/deliverable APK blocked",
+            "PUBLIC_DELIVERABLE_BLOCKED",
+            "No Gradle boolean, including -PhikmicroRedistributionApproved=true",
         ]
         missing_gradle = [token for token in expected_gradle_tokens if token not in gradle]
         self.assertEqual([], missing_gradle, "Gradle must lock LiteRT 2.1.5 without dynamic versions")
         self.assertNotIn("com.google.ai.edge.litert:+", gradle)
         self.assertTrue(model_asset.is_file(), f"missing model asset {model_asset}")
         self.assertTrue(metadata.is_file(), f"missing model metadata doc {metadata}")
-        cached_litert = list(cache_root.glob("**/com.google.ai.edge.litert*2.1.5*")) if cache_root.exists() else []
+        # Repo-local Gradle cache stores LiteRT under group/artifact/version/hash files, not a flat name.
+        cached_litert = list((cache_root / "com.google.ai.edge.litert/litert/2.1.5").glob("*/litert-2.1.5.*")) if cache_root.exists() else []
         self.assertTrue(cached_litert, "LiteRT 2.1.5 must be present in .gradle-cache for offline Android builds")
         metadata_text = read(metadata)
         expected_metadata_tokens = [

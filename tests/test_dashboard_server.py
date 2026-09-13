@@ -68,6 +68,7 @@ class FakeLiveCollectorHandler(BaseHTTPRequestHandler):
             "/api/pump/dispense",
             "/api/pump/retract",
             "/api/pump/stop",
+            "/api/pump/reset",
         }:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
@@ -127,6 +128,12 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("Windows Defender Firewall", launcher)
         self.assertIn('--live-stream-base "http://127.0.0.1:%LIVE_STREAM_PORT%"', launcher)
         self.assertIn("LIVE_CSV", launcher)
+        self.assertIn("Get-NetTCPConnection", launcher)
+        self.assertIn("REQUESTED_PORT", launcher)
+        self.assertIn("REQUESTED_LIVE_STREAM_PORT", launcher)
+        self.assertIn("/api/health", launcher)
+        self.assertIn("auto_titration_dashboard", launcher)
+        self.assertIn("OPEN_BROWSER", launcher)
 
     def test_dashboard_launcher_starts_web_server_before_collector(self):
         launcher = Path("launchers/windows/21_open_dashboard_server.bat").read_text(encoding="utf-8")
@@ -135,12 +142,13 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("20_windows_live_collect.bat", launcher)
         self.assertIn("OUTPUT=%LIVE_CSV%", launcher)
         self.assertIn("VISIBLE_ROI_DETECTOR=yolo", launcher)
-        self.assertIn("AUTO_INSTALL_YOLO=1", launcher)
+        self.assertIn("AUTO_INSTALL_YOLO=0", launcher)
         self.assertIn("AUTO_FRAMES", launcher)
         self.assertIn("999999", launcher)
         self.assertIn("CLEAN_OLD", launcher)
         self.assertIn("Stop-Process", launcher)
-        self.assertIn("tools\\\\dashboard_server.py|tools\\\\windows_live_collect.py|20_windows_live_collect.bat", launcher)
+        self.assertIn("tools\\\\dashboard_server.py", launcher)
+        self.assertNotIn("tools\\\\windows_live_collect.py|20_windows_live_collect.bat", launcher)
         self.assertIn("$_.ProcessId -ne $PID", launcher)
         self.assertIn("Waiting for app server", launcher)
         self.assertIn("Waiting for collector stream", launcher)
@@ -169,6 +177,26 @@ class DashboardServerTests(unittest.TestCase):
             self.assertIsNone(payload["temperature_avg_c"])
             self.assertEqual(payload["sync_quality"], "waiting")
             self.assertIsNone(payload["raw_avg"])
+
+    def test_dashboard_health_identifies_the_service(self):
+        dashboard = build_server("127.0.0.1", 0)
+        thread = threading.Thread(target=dashboard.serve_forever, daemon=True)
+        thread.start()
+        try:
+            payload = json.loads(
+                urlopen(
+                    f"http://127.0.0.1:{dashboard.server_address[1]}/api/health",
+                    timeout=5,
+                ).read().decode("utf-8")
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["service"], "auto_titration_dashboard")
+            self.assertEqual(payload["version"], 1)
+            self.assertTrue(payload["website_dir"].endswith("website"))
+        finally:
+            dashboard.shutdown()
+            dashboard.server_close()
+            thread.join(timeout=5)
 
     def test_dashboard_proxies_live_collector_api_and_streams(self):
         fake = ThreadingHTTPServer(("127.0.0.1", 0), FakeLiveCollectorHandler)
@@ -225,6 +253,7 @@ class DashboardServerTests(unittest.TestCase):
                 ("/api/pump/dispense", {}),
                 ("/api/pump/retract", {}),
                 ("/api/pump/stop", {}),
+                ("/api/pump/reset", {}),
                 ("/api/chemistry/constants/lookup", {"query": "acetic acid"}),
             ]:
                 request = Request(

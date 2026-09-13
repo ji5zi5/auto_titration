@@ -60,6 +60,18 @@ class AndroidBridge(private val activity: MainActivity) {
     fun saveCsvToDownloads(): String = safeJson { activity.saveCsvToDownloadsFromBridge() }
 
     @JavascriptInterface
+    fun endpointWorkerSource(): String = activity.endpointWorkerSourceFromBridge()
+
+    @JavascriptInterface
+    fun endpointModelJson(): String = activity.endpointModelJsonFromBridge()
+
+    @JavascriptInterface
+    fun beginEndpointAnalysis(): String = safeJson { activity.beginEndpointAnalysisFromBridge() }
+
+    @JavascriptInterface
+    fun finishEndpointAnalysis(payloadJson: String): String = safeJson { activity.finishEndpointAnalysisFromBridge(payloadJson) }
+
+    @JavascriptInterface
     fun getCrashReport(): String = safeJson { activity.crashReportJsonFromBridge() }
 
     @JavascriptInterface

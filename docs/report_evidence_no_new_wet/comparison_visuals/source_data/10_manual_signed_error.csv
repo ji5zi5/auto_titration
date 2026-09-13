@@ -1,0 +1,13 @@
+﻿condition,titration_type,actual_equivalence_volume_ml,predicted_equivalence_volume_ml,signed_error_ml,signed_error_percent
+강-강 20,strong_acid_strong_base,20.0,20.1,0.10000000000000142,0.5000000000000071
+강-강 30,strong_acid_strong_base,30.0,29.1,-0.8999999999999986,-2.9999999999999956
+강-강 40,strong_acid_strong_base,40.0,41.3,1.2999999999999972,3.2499999999999933
+강-약 20,strong_acid_weak_base,20.0,19.6,-0.3999999999999986,-1.9999999999999927
+강-약 30,strong_acid_weak_base,30.0,30.2,0.1999999999999993,0.6666666666666643
+강-약 40,strong_acid_weak_base,40.0,38.8,-1.2000000000000028,-3.000000000000007
+약-강 20,weak_acid_strong_base,20.0,20.5,0.5,2.5
+약-강 30,weak_acid_strong_base,30.0,29.5,-0.5,-1.6666666666666667
+약-강 40,weak_acid_strong_base,40.0,40.9,0.8999999999999986,2.2499999999999964
+약-약 20,weak_acid_weak_base,20.0,19.9,-0.10000000000000142,-0.5000000000000071
+약-약 30,weak_acid_weak_base,30.0,30.8,0.8000000000000007,2.6666666666666687
+약-약 40,weak_acid_weak_base,40.0,39.2,-0.7999999999999972,-1.9999999999999927

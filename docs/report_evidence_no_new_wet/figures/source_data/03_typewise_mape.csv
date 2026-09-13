@@ -1,0 +1,5 @@
+﻿titration_type,titration_type_ko,run_count,mape_percent
+strong_acid_strong_base,강산-강염기,3,0.24859749999999378
+strong_acid_weak_base,강산-약염기,3,0.3156827777777791
+weak_acid_strong_base,약산-강염기,3,0.16275555555555007
+weak_acid_weak_base,약산-약염기,3,0.45296444444444955

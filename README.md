@@ -138,11 +138,13 @@ py run.py dual --visible 0 --thermal 1 --thermal-backend msmf
 
 ### Optional YOLO visible ROI mode
 
-Windows live collection uses YOLO for visible-camera ROI candidates.
-The default Windows launcher starts with `VISIBLE_ROI_DETECTOR=yolo` and installs
-`requirements-yolo.txt` once if Ultralytics is missing. The Mini2 thermal ROI is
-still detected independently from the thermal raw/temperature matrix and is not
-copied from the visible camera.
+Windows live collection can use YOLO for the optional visible-camera ROI setup
+button. Automatic ROI is off by default, so the model is not loaded and does not
+reduce recording FPS. When the user turns automatic ROI on, YOLO is loaded on
+demand; locking the ROI or starting a recording turns automatic setup off. The
+default launcher does not install Ultralytics automatically. Install
+`requirements-yolo.txt` only when visible-camera automatic ROI is wanted. Mini2
+thermal ROI detection remains independent and works without YOLO.
 
 Manual command example:
 

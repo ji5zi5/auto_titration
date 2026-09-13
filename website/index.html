@@ -12,129 +12,169 @@
       <section id="csvPanel" class="action-panel" aria-label="실험 조작">
         <div class="action-title">
           <h1>자동 적정</h1>
+          <a class="remote-only" href="?remote=0">전체 화면</a>
+          <p class="remote-only remote-help">설정·ROI는 노트북에서 준비하세요.<br>연결이 끊겨도 펌프는 자동 정지하지 않습니다.</p>
           <div class="mode-switcher" role="tablist" aria-label="실행 모드 선택">
             <button id="csvCollectionModeButton" class="mode-button is-active" type="button" role="tab" aria-selected="true" aria-controls="csvCollectionControls">녹화</button>
-            <button id="concentrationCalculationModeButton" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="concentrationCalculatorControls">결과 계산</button>
+            <button id="concentrationCalculationModeButton" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="finalResultsTitle">결과</button>
           </div>
         </div>
 
-        <div id="csvCollectionControls" class="main-actions csv-mode-only" aria-label="ROI와 녹화 조작">
-          <button id="roiSetupButton" type="button">ROI 선택</button>
-          <button id="roiAutoSetupButton" type="button" aria-pressed="false">자동 ROI OFF</button>
-          <button id="roiLockButton" type="button">ROI 고정</button>
+        <div id="csvCollectionControls" class="main-actions" aria-label="ROI와 녹화 조작">
+          <button id="roiSetupButton" class="csv-mode-only" type="button">ROI 선택</button>
+          <button id="roiAutoSetupButton" class="csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>
+          <button id="roiLockButton" class="csv-mode-only" type="button">ROI 고정</button>
           <button id="csvStartButton" class="record-button start-button" type="button">녹화 시작</button>
           <button id="csvStopButton" class="record-button stop-button" type="button">녹화 종료</button>
           <button id="serialPumpDispenseButton" class="pump-button" type="button">펌프 주입</button>
           <button id="serialPumpRetractButton" class="pump-button" type="button">펌프 되감기</button>
           <button id="serialPumpStopButton" class="pump-button pump-stop-button" type="button">펌프 정지</button>
-          <a id="csvDownloadLink" class="download-button" href="#" download="auto-titration-ml-training.csv">CSV 다운로드</a>
+          <a id="csvDownloadLink" class="download-button csv-mode-only" href="#" download="auto-titration-ml-training.csv">CSV 다운로드</a>
         </div>
 
-        <form id="pumpTimelineForm" class="pump-settings csv-mode-only" aria-label="펌프와 이론 당량점 설정">
-          <label>
-            <span>유량(mL/s)</span>
-            <input id="pumpRateInput" type="number" inputmode="decimal" min="0" step="0.01" value="1.00" />
-          </label>
-          <label>
-            <span>당량점(mL)</span>
-            <input id="theoryEquivalenceInput" type="number" inputmode="decimal" min="0" step="0.01" value="10.00" />
-          </label>
-          <label>
-            <span>허용범위(mL)</span>
-            <input id="equivalenceWindowInput" type="number" inputmode="decimal" min="0.001" step="0.01" value="0.05" />
-          </label>
-          <label class="checkbox-setting">
-            <span>자동 정지</span>
-            <span class="checkbox-control">
-              <input id="autoStopEnabledInput" type="checkbox" />
-              <strong>색 변화 후 정지</strong>
-            </span>
-          </label>
-        </form>
+        <details class="settings-drawer csv-mode-only">
+          <summary>실험 설정</summary>
+          <form id="pumpTimelineForm" class="pump-settings" aria-label="펌프 설정">
+            <label>
+              <span>유량(mL/s)</span>
+              <input id="pumpRateInput" type="number" inputmode="decimal" min="0" step="0.01" value="0.99" />
+            </label>
+            <input id="theoryEquivalenceInput" type="hidden" value="10.00" />
+            <input id="equivalenceWindowInput" type="hidden" value="0.05" />
+            <label class="checkbox-setting">
+              <span>자동 정지</span>
+              <span class="checkbox-control">
+                <input id="autoStopEnabledInput" type="checkbox" />
+                <strong>종말점 근처 미세 주입 후 정지</strong>
+              </span>
+            </label>
+            <label class="checkbox-setting">
+              <span>선택 기능: 저속 단계</span>
+              <span class="checkbox-control">
+                <input id="slowStageEnabledInput" type="checkbox" />
+                <strong>빠른 주입 → 저속 연속 주입 → 미세 주입</strong>
+              </span>
+            </label>
+            <label>
+              <span>저속 모터 속도(steps/s)</span>
+              <select id="slowRateStepsInput">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+              </select>
+              <small>보정 유량이 아닌 명목값: 빠른 유량 × steps/100</small>
+            </label>
+          </form>
 
-        <form id="chemistryModelForm" class="pump-settings chemistry-settings" aria-label="물질과 지시약 모델 설정">
-          <label>
-            <span>적정 종류</span>
-            <select id="titrationTypeSelect">
-              <option value="strong_acid_strong_base">강산-강염기</option>
-              <option value="weak_acid_strong_base" selected>약산-강염기</option>
-              <option value="strong_acid_weak_base">강산-약염기</option>
-              <option value="weak_acid_weak_base">약산-약염기</option>
-            </select>
-          </label>
-          <label>
-            <span>시료</span>
-            <select id="sampleSubstanceInput">
-              <option value="acetic acid" selected>아세트산</option>
-              <option value="hydrochloric acid">염산</option>
-              <option value="sodium hydroxide">수산화나트륨</option>
-              <option value="ammonia">암모니아</option>
-            </select>
-          </label>
-          <label>
-            <span>시료 농도(M)</span>
-            <input id="sampleConcentrationInput" type="number" inputmode="decimal" min="0.000001" step="0.001" value="0.100" />
-          </label>
-          <label>
-            <span>시료 부피(mL)</span>
-            <input id="sampleVolumeInput" type="number" inputmode="decimal" min="0.000001" step="0.01" value="10.00" />
-          </label>
-          <label>
-            <span>표준용액</span>
-            <select id="standardSolutionNameInput">
-              <option value="sodium hydroxide" selected>수산화나트륨</option>
-              <option value="hydrochloric acid">염산</option>
-              <option value="acetic acid">아세트산</option>
-              <option value="ammonia">암모니아</option>
-            </select>
-          </label>
-          <label>
-            <span>표준 농도(M)</span>
-            <input id="standardConcentrationInput" type="number" inputmode="decimal" min="0" step="0.001" value="0.100" />
-          </label>
-          <label>
-            <span>지시약</span>
-            <select id="indicatorSelect">
-              <option value="phenolphthalein" selected>페놀프탈레인</option>
-              <option value="methyl_orange">메틸오렌지</option>
-              <option value="bromothymol_blue">BTB</option>
-            </select>
-          </label>
-        </form>
-
-        <div id="concentrationCalculatorControls" class="calculator-panel calculator-mode-only" hidden aria-label="결과">
-          <div class="result-hero" aria-label="농도와 pH 결과">
-            <div class="result-card result-card-primary">
-              <span>미지 시료 농도</span>
-              <strong id="calcSampleConcentrationValue">-</strong>
-              <small>시료</small>
-            </div>
-            <div class="result-card">
-              <span>예측 pH</span>
-              <strong id="calcPredictedPhValue">-</strong>
-              <small>pH</small>
-            </div>
-          </div>
-          <div class="result-meta" aria-label="결과 정보">
-            <span>예측 당량점 <strong id="calcPredictedEquivalenceValue">-</strong></span>
-            <a id="calcCsvDownloadLink" class="download-button result-download" href="#" download="auto-titration-live.csv">CSV 다운로드</a>
-          </div>
-          <p id="calcModeStatus" class="result-status" role="status" aria-live="polite">녹화 종료 후 계산 결과 표시</p>
+          <form id="chemistryModelForm" class="pump-settings chemistry-settings" aria-label="물질과 지시약 모델 설정">
+            <label>
+              <span>적정 종류</span>
+              <select id="titrationTypeSelect">
+                <option value="strong_acid_strong_base">강산-강염기</option>
+                <option value="weak_acid_strong_base" selected>약산-강염기</option>
+                <option value="strong_acid_weak_base">강산-약염기</option>
+                <option value="weak_acid_weak_base">약산-약염기</option>
+              </select>
+            </label>
+            <label>
+              <span>시료</span>
+              <select id="sampleSubstanceInput">
+                <option value="acetic acid" selected>아세트산</option>
+                <option value="hydrochloric acid">염산</option>
+                <option value="sodium hydroxide">수산화나트륨</option>
+                <option value="ammonia">암모니아</option>
+              </select>
+            </label>
+            <label>
+              <span>시료 농도(M)</span>
+              <input id="sampleConcentrationInput" type="number" inputmode="decimal" min="0.000001" step="0.001" value="0.100" />
+            </label>
+            <label>
+              <span>시료 부피(mL)</span>
+              <input id="sampleVolumeInput" type="number" inputmode="decimal" min="0.000001" step="0.01" value="10.00" />
+            </label>
+            <label>
+              <span>표준용액</span>
+              <select id="standardSolutionNameInput">
+                <option value="sodium hydroxide" selected>수산화나트륨</option>
+                <option value="hydrochloric acid">염산</option>
+                <option value="acetic acid">아세트산</option>
+                <option value="ammonia">암모니아</option>
+              </select>
+            </label>
+            <label>
+              <span>표준 농도(M)</span>
+              <input id="standardConcentrationInput" type="number" inputmode="decimal" min="0" step="0.001" value="0.100" />
+            </label>
+            <label>
+              <span>지시약</span>
+              <select id="indicatorSelect">
+                <option value="phenolphthalein" selected>페놀프탈레인</option>
+                <option value="methyl_orange">메틸오렌지</option>
+                <option value="bromothymol_blue">BTB</option>
+              </select>
+            </label>
+          </form>
+        <div class="remote-share csv-mode-only">
+          <span id="remoteSettingsStatus" role="status">원격 설정 자동 연결 중</span>
+          <a href="?remote=1">리모컨 화면</a>
         </div>
+        </details>
 
         <div id="csvStatusStrip" class="status-strip csv-mode-only" aria-label="현재 상태">
           <span id="previewStatus" class="pill" role="status" aria-live="polite">스트림 연결 중</span>
           <span id="roiSettingsStatus" class="badge">ROI 설정 대기</span>
           <span class="badge">CSV <strong id="csvStateLabel">대기</strong></span>
-          <span class="badge">행 <strong id="csvRowCount">0</strong></span>
-          <span class="badge">저장속도 <strong id="csvRowsPerSecondValue">0.0/s</strong></span>
           <span class="badge">펌프 <strong id="pumpCommandStatus">대기</strong></span>
           <span class="badge">자동정지 <strong id="autoStopStatus">꺼짐</strong></span>
-          <span class="badge">주입 <strong id="pumpVolumeValue">-</strong></span>
-          <span class="badge">농도 <strong id="calculatedConcentrationValue">-</strong></span>
-          <span class="badge">pH <strong id="predictedPhValue">-</strong></span>
-          <span class="badge">당량 차이 <strong id="equivalenceDistanceValue">-</strong></span>
         </div>
+        <details class="diagnostics-drawer csv-mode-only">
+          <summary>수집 상세</summary>
+          <div class="status-strip"><span class="badge">행 <strong id="csvRowCount">0</strong></span><span class="badge">저장속도 <strong id="csvRowsPerSecondValue">0.0/s</strong></span><span class="badge">주입 <strong id="pumpVolumeValue">-</strong></span><span class="badge">농도 <strong id="calculatedConcentrationValue">-</strong></span></div>
+        </details>
+      </section>
+
+      <section class="demo-stage" aria-labelledby="demoStageTitle">
+        <div class="stage-copy">
+
+          <h2 id="demoStageTitle">현재 상태</h2>
+          <strong id="demoStageValue" class="stage-value">관측 대기</strong>
+          <p id="demoStageNote" class="stage-note" role="status" aria-live="polite">수집기 연결 중</p>
+        </div>
+        <div class="stage-facts" aria-label="현재 실험 핵심 수치">
+          <div><span>주입량</span><strong id="demoLiveVolume">-</strong><small>mL</small></div>
+          <div><span>진행 시간</span><strong id="demoElapsedSeconds">-</strong><small>초</small></div>
+        </div>
+      </section>
+
+      <section id="resultsView" class="results-view" aria-label="실험 결과와 그래프" hidden>
+      <section class="final-results" aria-labelledby="finalResultsTitle">
+        <header><div><h2 id="finalResultsTitle">최종 결과</h2></div><strong id="demoOutcomeBadge" class="outcome-badge">실험 대기</strong></header>
+        <p id="calcModeStatus" class="result-status" role="status" aria-live="polite">녹화 종료 후 계산 결과 표시</p>
+        <p class="result-total">총 주입량 <strong id="calcFinalVolumeValue">-</strong> mL</p>
+        <div class="final-result-grid">
+          <div class="final-result-card"><span>예측 종말점 부피</span><strong id="calcPredictedEquivalenceValue">-</strong><small>mL</small></div>
+          <div class="final-result-card"><span>미지 시료 농도</span><strong id="calcSampleConcentrationValue">-</strong><small>M</small></div>
+        </div>
+        <div class="result-file">
+          <span id="demoCsvStatus" role="status">CSV 대기</span>
+          <a id="calcCsvDownloadLink" class="download-button" href="#" download="auto-titration-live.csv">CSV 다운로드</a>
+        </div>
+      </section>
+
+      <section class="trend-grid" aria-label="색·온도 기록">
+        <article class="trend-card">
+          <header><div><h2>색 변화</h2></div><span>ΔRGB</span></header>
+          <canvas id="colorTrendCanvas" class="trend-canvas" role="img" aria-label="현재 세션의 시간에 따른 ROI 색 변화 그래프와 실제 주입 단계 표시"></canvas>
+          <p id="colorTrendEmpty" class="trend-empty">현재 세션의 색 신호 대기</p>
+        </article>
+        <article class="trend-card trend-card-thermal">
+          <header><div><h2>온도 변화</h2></div><span>°C</span></header>
+          <canvas id="thermalTrendCanvas" class="trend-canvas" role="img" aria-label="현재 세션의 시간에 따른 검증된 ROI 섭씨 온도 그래프와 실제 주입 단계 표시"></canvas>
+          <p id="thermalTrendEmpty" class="trend-empty">검증된 섭씨 신호 대기</p>
+        </article>
+      </section>
+
       </section>
 
       <section id="sensorGrid" class="sensor-grid" aria-label="카메라와 온도 동시 보기">
@@ -211,6 +251,7 @@
   <script>
     if (window.AutoTitrationAndroid) window.AUTO_TITRATION_STREAM_BASE = '.';
   </script>
+  <script src="demo-view.js"></script>
   <script src="app.js"></script>
   <script src="android-webview.js"></script>
 </body>
