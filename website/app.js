@@ -1791,6 +1791,14 @@ function roiStatusIsDrafting() {
 
 function refreshRoiOverlays() {
   if (roiStatusIsDrafting()) return;
+  // Size the frame to the video instead of letterboxing it into a short panel.
+  for (const image of [$('visiblePreview'), $('thermalPreview')]) {
+    const frame = image?.closest('.camera-frame');
+    if (frame && image.naturalWidth > 0 && image.naturalHeight > 0) {
+      const ratio = `${image.naturalWidth} / ${image.naturalHeight}`;
+      if (frame.style.aspectRatio !== ratio) frame.style.aspectRatio = ratio;
+    }
+  }
   updateRoiOverlay('visiblePreview', 'visibleRoiOverlay', latestLiveMetadata.visible_roi, { locked: latestRoiLocked });
   const thermalImage = $('thermalPreview');
   if (thermalImage?.dataset.placeholder === 'true') {
@@ -2521,6 +2529,7 @@ function addStreamErrorHandlers() {
     });
     visible.addEventListener('load', () => {
       visible.dataset.streamState = 'load';
+      refreshRoiOverlays();
       if (!lastFrameAt) setText('visibleState', '카메라 수신');
     });
   }
@@ -2535,6 +2544,7 @@ function addStreamErrorHandlers() {
     });
     thermal.addEventListener('load', () => {
       thermal.dataset.streamState = 'load';
+      refreshRoiOverlays();
       if (!lastFrameAt) setText('syncQuality', '열화상 스트림 수신 중');
     });
   }

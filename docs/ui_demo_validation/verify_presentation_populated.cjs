@@ -21,6 +21,14 @@ const assert = require('assert');
   await page.goto('http://ui.test/?remote='+(remote?'1':'0'));
   await page.waitForTimeout(350);
   await page.evaluate(()=>document.fonts.ready);
+  if (!remote) {
+   await page.waitForFunction(() => ['visiblePreview', 'thermalPreview'].every(id => document.getElementById(id).naturalWidth > 0));
+   const fits = await page.evaluate(() => ['visiblePreview', 'thermalPreview'].map(id => {
+    const g = imageDrawGeometry(document.getElementById(id));
+    return { id, x: g.offsetX, y: g.offsetY };
+   }));
+   for (const fit of fits) assert(Math.abs(fit.x) < 1 && Math.abs(fit.y) < 1, `letterboxing remained: ${JSON.stringify(fit)}`);
+  }
   const data=await page.evaluate(()=>{
    const rect=id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom};};
    return {overflow:document.documentElement.scrollWidth>innerWidth, full:rect('viewFullLink'), compact:rect('viewCompactLink'),stop:rect('serialPumpStopButton'),a:rect('visiblePreview'),b:rect('thermalPreview'),font:getComputedStyle(document.getElementById('demoLiveVolume')).fontSize,remote:document.body.classList.contains('remote-control-mode')};

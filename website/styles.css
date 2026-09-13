@@ -188,7 +188,7 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: .7rem; margin-bottom: .7rem; }
 .camera-panel, .temperature-panel { display: grid; gap: .75rem; }
 .camera-frame {
-  position: relative; aspect-ratio: 4 / 3; min-height: 0;
+  position: relative; width: 100%; aspect-ratio: 4 / 3; min-height: 0;
   display: grid; place-items: center; overflow: hidden; background: #151518; border-radius: 12px;
   cursor: crosshair; touch-action: none;
 }
@@ -274,10 +274,6 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 }
 .temperature-value strong { font-size: clamp(2.4rem, 5vw, 5.2rem); line-height: .9; letter-spacing: -.07em; overflow-wrap: anywhere; }
 .temperature-value span { color: var(--muted); font-weight: 650; font-size: clamp(1.1rem, 2vw, 1.8rem); }
-
-@media (min-width: 701px) {
-  .camera-frame { width: 100%; height: clamp(200px, 30vh, 320px); }
-}
 
 @media (max-width: 1200px) {
   .action-panel { grid-template-columns: 1fr; }

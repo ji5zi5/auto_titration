@@ -17,7 +17,9 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn('body.remote-controller-mode #chemistryModelForm', css)
         self.assertIn("env(safe-area-inset-bottom)", css)
         self.assertIn("font-variant-numeric: tabular-nums", css)
-        self.assertIn('@media (min-width: 701px)', css)
+        self.assertIn('width: 100%; aspect-ratio: 4 / 3', css)
+        self.assertNotIn('height: clamp(200px, 30vh, 320px)', css)
+        self.assertIn('object-fit: contain', css)
 
     def test_static_website_is_camera_temperature_live_view_not_explainer_dashboard(self):
         html = Path("website/index.html").read_text(encoding="utf-8")
