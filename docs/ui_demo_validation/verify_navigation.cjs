@@ -74,6 +74,11 @@ const summary = [];
         if (remote) {
           const stop = await page.locator('#serialPumpStopButton').boundingBox();
           assert(stop.x >= 0 && stop.x + stop.width <= width && stop.y >= 0 && stop.y + stop.height <= 900, `${width}: STOP below initial viewport`);
+          const dispense = await page.locator('#serialPumpDispenseButton').boundingBox();
+          const panel = await page.locator('#csvPanel').boundingBox();
+          assert.equal(await page.locator('#serialPumpStopButton').evaluate(el => getComputedStyle(el).position), 'static');
+          assert(Math.abs(stop.width - dispense.width) < 1 && Math.abs(stop.height - dispense.height) < 1, 'STOP must match other pump button sizes');
+          assert(stop.y >= panel.y && stop.y + stop.height <= panel.y + panel.height, 'STOP must remain in the control panel');
         }
         await page.evaluate(() => applyLiveMetadata({}));
         assert.equal(await page.locator('#temperatureValue').textContent(), '-');

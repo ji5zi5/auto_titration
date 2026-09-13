@@ -1,5 +1,5 @@
 {
-  "delivered_at_utc": "2026-09-13T11:39:05.311580+00:00",
+  "delivered_at_utc": "2026-09-13T11:42:17.999991+00:00",
   "source_root": "/home/jio/code/auto_titration",
   "destination_root": "/mnt/c/Users/Jio/Downloads/auto_titration/website",
   "files": [
@@ -17,8 +17,8 @@
       "source": "/home/jio/code/auto_titration/website/styles.css",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/styles.css",
       "destination_before_sha256": "ff78ff8f8f2a2871f3698eb5fdc2d02fbd140f938126c12c1850c9b043c448c6",
-      "source_sha256": "3aa5e1fe756bb5250850e86ef88b31c543035020519e937819311248eeb11f3c",
-      "destination_sha256": "3aa5e1fe756bb5250850e86ef88b31c543035020519e937819311248eeb11f3c",
+      "source_sha256": "ed79466b3564971c424654d73493cfe1a4e8dde2fcad374b44b2ad5c0f8d3dd8",
+      "destination_sha256": "ed79466b3564971c424654d73493cfe1a4e8dde2fcad374b44b2ad5c0f8d3dd8",
       "verified_equal": true
     },
     {
@@ -38,5 +38,5 @@
   "caveat": "Only loose website assets updated. APK/EXE embedded assets were not rebuilt; currently running services were not restarted.",
   "verification": "Exact three existing loose web assets verified after final solo fixes; no APK/EXE rebuild or service restart.",
   "source_identity": "Per-file SHA256 below identifies the delivered assets; final source commit is in repository history.",
-  "latest_update": "Natural-aspect preview sizing; only app.js/styles.css copied, all other top-level website files unchanged."
+  "latest_update": "Compact STOP moved into the existing pump button grid at normal button size; only styles.css copied."
 }

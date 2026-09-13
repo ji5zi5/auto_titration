@@ -329,7 +329,7 @@ body.remote-control-mode #roiSetupButton,
 body.remote-control-mode #roiAutoSetupButton,
 body.remote-control-mode #roiLockButton,
 body.remote-control-mode #csvDownloadLink { display:none !important; }
-body.remote-control-mode .live-view { max-width:560px; display:flex; flex-direction:column; padding-bottom:calc(6.5rem + env(safe-area-inset-bottom)); }
+body.remote-control-mode .live-view { max-width:560px; display:flex; flex-direction:column; padding-bottom:calc(1rem + env(safe-area-inset-bottom)); }
 body.remote-control-mode .console-header { order:0; }
 body.remote-control-mode .demo-stage { order:1; }
 body.remote-control-mode .action-panel { order:2; }
@@ -347,17 +347,14 @@ body.remote-control-mode .action-panel { display:block; border-radius:18px; }
 body.remote-control-mode .action-title { display:grid; margin-bottom:1rem; gap:.6rem; }
 body.remote-control-mode .action-title .remote-help { font-size:.85rem; font-weight:500; line-height:1.5; color:var(--muted); }
 body.remote-control-mode #serialPumpStopButton {
-  position:fixed; z-index:30; left:50%; bottom:calc(.75rem + env(safe-area-inset-bottom)); transform:translateX(-50%);
-  width:min(calc(100% - 2rem), 496px); min-height:64px;
-  background:var(--red); color:white; border:2px solid white; border-radius:14px;
-  box-shadow:0 0 0 8px var(--bg); font-weight:750; letter-spacing:.025em;
+  grid-column:auto;
+  background:var(--red); color:white; border-color:var(--red);
 }
 body.remote-control-mode .demo-stage { grid-template-columns:1fr; margin:0 0 1rem; padding:1.25rem; min-height:0; gap:1.3rem; }
 body.remote-control-mode .stage-value { font-size:1.65rem; }
 body.remote-control-mode .stage-note { margin-top:.5rem; font-size:.9rem; }
 body.remote-control-mode .stage-facts strong { font-size:2.7rem; }
 
-body.remote-control-mode #serialPumpStopButton { grid-column:1 / -1; }
 body.remote-control-mode .stage-copy { display:block; }
 body.remote-control-mode .stage-facts { width:100%; justify-content:space-between; }
 body.remote-control-mode .stage-facts div { display:block; border:0; padding:0; }
