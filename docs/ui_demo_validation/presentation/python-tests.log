@@ -1,0 +1,12 @@
+Live MJPEG/SSE stream: http://127.0.0.1:42135/stream/visible.mjpg
+[13/Sep/2026 19:54:02] "GET /api/remote/config HTTP/1.1" 200 -
+[13/Sep/2026 19:54:02] "POST /api/remote/config HTTP/1.1" 200 -
+[13/Sep/2026 19:54:02] "GET /api/remote/config HTTP/1.1" 200 -
+[13/Sep/2026 19:54:02] "POST /api/remote/config HTTP/1.1" 400 -
+[13/Sep/2026 19:54:02] "GET /api/remote/config HTTP/1.1" 200 -
+[13/Sep/2026 19:54:02] "POST /api/remote/config HTTP/1.1" 200 -
+[13/Sep/2026 19:54:02] "GET /api/remote/config HTTP/1.1" 200 -
+----------------------------------------------------------------------
+Ran 14 tests in 0.659s
+
+OK

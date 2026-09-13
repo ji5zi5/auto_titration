@@ -1,0 +1,6 @@
+view navigation: query/hash preservation, round trips, explicit modes, native exclusion OK
+full remote: saved settings preserved, results available, STOP preempts config OK
+----------------------------------------------------------------------
+Ran 15 tests in 0.389s
+
+OK

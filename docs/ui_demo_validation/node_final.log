@@ -1,0 +1,10 @@
+android webview auto-stop capability guard ok
+android webview official measurement parser ok
+retract/stop mapping and stale backend response fences OK
+constants room-temperature auto selection regression OK
+demo view session, stage, result, and graph guards OK
+full remote: saved settings preserved, results available, STOP preempts config OK
+automatic config sync, dedupe, invalidation, recording freeze OK
+remote saved settings and STOP preemption OK
+view navigation: query/hash preservation, round trips, explicit modes, native exclusion OK
+web request lifecycle regression OK

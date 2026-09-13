@@ -1,11 +1,34 @@
 // Remote mode is browser-only; the Android native bridge keeps its own UI.
-const remoteControlMode = !window.AutoTitrationAndroid
+const compactViewMode = !window.AutoTitrationAndroid
   && !/[?&]remote=0(?:&|$)/.test(window.location?.search || '')
   && (/[?&]remote=1(?:&|$)/.test(window.location?.search || '')
     || Boolean(window.matchMedia?.('(max-width: 700px)').matches));
-if (remoteControlMode) document.body.classList.add('remote-control-mode');
+// A layout change must never grant a remote browser notebook settings ownership.
+const remoteControlMode = !window.AutoTitrationAndroid
+  && (/[?&](?:remote|remote_control)=1(?:&|$)/.test(window.location?.search || '')
+    || Boolean(window.matchMedia?.('(max-width: 700px)').matches));
+if (compactViewMode) document.body.classList.add('remote-control-mode');
+if (remoteControlMode) document.body.classList.add('remote-controller-mode');
 
 const $ = (id) => document.getElementById(id);
+
+// Keep both browser views reachable without losing connection/query context.
+function updateViewLinks() {
+  for (const [id, remote] of [['viewFullLink', '0'], ['viewCompactLink', '1']]) {
+    const link = $(id);
+    if (!link) continue;
+    link.hidden = Boolean(window.AutoTitrationAndroid);
+    if (link.hidden) continue;
+    const url = new URL(window.location.href);
+    url.searchParams.set('remote', remote);
+    if (remoteControlMode) url.searchParams.set('remote_control', '1');
+    link.href = url.href;
+    link.setAttribute('aria-current', compactViewMode === (remote === '1') ? 'page' : 'false');
+  }
+}
+
+window.addEventListener('DOMContentLoaded', updateViewLinks);
+window.addEventListener('hashchange', updateViewLinks);
 const LOCAL_COLLECTOR_BACKEND = 'http://127.0.0.1:8766';
 const DASHBOARD_LOCAL_BACKEND = 'http://127.0.0.1:8765';
 const BACKEND_STORAGE_KEY = 'autoTitrationBackendBase';
@@ -111,7 +134,7 @@ function resetDemoViewForBackend() {
 }
 
 function drawTrend(canvasId, emptyId, valueKey, stroke, unit) {
-  if (typeof remoteControlMode !== 'undefined' && remoteControlMode) return;
+  if (typeof compactViewMode !== 'undefined' && compactViewMode) return;
   const canvas = $(canvasId);
   if (!canvas || typeof canvas.getContext !== 'function' || !demoViewState) return;
   const samples = demoViewState.samples;
@@ -372,7 +395,7 @@ function updateCsvDownloadLinks(filename = 'auto-titration-live.csv') {
 }
 
 function setPreviewSources() {
-  if (remoteControlMode) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
+  if (compactViewMode) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
   const visible = $('visiblePreview');
   if (visible) visible.src = endpoint('/stream/visible.mjpg');
   const thermal = $('thermalPreview');
@@ -887,7 +910,7 @@ function setAppMode(mode) {
   const normalized = mode === 'calculator' ? 'calculator' : 'csv';
   currentAppMode = normalized;
   document.body.dataset.appMode = normalized;
-  const calculatorMode = !remoteControlMode && normalized === 'calculator';
+  const calculatorMode = !compactViewMode && normalized === 'calculator';
 
   document.querySelectorAll('.csv-mode-only').forEach((element) => {
     element.classList.toggle('mode-hidden', calculatorMode);
@@ -2491,11 +2514,13 @@ function addStreamErrorHandlers() {
   const visible = $('visiblePreview');
   if (visible) {
     visible.addEventListener('error', () => {
+      visible.dataset.streamState = 'error';
       setText('visibleState', '카메라 대기');
       setBackendBaseStatus(`이미지 연결 대기: ${backendBaseDisplay()}`);
       scheduleLocalBackendFailover(liveEvents);
     });
     visible.addEventListener('load', () => {
+      visible.dataset.streamState = 'load';
       if (!lastFrameAt) setText('visibleState', '카메라 수신');
     });
   }
@@ -2503,11 +2528,13 @@ function addStreamErrorHandlers() {
   const thermal = $('thermalPreview');
   if (thermal) {
     thermal.addEventListener('error', () => {
+      thermal.dataset.streamState = 'error';
       setText('syncQuality', '적외선 대기');
       setBackendBaseStatus(`이미지 연결 대기: ${backendBaseDisplay()}`);
       scheduleLocalBackendFailover(liveEvents);
     });
     thermal.addEventListener('load', () => {
+      thermal.dataset.streamState = 'load';
       if (!lastFrameAt) setText('syncQuality', '열화상 스트림 수신 중');
     });
   }
@@ -2751,6 +2778,10 @@ function scheduleRemoteSettingsSync() {
     remoteSettingsTimer = null;
     syncRemoteSettings();
   }, 400);
+}
+
+if (remoteControlMode) {
+  setText('remoteSettingsStatus', '노트북에 저장된 설정 사용 · 설정 변경은 노트북에서');
 }
 
 if (!remoteControlMode && !isAndroidWebViewBridge()) {

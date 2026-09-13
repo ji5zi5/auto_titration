@@ -9,11 +9,20 @@
 <body>
   <div class="app-shell">
     <main class="live-view">
+      <header class="console-header">
+        <div class="console-identity">
+          <span class="eyebrow">TITRATION / CONTROL</span>
+          <h1>자동 적정</h1>
+        </div>
+        <nav class="view-navigation" aria-label="화면 보기 선택">
+          <a id="viewFullLink" href="?remote=0">전체 화면</a>
+          <a id="viewCompactLink" href="?remote=1">리모컨 화면</a>
+        </nav>
+      </header>
       <section id="csvPanel" class="action-panel" aria-label="실험 조작">
         <div class="action-title">
-          <h1>자동 적정</h1>
-          <a class="remote-only" href="?remote=0">전체 화면</a>
-          <p class="remote-only remote-help">설정·ROI는 노트북에서 준비하세요.<br>연결이 끊겨도 펌프는 자동 정지하지 않습니다.</p>
+          <h2 class="control-heading">실험 제어</h2>
+          <p class="remote-only remote-help">설정·ROI는 노트북에서 준비하세요. 연결이 끊겨도 펌프는 자동 정지하지 않습니다.</p>
           <div class="mode-switcher" role="tablist" aria-label="실행 모드 선택">
             <button id="csvCollectionModeButton" class="mode-button is-active" type="button" role="tab" aria-selected="true" aria-controls="csvCollectionControls">녹화</button>
             <button id="concentrationCalculationModeButton" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="finalResultsTitle">결과</button>
@@ -28,7 +37,7 @@
           <button id="csvStopButton" class="record-button stop-button" type="button">녹화 종료</button>
           <button id="serialPumpDispenseButton" class="pump-button" type="button">펌프 주입</button>
           <button id="serialPumpRetractButton" class="pump-button" type="button">펌프 되감기</button>
-          <button id="serialPumpStopButton" class="pump-button pump-stop-button" type="button">펌프 정지</button>
+          <button id="serialPumpStopButton" class="pump-button pump-stop-button" type="button">STOP · 펌프 정지</button>
           <a id="csvDownloadLink" class="download-button csv-mode-only" href="#" download="auto-titration-ml-training.csv">CSV 다운로드</a>
         </div>
 
@@ -117,7 +126,6 @@
           </form>
         <div class="remote-share csv-mode-only">
           <span id="remoteSettingsStatus" role="status">원격 설정 자동 연결 중</span>
-          <a href="?remote=1">리모컨 화면</a>
         </div>
         </details>
 
@@ -180,7 +188,7 @@
       <section id="sensorGrid" class="sensor-grid" aria-label="카메라와 온도 동시 보기">
         <article class="sensor-card camera-panel">
           <div class="panel-head">
-            <h2>카메라</h2>
+            <h2><span class="sensor-index" aria-hidden="true">01</span> 카메라</h2>
             <span class="badge">색</span>
           </div>
           <div class="camera-frame">
@@ -210,7 +218,7 @@
 
         <article class="sensor-card temperature-panel">
           <div class="panel-head">
-            <h2>적외선</h2>
+            <h2><span class="sensor-index" aria-hidden="true">02</span> 적외선</h2>
             <span class="badge">온도</span>
           </div>
           <div class="camera-frame thermal-frame">

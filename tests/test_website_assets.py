@@ -4,6 +4,21 @@ import unittest
 
 
 class WebsiteAssetTests(unittest.TestCase):
+    def test_permanent_view_navigation_and_responsive_console_contract(self):
+        html = Path("website/index.html").read_text(encoding="utf-8")
+        css = Path("website/styles.css").read_text(encoding="utf-8")
+        header = html[html.index('<header class="console-header">'):html.index("</header>")]
+        self.assertIn('id="viewFullLink"', header)
+        self.assertIn('id="viewCompactLink"', header)
+        self.assertNotIn("remote-only", header)
+        self.assertLess(html.index('id="viewCompactLink"'), html.index('class="settings-drawer'))
+        self.assertIn("a:focus-visible", css)
+        self.assertIn('body.remote-controller-mode #pumpTimelineForm', css)
+        self.assertIn('body.remote-controller-mode #chemistryModelForm', css)
+        self.assertIn("env(safe-area-inset-bottom)", css)
+        self.assertIn("font-variant-numeric: tabular-nums", css)
+        self.assertIn('@media (min-width: 701px)', css)
+
     def test_static_website_is_camera_temperature_live_view_not_explainer_dashboard(self):
         html = Path("website/index.html").read_text(encoding="utf-8")
         js = Path("website/app.js").read_text(encoding="utf-8")
@@ -543,8 +558,8 @@ assert.strictEqual(elements.indicatorSelect.value, 'methyl_orange');
         self.assertLess(html.index('class="final-results"'), html.index('class="trend-grid"'))
 
         for expected_css in [
-            ".start-button { background: var(--green);",
-            ".stop-button { background: var(--red);",
+            ".main-actions .start-button { background: var(--blue);",
+            ".main-actions .stop-button { background: #fff5f5;",
             ".pump-button { background: white;",
             ".pump-stop-button { color: var(--red);",
             "min-height: 2.75rem",
