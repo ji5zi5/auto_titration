@@ -32,6 +32,7 @@
         <div id="csvCollectionControls" class="main-actions" aria-label="ROI와 녹화 조작">
           <div class="control-row roi-record-controls" aria-label="ROI와 기록">
             <button id="roiSetupButton" class="csv-mode-only" type="button">ROI 선택</button>
+            <button id="roiAutoSetupButton" class="csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>
             <button id="roiResetButton" class="csv-mode-only" type="button" hidden title="카메라와 열화상 ROI 모두 삭제">ROI 삭제</button>
             <button id="roiLockButton" class="csv-mode-only" type="button">ROI 고정</button>
             <button id="csvStartButton" class="record-button start-button" type="button">녹화 시작</button>
@@ -47,7 +48,6 @@
 
         <details class="settings-drawer csv-mode-only">
           <summary>실험 설정</summary>
-          <button id="roiAutoSetupButton" class="inline-utility-button csv-mode-only" type="button" aria-pressed="false">자동 ROI OFF</button>
           <form id="pumpTimelineForm" class="pump-settings" aria-label="펌프 설정">
             <label>
               <span>유량(mL/s)</span>

@@ -58,6 +58,8 @@ const summary = [];
       assert.equal(await page.locator('#sampleVolumeInput').inputValue(), '20.00');
       assert.equal(await page.locator('#sampleConcentrationInput').inputValue(), '0.100');
       assert.equal(await page.locator('#standardConcentrationInput').inputValue(), '0.100');
+      assert.equal(await page.locator('#roiAutoSetupButton').evaluate(el => el.parentElement.classList.contains('roi-record-controls')), true);
+      assert.equal(await page.locator('.settings-drawer #roiAutoSetupButton').count(), 0);
       assert.equal(await page.evaluate(() => remoteControlMode), true);
       await page.evaluate(() => syncRemoteSettings());
       for (const id of ['visiblePreview', 'thermalPreview']) {

@@ -2055,6 +2055,12 @@ async function enterRoiSetupMode({ reset = false } = {}) {
     if (requestBackendRevision !== backendRevision) return null;
     setText('roiSettingsStatus', `자동추적 끄기 실패 · ${error.message}`);
   }
+  // A recording update can arrive while the tracking-OFF request is pending.
+  if (latestLiveMetadata.roi_state === 'recording') {
+    roiSetupMode = false;
+    updateRoiButtons();
+    return false;
+  }
   setText('previewStatus', 'ROI 선택 · 두 화면에서 드래그');
   setText('roiSettingsStatus', 'ROI 선택');
   updateRoiButtons({ ...latestLiveMetadata, roi_state: 'setup', roi_locked: false, roi_editable: true });

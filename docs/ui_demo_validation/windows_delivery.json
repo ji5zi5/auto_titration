@@ -1,5 +1,5 @@
 {
-  "delivered_at_utc": "2026-09-13T12:04:55.069187+00:00",
+  "delivered_at_utc": "2026-09-13T12:09:20.360166+00:00",
   "source_root": "/home/jio/code/auto_titration",
   "destination_root": "/mnt/c/Users/Jio/Downloads/auto_titration/website",
   "files": [
@@ -8,8 +8,8 @@
       "source": "/home/jio/code/auto_titration/website/index.html",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/index.html",
       "destination_before_sha256": "d680b4b83e7d9b83507d7ba9770de29a471e5d205668d711c44e439b39b2532c",
-      "source_sha256": "b2a0d6936170d0153955c4198991606b1e685be950d8df36c2ef3f58dd02be9c",
-      "destination_sha256": "b2a0d6936170d0153955c4198991606b1e685be950d8df36c2ef3f58dd02be9c",
+      "source_sha256": "3c44fbfa3248e23434d48bcc493379f639525807bd7cb9856396ea8dcf8f7dbc",
+      "destination_sha256": "3c44fbfa3248e23434d48bcc493379f639525807bd7cb9856396ea8dcf8f7dbc",
       "verified_equal": true
     },
     {
@@ -17,8 +17,8 @@
       "source": "/home/jio/code/auto_titration/website/styles.css",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/styles.css",
       "destination_before_sha256": "ff78ff8f8f2a2871f3698eb5fdc2d02fbd140f938126c12c1850c9b043c448c6",
-      "source_sha256": "307f69ea0b2ee849de461bbf1e974179e5cf729133455593bcc87d5cbecf12bd",
-      "destination_sha256": "307f69ea0b2ee849de461bbf1e974179e5cf729133455593bcc87d5cbecf12bd",
+      "source_sha256": "a4971139ff8f9ba47fa23807e70eb194042dbbde3da2d6164d53e0557f12a78d",
+      "destination_sha256": "a4971139ff8f9ba47fa23807e70eb194042dbbde3da2d6164d53e0557f12a78d",
       "verified_equal": true
     },
     {
@@ -26,8 +26,8 @@
       "source": "/home/jio/code/auto_titration/website/app.js",
       "destination": "/mnt/c/Users/Jio/Downloads/auto_titration/website/app.js",
       "destination_before_sha256": "7b06c820477fb7a0d0c13386efd7683e7f1867838f631d7bb5d41365970fd780",
-      "source_sha256": "ab367b480bac6fbfc4b02e733355d950e07a335155236f57d162ab496e084bfd",
-      "destination_sha256": "ab367b480bac6fbfc4b02e733355d950e07a335155236f57d162ab496e084bfd",
+      "source_sha256": "f57899d3c101e1f27757c5715361522eeeb98772b46807e16d2d7feb73459509",
+      "destination_sha256": "f57899d3c101e1f27757c5715361522eeeb98772b46807e16d2d7feb73459509",
       "verified_equal": true
     }
   ],
@@ -38,5 +38,5 @@
   "caveat": "Only loose website assets updated. APK/EXE embedded assets were not rebuilt; currently running services were not restarted.",
   "verification": "Exact three existing loose web assets verified after final solo fixes; no APK/EXE rebuild or service restart.",
   "source_identity": "Per-file SHA256 below identifies the delivered assets; final source commit is in repository history.",
-  "latest_update": "ROI deletion and grouped pump second row; strong-acid/strong-base 0.100M and20mL defaults; hide redundant live status in results. Only three loose web assets copied."
+  "latest_update": "Automatic ROI moved beside manual selection/delete/lock, pump row remains second. Preserve recording state when ROI setup finishes asynchronously."
 }

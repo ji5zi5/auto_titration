@@ -121,7 +121,7 @@ h2 { margin-bottom: 0; font-size: clamp(1.15rem, 1.4vw, 1.55rem); letter-spacing
 .main-actions {
   display: grid; grid-template-columns: 1fr; gap: .65rem;
 }
-.control-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .45rem; }
+.control-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: .45rem; }
 .pump-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .main-actions [hidden] { display: none; }
 .main-actions button, .download-button {

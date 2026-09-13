@@ -27,6 +27,15 @@ eval(harness + `
   assert(await rejected === false,'rejected reset reported success');
   assert(vm.runInContext("latestLiveMetadata.visible_roi === '1,2,3,4' && latestLiveMetadata.thermal_roi === '5,6,7,8'",context),'rejected reset erased local ROI');
   assert(requests.length===1,'rejected reset triggered another command');
+  requests.length=0;
+  const racingReset = context.enterRoiSetupMode({reset:true});
+  requests[0].resolve({ok:true,roi:{roi_state:'setup',roi_locked:false,roi_complete:false,visible_roi:'',thermal_roi:''}});
+  for(let i=0;i<12 && requests.length<2;i++) await settle();
+  assert(requests.length===2,'missing pending tracking request');
+  context.applyRoiStatus({roi_state:'recording',roi_locked:true});
+  requests[1].resolve({ok:true,settings:{roi_auto_detect:'off'}});
+  assert(await racingReset === false,'late ROI callback ignored recording state');
+  assert(element('roiResetButton').disabled,'late callback enabled deletion during recording');
   console.log('ROI reset: collector reset in setup, both regions cleared, recording/auto guards OK');
 })().catch(e=>{console.error(e);process.exitCode=1});
 `);
