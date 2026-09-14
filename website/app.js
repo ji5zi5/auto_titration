@@ -56,6 +56,8 @@ let latestCsvStatusSource = '';
 let autoRoiSetupEnabled = false;
 let autoRoiSetupTimer = null;
 let autoRoiRequestInFlight = false;
+let cameraPowerStatus = null;
+let cameraPowerRequestInFlight = false;
 let backendRevision = 0;
 let csvControlSequence = 0;
 let csvStartInFlight = null;
@@ -119,6 +121,9 @@ function resetDemoViewForBackend() {
   remoteSettingsSyncing = false;
   stopAutoRoiSetup();
   autoRoiRequestInFlight = false;
+  cameraPowerStatus = null;
+  cameraPowerRequestInFlight = false;
+  updateCameraPowerButton();
   latestCsvStatus = null;
   latestCsvStatusSource = '';
   latestLiveMetadata = {};
@@ -395,7 +400,7 @@ function updateCsvDownloadLinks(filename = 'auto-titration-live.csv') {
 }
 
 function setPreviewSources() {
-  if (compactViewMode) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
+  if (compactViewMode || camerasUnavailable()) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
   const visible = $('visiblePreview');
   if (visible) visible.src = endpoint('/stream/visible.mjpg');
   const thermal = $('thermalPreview');
@@ -983,6 +988,7 @@ function formatHealthAge(value) {
 
 function applyCollectorHealth(health) {
   if (!health?.ok) throw new Error(health?.error || 'collector health not ok');
+  applyCameraPowerStatus(health.camera_power || { supported: false });
   const latest = health.latest || {};
   const csv = health.csv || {};
   const visibleAge = formatHealthAge(health.visible_age_ms);
@@ -1125,9 +1131,84 @@ function updateCsvControlButtons(csv = latestCsvStatus) {
   const busy = Boolean(csv?.recording || csv?.finalizing || csv?.state === 'finalizing');
   if (startButton) {
     startButton.disabled = busy || Boolean(csvStartInFlight || csvStopInFlight)
-      || !latestRoiRecordable || !latestRoiComplete;
+      || !latestRoiRecordable || !latestRoiComplete || camerasUnavailable();
   }
   if (stopButton) stopButton.disabled = !(csv?.recording || csvStartInFlight);
+  updateCameraPowerButton();
+}
+
+function camerasUnavailable() {
+  return cameraPowerStatus?.supported === true && cameraPowerStatus.state !== 'on';
+}
+
+function updateCameraPowerButton() {
+  const button = $('cameraPowerButton');
+  if (!button) return;
+  button.hidden = isAndroidWebViewBridge();
+  const state = cameraPowerStatus?.state;
+  const supported = cameraPowerStatus?.supported === true;
+  const recording = latestCsvStatus?.recording || latestCsvStatus?.finalizing || latestLiveMetadata.roi_state === 'recording';
+  button.disabled = !supported || Boolean(recording || csvStartInFlight || cameraPowerRequestInFlight || state === 'starting' || state === 'stopping');
+  button.textContent = !supported ? '카메라 제어 대기'
+    : state === 'starting' ? '카메라 켜는 중' : state === 'stopping' ? '카메라 끄는 중'
+    : cameraPowerStatus.enabled ? '카메라 끄기' : '카메라 켜기';
+  button.setAttribute('aria-pressed', cameraPowerStatus?.enabled === true ? 'true' : 'false');
+  button.title = !supported ? '수집기를 업데이트하거나 연결 상태를 확인하세요'
+    : recording ? '녹화가 끝난 뒤 카메라를 끌 수 있습니다'
+    : cameraPowerStatus.error || 'OFF는 실제 수집과 처리를 중지합니다. 다시 켠 뒤 ROI를 확인·고정하세요.';
+}
+
+function applyCameraPowerStatus(status) {
+  const wasUnavailable = camerasUnavailable();
+  cameraPowerStatus = status;
+  if (camerasUnavailable()) {
+    stopAutoRoiSetup();
+    roiDrag = null;
+    hideRoiOverlay('visibleRoiOverlay');
+    hideRoiOverlay('thermalRoiOverlay');
+    for (const id of ['visiblePreview', 'thermalPreview']) {
+      const image = $(id);
+      if (image?.getAttribute?.('src')) image.removeAttribute('src');
+      const placeholder = image?.closest('.camera-frame')?.querySelector('.stream-placeholder');
+      if (placeholder) placeholder.textContent = status.state === 'off' ? '카메라 꺼짐'
+        : status.state === 'error' ? '카메라 연결 오류' : '카메라 전환 중';
+    }
+  } else if (wasUnavailable && status?.state === 'on') {
+    setPreviewSources();
+    for (const id of ['visiblePreview', 'thermalPreview']) {
+      const placeholder = $(id)?.closest('.camera-frame')?.querySelector('.stream-placeholder');
+      if (placeholder) placeholder.textContent = '영상 연결 대기';
+    }
+  }
+  updateCameraPowerButton();
+  updateRoiButtons();
+  updateCsvControlButtons();
+}
+
+async function toggleCameraPower() {
+  if (!cameraPowerStatus?.supported || cameraPowerRequestInFlight || isAndroidWebViewBridge()) return;
+  if (latestCsvStatus?.recording || latestCsvStatus?.finalizing || csvStartInFlight || latestLiveMetadata.roi_state === 'recording') return;
+  const revision = backendRevision;
+  cameraPowerRequestInFlight = true;
+  updateCameraPowerButton();
+  try {
+    const response = await fetch(endpoint('/api/camera-power'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !cameraPowerStatus.enabled }),
+    });
+    const data = await response.json();
+    if (revision !== backendRevision) return;
+    if (!response.ok || !data.ok) throw new Error(data.error || '카메라 전환 실패');
+    applyCameraPowerStatus(data.camera_power);
+    setText('previewStatus', data.camera_power.requested_enabled ? '카메라 다시 연결 중' : '카메라 수집 중지 중');
+  } catch (error) {
+    if (revision === backendRevision) setText('previewStatus', `카메라 전환 실패 · ${error.message}`);
+  } finally {
+    if (revision === backendRevision) {
+      cameraPowerRequestInFlight = false;
+      updateCameraPowerButton();
+    }
+  }
 }
 
 function readPositiveNumberInput(id, label) {
@@ -1790,6 +1871,11 @@ function roiStatusIsDrafting() {
 
 
 function refreshRoiOverlays() {
+  if (camerasUnavailable()) {
+    hideRoiOverlay('visibleRoiOverlay');
+    hideRoiOverlay('thermalRoiOverlay');
+    return;
+  }
   if (roiStatusIsDrafting()) return;
   // Size the frame to the video instead of letterboxing it into a short panel.
   for (const image of [$('visiblePreview'), $('thermalPreview')]) {
@@ -1899,12 +1985,13 @@ function updateRoiButtons(data = latestLiveMetadata) {
   const unlockButton = $('roiUnlockButton');
   const resetButton = $('roiResetButton');
   const startButton = $('csvStartButton');
-  if (setupButton) setupButton.disabled = recording;
-  if (autoSetupButton) autoSetupButton.disabled = recording || locked;
-  if (lockButton) lockButton.disabled = recording || locked || !complete;
+  if (setupButton) setupButton.disabled = recording || camerasUnavailable();
+  if (autoSetupButton) autoSetupButton.disabled = recording || locked || camerasUnavailable();
+  if (lockButton) lockButton.disabled = recording || locked || !complete || camerasUnavailable();
   if (unlockButton) unlockButton.disabled = recording || !locked;
   if (resetButton) resetButton.disabled = recording || autoRoiRequestInFlight || Number(data.pending_auto_candidate_requests || 0) > 0;
-  if (startButton) startButton.disabled = recording || !recordable || !complete;
+  if (startButton) startButton.disabled = recording || !recordable || !complete || camerasUnavailable();
+  updateCameraPowerButton();
 }
 
 function updateAutoRoiSetupButton() {
@@ -2021,6 +2108,10 @@ async function toggleAutoRoiSetup() {
 
 async function enterRoiSetupMode({ reset = false } = {}) {
   const requestBackendRevision = backendRevision;
+  if (!reset && camerasUnavailable()) {
+    setText('roiSettingsStatus', '카메라를 켠 뒤 ROI를 선택하세요');
+    return false;
+  }
   if (latestLiveMetadata.roi_state === 'recording') {
     setText('previewStatus', '녹화 중 ROI 변경 불가');
     return false;
@@ -2217,7 +2308,7 @@ function addRoiDragHandler(imageId, overlayId, target) {
   if (!image) return;
   const hitElement = image.closest('.camera-frame') || image;
   hitElement.addEventListener('pointerdown', async (event) => {
-    if (latestLiveMetadata.roi_state === 'recording') return;
+    if (latestLiveMetadata.roi_state === 'recording' || camerasUnavailable()) return;
     if (latestRoiLocked || latestLiveMetadata.roi_state === 'locked' || latestLiveMetadata.roi_state === 'stopped') {
       setText('previewStatus', 'ROI 선택 버튼을 누르세요');
       return;
@@ -2307,6 +2398,7 @@ function withoutRoiGeometry(data = {}) {
 }
 
 function applyLiveMetadata(data) {
+  if (data?.camera_power) applyCameraPowerStatus(data.camera_power);
   const ignoreRoiStatus = typeof window.AutoTitrationShouldIgnoreRoiStatus === 'function'
     && window.AutoTitrationShouldIgnoreRoiStatus(data);
   const effectiveData = ignoreRoiStatus ? withoutRoiGeometry(data) : data;
@@ -2726,6 +2818,7 @@ function addRoiSetupHandlers() {
 
 
 addStreamErrorHandlers();
+$('cameraPowerButton')?.addEventListener('click', toggleCameraPower);
 setupBackendControls();
 addModeHandlers();
 addChemistryHandlers();

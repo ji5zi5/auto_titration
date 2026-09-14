@@ -1,0 +1,34 @@
+[
+  {
+    "width": 375,
+    "status": "PASS",
+    "screenshots": 4,
+    "apiRequests": 20,
+    "controlCommands": 0,
+    "runtimeErrors": []
+  },
+  {
+    "width": 768,
+    "status": "PASS",
+    "screenshots": 4,
+    "apiRequests": 20,
+    "controlCommands": 0,
+    "runtimeErrors": []
+  },
+  {
+    "width": 1024,
+    "status": "PASS",
+    "screenshots": 4,
+    "apiRequests": 20,
+    "controlCommands": 0,
+    "runtimeErrors": []
+  },
+  {
+    "width": 1440,
+    "status": "PASS",
+    "screenshots": 4,
+    "apiRequests": 20,
+    "controlCommands": 0,
+    "runtimeErrors": []
+  }
+]

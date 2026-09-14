@@ -14,6 +14,7 @@ const summary = [];
       const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
       const requests = [];
       const errors = [];
+      let power = { supported: true, enabled: true, requested_enabled: true, state: 'on' };
       // No SSE socket or physical collector can be opened in this harness.
       await context.addInitScript(() => {
         window.EventSource = class { addEventListener() {} close() {} };
@@ -23,8 +24,14 @@ const summary = [];
         const url = new URL(request.url());
         if (url.pathname.startsWith('/api/')) {
           requests.push({ method: request.method(), path: url.pathname, body: request.postData() });
+          if (url.pathname === '/api/camera-power') {
+            const { enabled } = JSON.parse(request.postData());
+            assert.equal(typeof enabled, 'boolean');
+            power = { supported: true, enabled, requested_enabled: enabled, state: enabled ? 'on' : 'off' };
+            return route.fulfill({ json: { ok: true, camera_power: power } });
+          }
           if (url.pathname === '/api/roi-unlock') return route.fulfill({ json: { ok: true, roi: { roi_state: 'setup', roi_locked: false, roi_complete: false, visible_roi: '', thermal_roi: '' } } });
-          return route.fulfill({ json: { ok: true, config: null, csv: { state: 'idle', recording: false } } });
+          return route.fulfill({ json: { ok: true, camera_power: power, config: null, csv: { state: 'idle', recording: false } } });
         }
         if (url.hostname !== 'ui-demo.test') return route.fulfill({ status: 204 });
         const name = url.pathname === '/dashboard' ? 'index.html' : url.pathname.slice(1);
@@ -130,6 +137,18 @@ const summary = [];
       assert(requests.slice(beforeReset).every(r => !r.path.startsWith('/api/pump/') && !r.path.startsWith('/api/csv/')), 'ROI deletion triggered pump/recording');
       await page.evaluate(() => applyRoiStatus({ roi_state: 'recording', roi_locked: true }));
       assert.equal(await page.locator('#roiResetButton').isDisabled(), true);
+      assert.equal(await page.locator('#cameraPowerButton').isDisabled(), true, 'recording allowed camera shutdown');
+      await page.evaluate(() => applyRoiStatus({ roi_state: 'setup', roi_locked: false, roi_complete: false }));
+      await page.locator('#cameraPowerButton').click();
+      await page.waitForFunction(() => document.getElementById('cameraPowerButton').textContent === '카메라 켜기');
+      assert.equal(await page.locator('#visiblePreview').getAttribute('src'), null);
+      assert.equal(await page.locator('#thermalPreview').getAttribute('src'), null);
+      assert.equal(await page.locator('#csvStartButton').isDisabled(), true);
+      await page.screenshot({ path: path.join(output, `${width}-full-camera-off.png`), fullPage: true });
+      await page.locator('#cameraPowerButton').click();
+      await page.waitForFunction(() => document.getElementById('cameraPowerButton').textContent === '카메라 끄기');
+      assert((await page.locator('#visiblePreview').getAttribute('src')).endsWith('/stream/visible.mjpg'));
+      assert.equal(requests.filter(r => r.path === '/api/camera-power').length, 2);
       // Exercise the actual shared navigation/CSS with a native bridge marker.
       // Native device operations are outside this browser-only regression.
       await page.route('**/android-webview.js', route => route.fulfill({ contentType: 'text/javascript', body: '' }));
@@ -140,8 +159,9 @@ const summary = [];
         assert.equal(await page.locator('#' + id).isVisible(), false, 'native view link remained clickable');
       }
       assert.equal(await page.locator('#roiResetButton').isVisible(), false, 'unsupported native ROI deletion exposed');
+      assert.equal(await page.locator('#cameraPowerButton').isVisible(), false, 'unsupported native camera power exposed');
       assert.deepEqual(errors, [], 'browser runtime errors');
-      summary.push({ width, status: 'PASS', screenshots: 3, apiRequests: requests.length, controlCommands: motion.length, runtimeErrors: errors });
+      summary.push({ width, status: 'PASS', screenshots: 4, apiRequests: requests.length, controlCommands: motion.length, runtimeErrors: errors });
       await context.close();
     }
     fs.writeFileSync(path.join(output, 'summary.json'), JSON.stringify({ fixtureOnly: true, noRealNetwork: true, summary }, null, 2));

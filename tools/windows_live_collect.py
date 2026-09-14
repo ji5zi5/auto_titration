@@ -45,6 +45,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from auto_titrator.camera import CameraConfig, UsbCamera  # noqa: E402
+from auto_titrator.camera_power import CameraPowerControl  # noqa: E402
 from auto_titrator.auto_stop import (  # noqa: E402
     ABSOLUTE_PUMP_MAX_RUN_TIME_S,
     ABSOLUTE_PUMP_MAX_VOLUME_ML,
@@ -1009,6 +1010,14 @@ class LiveStreamState:
     def publish_metadata(self, metadata: dict[str, Any]) -> None:
         self.publish(metadata=metadata)
 
+    def clear_previews(self) -> None:
+        with self._condition:
+            self._visible_jpeg = self._thermal_jpeg = None
+            self._visible_updated_epoch_s = self._thermal_updated_epoch_s = None
+            self._visible_sequence += 1
+            self._thermal_sequence += 1
+            self._condition.notify_all()
+
     def wait_jpeg(self, kind: str, *, last_sequence: int, timeout_s: float = 5.0) -> tuple[int, bytes] | None:
         if kind not in {"visible", "thermal"}:
             raise ValueError("kind must be visible or thermal")
@@ -1061,8 +1070,8 @@ class LiveStreamState:
                 "visible_sequence": self._visible_sequence,
                 "thermal_sequence": self._thermal_sequence,
                 "metadata_ready": self._metadata_sequence > 0 and metadata.get("frame_id") is not None,
-                "visible_stream_ready": self._visible_sequence > 0,
-                "thermal_stream_ready": self._thermal_sequence > 0,
+                "visible_stream_ready": self._visible_jpeg is not None,
+                "thermal_stream_ready": self._thermal_jpeg is not None,
                 "metadata_age_ms": age_ms(self._metadata_updated_epoch_s),
                 "visible_age_ms": age_ms(self._visible_updated_epoch_s),
                 "thermal_age_ms": age_ms(self._thermal_updated_epoch_s),
@@ -4000,6 +4009,8 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
 
     def _collector_health(self) -> dict[str, Any]:
         payload = self.state.snapshot_health()
+        power = getattr(self.server, "camera_power", None)
+        payload["camera_power"] = power.status() if power is not None else {"supported": False}
         latest = payload.get("latest") if isinstance(payload.get("latest"), dict) else {}
         thermal_mode = str(latest.get("thermal_mode") or latest.get("thermal_source") or "")
         warnings = str(latest.get("warnings") or latest.get("sync_warning") or "")
@@ -4053,6 +4064,9 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
             )
             return
         path = urlparse(self.path).path
+        if path == "/api/camera-power":
+            self._handle_camera_power_post()
+            return
         if path == "/api/remote/config":
             self._handle_remote_config_post()
             return
@@ -4160,6 +4174,28 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
         self._send_json({"ok": True, "settings": settings})
+
+    def _handle_camera_power_post(self) -> None:
+        power = getattr(self.server, "camera_power", None)
+        if power is None:
+            self._send_json({"ok": False, "error": "camera power control is unavailable"}, status=HTTPStatus.NOT_IMPLEMENTED)
+            return
+        try:
+            payload = self._read_json_object()
+            with self.csv_control_lock:
+                csv = self.csv_buffer.status() if self.csv_buffer is not None else {}
+                busy = bool(csv.get("recording") or csv.get("finalizing") or self.roi_state.status().get("roi_state") == "recording")
+                if self.csv_stop_intent.is_set():
+                    busy = True
+                if payload.get("enabled") is False and callable(self.pump_status_provider):
+                    pump = self.pump_status_provider() or {}
+                    if pump.get("last_command") in {"a", "b"}:
+                        raise ValueError("stop the pump before turning cameras off")
+                status = power.request(payload.get("enabled"), recording=busy)
+        except (ValueError, TypeError) as exc:
+            self._send_json({"ok": False, "error": str(exc), "camera_power": power.status()}, status=HTTPStatus.CONFLICT)
+            return
+        self._send_json({"ok": True, "camera_power": status}, status=HTTPStatus.ACCEPTED)
 
     def _handle_roi_rect_post(self) -> None:
         try:
@@ -4608,6 +4644,10 @@ class LiveStreamHandler(BaseHTTPRequestHandler):
             self._handle_csv_start_post_locked()
 
     def _handle_csv_start_post_locked(self) -> None:
+        power = getattr(self.server, "camera_power", None)
+        if power is not None and not power.can_record():
+            self._send_json({"ok": False, "error": "turn cameras on and wait before recording", "camera_power": power.status()}, status=HTTPStatus.CONFLICT)
+            return
         if self.csv_buffer is None:
             self._send_json(
                 {"ok": False, "error": "CSV buffer is not enabled", "csv": None},
@@ -5226,6 +5266,7 @@ def start_live_stream_server(
     server.live_controls = controls if controls is not None else LiveControlState()  # type: ignore[attr-defined]
     server.csv_buffer = csv_buffer  # type: ignore[attr-defined]
     server.csv_control_lock = threading.RLock()  # type: ignore[attr-defined]
+    server.camera_power = None  # type: ignore[attr-defined]
     server.csv_stop_intent = StopIntentCoordinator()  # type: ignore[attr-defined]
     server.mobile_bridge = MobileBridge(csv_buffer=csv_buffer) if enable_mobile_bridge and csv_buffer is not None else None  # type: ignore[attr-defined]
     server.pump_command_sender = pump_command_sender  # type: ignore[attr-defined]
@@ -5797,6 +5838,7 @@ def open_mini2_capture(args: argparse.Namespace, *, capture_factory=WindowsMini2
 
     requested = str(getattr(args, "mini2_index", "auto")).strip().lower()
     max_index = int(getattr(args, "mini2_max_index", 10))
+    skip_indices = {int(index) for index in getattr(args, "mini2_skip_indices", ())}
     backend_candidates = mini2_backend_candidates(getattr(args, "mini2_backend", "AUTO"))
     common_kwargs_base = {
         "width": args.mini2_width,
@@ -5806,6 +5848,8 @@ def open_mini2_capture(args: argparse.Namespace, *, capture_factory=WindowsMini2
     }
     if requested not in {"", "auto"}:
         index = int(requested)
+        if index in skip_indices:
+            raise ValueError("Mini2 index is already used by the active visible camera")
         last_error: Exception | None = None
         for backend in backend_candidates:
             try:
@@ -5818,6 +5862,8 @@ def open_mini2_capture(args: argparse.Namespace, *, capture_factory=WindowsMini2
 
     errors: list[str] = []
     for index in range(max_index):
+        if index in skip_indices:
+            continue
         for backend in backend_candidates:
             reader: Mini2PartsReader | None = None
             try:
@@ -8549,7 +8595,11 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             live_server.server.capture_controller = None  # type: ignore[attr-defined]
         failed_reader = mini2_reader
         mini2_reader = None
-        close_current_converter()
+        try:
+            close_current_converter()
+        except Exception as close_exc:
+            # A failed Mini2 converter teardown must not terminate the visible stream.
+            mini2_unavailable_reason = f"{reason}; converter close failed: {close_exc}"
         try:
             if failed_worker is not None:
                 failed_worker.close()
@@ -8559,19 +8609,23 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             mini2_unavailable_reason = f"{reason}; close failed: {close_exc}"
         next_mini2_retry_s = retry_at_s
 
-    def retry_mini2_if_due(now_s: float) -> bool:
+    def retry_mini2_if_due(now_s: float, *, force: bool = False) -> bool:
         nonlocal mini2_reader, mini2_worker, converter, resolved_mini2_index
         nonlocal mini2_unavailable_reason, converter_unavailable_reason
         nonlocal next_mini2_retry_s, mini2_retry_count, mini2_reconnect_count
-        if injected_mini2 or mini2_reader is not None or not allow_mini2_missing:
+        if injected_mini2 or mini2_reader is not None or (not allow_mini2_missing and not force):
             return False
-        if now_s < next_mini2_retry_s:
+        if now_s < next_mini2_retry_s and not force:
             return False
 
         mini2_retry_count += 1
         probe_args = argparse.Namespace(**vars(args))
         probe_args.mini2_index = mini2_requested_index
         probe_args.mini2_backend = mini2_requested_backend
+        probe_args.mini2_skip_indices = (
+            [int(resolved_visible_index)]
+            if visible_camera is not None and str(resolved_visible_index).isdigit() else []
+        )
         candidate_reader: Mini2PartsReader | None = None
         candidate_converter = None
         try:
@@ -8625,6 +8679,92 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
             next_mini2_retry_s = now_s + mini2_retry_interval_s
             return False
 
+    def close_camera_worker(worker: Any) -> None:
+        worker.close()
+        worker._thread.join(timeout=2.0)
+        if worker._thread.is_alive():
+            raise RuntimeError("camera worker has not stopped")
+
+    def stop_cameras() -> None:
+        nonlocal visible_preview_worker, visible_worker, visible_camera, mini2_worker, mini2_reader
+        errors = []
+        if visible_preview_worker is not None:
+            try:
+                close_camera_worker(visible_preview_worker)
+                visible_preview_worker = None
+            except Exception as exc:
+                errors.append(str(exc))
+        if visible_worker is not None:
+            try:
+                close_camera_worker(visible_worker)
+                visible_worker = None
+                visible_camera = None
+            except Exception as exc:
+                errors.append(str(exc))
+        elif visible_camera is not None:
+            try:
+                visible_camera.release()
+                visible_camera = None
+            except Exception as exc:
+                errors.append(str(exc))
+        if mini2_worker is not None:
+            try:
+                close_camera_worker(mini2_worker)
+                mini2_worker = None
+                mini2_reader = None
+            except Exception as exc:
+                errors.append(str(exc))
+        elif mini2_reader is not None:
+            try:
+                mini2_reader.release()
+                mini2_reader = None
+            except Exception as exc:
+                errors.append(str(exc))
+        try:
+            close_current_converter()
+        except Exception as exc:
+            errors.append(str(exc))
+        if live_server is not None:
+            live_server.server.capture_controller = None  # type: ignore[attr-defined]
+        if live_state is not None:
+            live_state.clear_previews()
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        live_controls.update_from_payload({"roi_auto_detect": "off"})
+        roi_state.unlock(reset=False)
+
+    def start_cameras() -> None:
+        nonlocal visible_camera, visible_worker, visible_preview_worker, resolved_visible_index
+        nonlocal previous_visible, previous_thermal, color_extractor
+        errors = []
+        # The visible preview starts independently, before a potentially slow Mini2 probe.
+        if not args.no_visible:
+            try:
+                skip = [int(resolved_mini2_index)] if str(resolved_mini2_index).isdigit() else []
+                visible_camera, resolved_visible_index = open_visible_camera(args, skip_indices=skip)
+                if visible_camera is not None:
+                    visible_worker = VisibleLatestFrameThread(visible_camera, start_time=start)
+                    visible_worker.start()
+                    if visible_stream_publisher is not None:
+                        visible_preview_worker = VisiblePreviewStreamThread(visible_worker, visible_stream_publisher)
+                        visible_preview_worker.start()
+            except Exception as exc:
+                errors.append(f"visible camera: {exc}")
+        thermal_opened = retry_mini2_if_due(time.perf_counter() - start, force=True)
+        if not thermal_opened and not allow_mini2_missing:
+            raise RuntimeError(mini2_unavailable_reason or "Mini2 unavailable")
+        if visible_camera is None and mini2_reader is None:
+            raise RuntimeError("; ".join(errors + [mini2_unavailable_reason or "no camera available"]))
+        previous_visible = previous_thermal = None
+        color_extractor = ColorFeatureExtractor()
+        feature_history.clear()
+
+    camera_power = None
+    if live_server is not None and not injected_mini2 and not injected_visible:
+        camera_power = CameraPowerControl(start=start_cameras, stop=stop_cameras)
+        live_server.server.camera_power = camera_power  # type: ignore[attr-defined]
+
+    next_visible_only_frame_s = time.perf_counter()
     try:
         for frame_id in range(args.frames):
             csv_loop_status = live_csv_buffer.status()
@@ -8638,16 +8778,29 @@ def run(args: argparse.Namespace, *, mini2_reader: Mini2PartsReader | None = Non
                     gc.enable()
                     gc.collect()
                 gc_suspended_for_recording = False
+            if camera_power is not None:
+                changed = camera_power.reconcile()
+                if changed and not camera_power.can_record() and live_state is not None:
+                    live_state.publish_metadata({
+                        "frame_id": frame_id, "camera_power": camera_power.status(),
+                        "status_label": "camera_off", "sync_quality": "camera_off",
+                        "thermal_calibrated": False, "thermal_conversion_status": "camera_off",
+                        **roi_state.status(),
+                    })
+                if not camera_power.can_record():
+                    # No capture, conversion, feature extraction, inference or CSV rows while OFF.
+                    time.sleep(0.1)
+                    continue
             parts: Mini2RawFrameParts | None = None
             thermal_time_s: float | None = None
             captured: CapturedMini2Frame | None = None
             capture_recording_session_id = 0
             retry_mini2_if_due(time.perf_counter() - start)
             if mini2_reader is None:
-                target_time = start + (frame_id / max(0.001, float(args.frame_rate_hz)))
-                sleep_s = target_time - time.perf_counter()
+                sleep_s = next_visible_only_frame_s - time.perf_counter()
                 if sleep_s > 0:
                     time.sleep(sleep_s)
+                next_visible_only_frame_s = time.perf_counter() + 1.0 / max(0.001, float(args.frame_rate_hz))
                 elapsed_s = time.perf_counter() - start
                 captured_frame_id = frame_id
                 processing_latency_ms = 0.0
