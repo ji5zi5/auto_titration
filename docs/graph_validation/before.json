@@ -1,0 +1,24 @@
+[
+  {
+    "width": 1024,
+    "legacy": false,
+    "beforeStop": 0,
+    "afterStop": 0,
+    "colorPixels": 0,
+    "thermalPixels": 0,
+    "resultVisible": true,
+    "status": "영상 연결 · ROI 설정 필요",
+    "emptyColor": true,
+    "emptyThermal": true,
+    "result": {
+      "outcome": "manual-stop",
+      "label": "수동 종료",
+      "volumeMl": 20,
+      "predictedVolumeMl": 19.8,
+      "concentrationM": 0.099,
+      "csvLabel": "다운로드 가능"
+    },
+    "errors": [],
+    "downloads": 0
+  }
+]

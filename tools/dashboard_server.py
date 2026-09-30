@@ -292,7 +292,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/mobile/ingest",
             "/api/roi-click",
             "/api/roi-rect",
-            "/api/camera-power",
             "/api/roi-polygon",
             "/api/roi-lock",
             "/api/roi-unlock",

@@ -17,6 +17,30 @@ assert.strictEqual(view.observedStage({ state: 'stopped', pump_dosing_stage: 'sl
 assert.strictEqual(view.observedStage({ state: 'finalizing', pump_dosing_stage: 'slow_continuous' }).label, '결과 분석');
 assert.strictEqual(view.observedStage({ pump_dosing_stage: '', model_score: 0.99 }), null, 'model score must not invent a stage');
 
+// Default graph retention covers about one minute at the 25 fps target.
+const minute = view.createState();
+view.applyCsvStatus(minute, recording(10, 5000));
+for (let index = 0; index < 1500; index += 1) {
+  view.appendSample(minute, {
+    csv_state: 'recording', csv_session_id: 10, csv_recording_started_epoch_s: 5000,
+    csv_recording_elapsed_s: index / 25, visible_color_delta: index,
+  });
+}
+assert.strictEqual(minute.samples.length, 1500, 'default graph must retain one minute at 25 fps');
+assert.strictEqual(minute.samples[0].x, 0, 'first minute lost its start');
+assert.strictEqual(minute.samples.at(-1).x, 59.96);
+view.appendSample(minute, {
+  csv_state: 'recording', csv_session_id: 10, csv_recording_started_epoch_s: 5000,
+  csv_recording_elapsed_s: 60, visible_color_delta: 1500,
+});
+assert.strictEqual(minute.samples.length, 1500, 'graph retention must remain bounded');
+assert.strictEqual(minute.samples[0].x, .04);
+view.applyCsvStatus(minute, {state: 'stopped', session_id: 10, started_epoch_s: 5000});
+assert.strictEqual(minute.samples.at(-1).x, 60, 'stop lost the latest point');
+view.resetState(minute);
+assert.strictEqual(minute.samples.length, 0);
+assert.strictEqual(minute.maxSamples, 1500, 'backend reset changed retention');
+
 const state = view.createState(10);
 assert(view.applyCsvStatus(state, recording(1, 1000)));
 assert(view.appendSample(state, {

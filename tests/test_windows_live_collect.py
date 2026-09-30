@@ -2026,6 +2026,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
             thermal_features,
             row,
             csv_status={
+                "session_id": 7,
                 "row_count": 12,
                 "path": "data/raw/live-training.csv",
                 "recording": True,
@@ -2039,6 +2040,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
             },
         )
 
+        self.assertEqual(payload["csv_session_id"], 7)
         self.assertEqual(payload["csv_row_count"], 12)
         self.assertEqual(payload["csv_path"], "data/raw/live-training.csv")
         self.assertEqual(payload["csv_download_url"], "/api/csv")
@@ -2054,6 +2056,7 @@ class WindowsLiveCollectTests(unittest.TestCase):
 
         no_csv_payload = windows_live_collect.build_live_payload(thermal_features, row)
         self.assertIsNone(no_csv_payload["csv_updated_epoch_s"])
+        self.assertIsNone(no_csv_payload["csv_session_id"])
 
     def test_live_control_state_updates_roi_settings(self):
         controls = windows_live_collect.LiveControlState(roi_auto_detect="both", visible_roi_detector="yolo")

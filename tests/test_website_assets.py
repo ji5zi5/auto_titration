@@ -340,9 +340,8 @@ class WebsiteAssetTests(unittest.TestCase):
         self.assertIn("csvDownloadLink", js)
         self.assertIn("calcCsvDownloadLink", html)
         self.assertIn("updateCsvDownloadLinks", js)
-        self.assertIn("triggerCsvAutoDownload", js)
-        self.assertIn("CSV 자동 다운로드 시작", js)
-        self.assertIn("triggerCsvAutoDownload();", js)
+        self.assertNotIn("triggerCsvAutoDownload", js)
+        self.assertNotIn("CSV 자동 다운로드 시작", js)
         self.assertIn("refreshCsvStatus", js)
         self.assertIn("sendRoiRect", js)
         self.assertIn("enterRoiSetupMode", js)
@@ -613,7 +612,6 @@ assert.strictEqual(elements.indicatorSelect.value, 'methyl_orange');
             "predicted_equivalence_volume_ml",
             "thermal_conversion_status",
             "if (csv?.state === 'stopped') {",
-            "triggerCsvAutoDownload();",
             "setAppMode('calculator');",
         ]:
             with self.subTest(expected=expected):

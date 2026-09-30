@@ -163,7 +163,9 @@ async function testCsvLifecycleAndDownloads() {
   });
   await stop;
   assert(vm.runInContext('latestCsvStatus.state', context) === 'stopped', 'stop response did not win CSV state');
-  assert(autoDownloadClicks === 1, 'explicit stopped session should download exactly once');
+  assert(autoDownloadClicks === 0, 'explicit stop must not automatically download');
+  assert(!element('resultsView').hidden, 'explicit stop must still open results');
+  assert(element('calcCsvDownloadLink').href.endsWith('/api/csv'), 'manual CSV download link missing');
 
   startRequest.resolve({
     ok: true,
@@ -172,22 +174,22 @@ async function testCsvLifecycleAndDownloads() {
   await start;
   await settle();
   assert(vm.runInContext('latestCsvStatus.state', context) === 'stopped', 'stale start response overwrote newer stop');
-  assert(autoDownloadClicks === 1, 'stale start response caused a duplicate download');
+  assert(autoDownloadClicks === 0, 'status/session changes must not automatically download');
 
   context.applyCsvStatus({ state: 'recording', recording: true, session_id: 8, started_epoch_s: 2000, row_count: 1 });
   context.applyCsvStatus({ state: 'stopped', recording: false, session_id: 8, started_epoch_s: 2000, row_count: 2 });
-  assert(autoDownloadClicks === 2, 'recording-to-stopped without finalizing must auto-download');
+  assert(autoDownloadClicks === 0, 'status/session changes must not automatically download');
   context.applyCsvStatus({ state: 'stopped', recording: false, session_id: 8, started_epoch_s: 2000, row_count: 2 });
-  assert(autoDownloadClicks === 2, 'same backend/session downloaded twice');
+  assert(autoDownloadClicks === 0, 'status/session changes must not automatically download');
 
   context.applyCsvStatus({ state: 'recording', recording: true, session_id: 8, started_epoch_s: 3000, row_count: 1 });
   context.applyCsvStatus({ state: 'stopped', recording: false, session_id: 8, started_epoch_s: 3000, row_count: 2 });
-  assert(autoDownloadClicks === 3, 'reused session id with a new start timestamp must download again');
+  assert(autoDownloadClicks === 0, 'status/session changes must not automatically download');
 
   vm.runInContext("liveStreamBase = 'http://second-backend.test'; latestCsvStatus = null;", context);
   context.applyCsvStatus({ state: 'recording', recording: true, session_id: 8, started_epoch_s: 3000, row_count: 1 });
   context.applyCsvStatus({ state: 'stopped', recording: false, session_id: 8, started_epoch_s: 3000, row_count: 2 });
-  assert(autoDownloadClicks === 4, 'same session identity on a different backend must download independently');
+  assert(autoDownloadClicks === 0, 'status/session changes must not automatically download');
 
   const failedStop = context.stopCsvRecording();
   const failedStopRequest = requests[requests.length - 1];
@@ -308,7 +310,8 @@ function testGetAndLiveDownloadIdentityConsistency() {
     csv_recording_started_epoch_s: 5000,
     csv_row_count: 8,
   });
-  assert(autoDownloadClicks === clicksBefore + 1, 'SSE stopped shape did not trigger one session download');
+  assert(autoDownloadClicks === clicksBefore, 'SSE stop must not automatically download');
+  assert(!element('resultsView').hidden, 'SSE stop must still open results');
   assert(
     vm.runInContext('latestCsvStatus.started_epoch_s', context) === 5000,
     'SSE recording start epoch was not forwarded to CSV status',
@@ -328,7 +331,7 @@ function testGetAndLiveDownloadIdentityConsistency() {
     started_epoch_s: 5000,
     row_count: 8,
   });
-  assert(autoDownloadClicks === clicksBefore + 1, 'GET and SSE shapes produced duplicate session downloads');
+  assert(autoDownloadClicks === clicksBefore, 'GET and SSE must leave downloading to the user');
 }
 
 async function testStaleStatusIntakeAfterStops() {

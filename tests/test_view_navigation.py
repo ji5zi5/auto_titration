@@ -14,3 +14,9 @@ class ViewNavigationTests(unittest.TestCase):
 
     def test_roi_reset_requires_collector_confirmation_and_idle_capture(self):
         subprocess.run(["node", "tests/js/test_roi_reset.js"], check=True)
+
+    def test_remote_start_uses_notebook_defaults_only_when_unconfigured(self):
+        subprocess.run(["node", "tests/js/test_remote_settings_recovery.js"], check=True)
+
+    def test_graphs_accept_real_collector_payloads_and_preserve_stop_history(self):
+        subprocess.run(["node", "tests/js/test_graph_collector_contract.js"], check=True)

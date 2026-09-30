@@ -5,7 +5,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createDemoViewApi() {
   'use strict';
 
-  const DEFAULT_MAX_SAMPLES = 600;
+  const DEFAULT_MAX_SAMPLES = 1500; // About one minute at 25 samples per second.
   const STAGES = {
     fast: { key: 'fast', label: '빠른 주입' },
     continuous: { key: 'fast', label: '빠른 주입' },

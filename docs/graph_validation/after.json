@@ -1,0 +1,98 @@
+[
+  {
+    "width": 1024,
+    "legacy": false,
+    "beforeStop": 81,
+    "afterStop": 81,
+    "first": {
+      "x": 0,
+      "color": 2.001362,
+      "thermalC": 24
+    },
+    "last": {
+      "x": 20,
+      "color": 31.998638,
+      "thermalC": 24.914545
+    },
+    "colorPixels": 858,
+    "thermalPixels": 906,
+    "resultVisible": true,
+    "status": "영상 연결 · ROI 설정 필요",
+    "emptyColor": false,
+    "emptyThermal": false,
+    "result": {
+      "outcome": "manual-stop",
+      "label": "수동 종료",
+      "volumeMl": 20,
+      "predictedVolumeMl": 19.8,
+      "concentrationM": 0.099,
+      "csvLabel": "다운로드 가능"
+    },
+    "errors": [],
+    "downloads": 0
+  },
+  {
+    "width": 390,
+    "legacy": false,
+    "beforeStop": 81,
+    "afterStop": 81,
+    "first": {
+      "x": 0,
+      "color": 2.001362,
+      "thermalC": 24
+    },
+    "last": {
+      "x": 20,
+      "color": 31.998638,
+      "thermalC": 24.914545
+    },
+    "colorPixels": 614,
+    "thermalPixels": 645,
+    "resultVisible": true,
+    "status": "영상 연결 · ROI 설정 필요",
+    "emptyColor": false,
+    "emptyThermal": false,
+    "result": {
+      "outcome": "manual-stop",
+      "label": "수동 종료",
+      "volumeMl": 20,
+      "predictedVolumeMl": 19.8,
+      "concentrationM": 0.099,
+      "csvLabel": "다운로드 가능"
+    },
+    "errors": [],
+    "downloads": 0
+  },
+  {
+    "width": 1024,
+    "legacy": true,
+    "beforeStop": 81,
+    "afterStop": 81,
+    "first": {
+      "x": 0,
+      "color": 2.001362,
+      "thermalC": 24
+    },
+    "last": {
+      "x": 20,
+      "color": 31.998638,
+      "thermalC": 24.914545
+    },
+    "colorPixels": 858,
+    "thermalPixels": 906,
+    "resultVisible": true,
+    "status": "영상 연결 · ROI 설정 필요",
+    "emptyColor": false,
+    "emptyThermal": false,
+    "result": {
+      "outcome": "manual-stop",
+      "label": "수동 종료",
+      "volumeMl": 20,
+      "predictedVolumeMl": 19.8,
+      "concentrationM": 0.099,
+      "csvLabel": "다운로드 가능"
+    },
+    "errors": [],
+    "downloads": 0
+  }
+]

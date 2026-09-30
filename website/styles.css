@@ -332,7 +332,6 @@ body.remote-control-mode #sensorGrid,
 body.remote-control-mode .mode-switcher,
 body.remote-control-mode #roiSetupButton,
 body.remote-control-mode #roiResetButton,
-body.remote-control-mode #cameraPowerButton,
 body.remote-control-mode #roiAutoSetupButton,
 body.remote-control-mode #roiLockButton { display:none !important; }
 body.remote-control-mode .live-view { max-width:560px; display:flex; flex-direction:column; padding-bottom:calc(1rem + env(safe-area-inset-bottom)); }

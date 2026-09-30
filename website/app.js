@@ -56,8 +56,6 @@ let latestCsvStatusSource = '';
 let autoRoiSetupEnabled = false;
 let autoRoiSetupTimer = null;
 let autoRoiRequestInFlight = false;
-let cameraPowerStatus = null;
-let cameraPowerRequestInFlight = false;
 let backendRevision = 0;
 let csvControlSequence = 0;
 let csvStartInFlight = null;
@@ -67,9 +65,8 @@ let pumpMotionInFlight = null;
 let pumpMotionPath = '';
 let pumpStopInFlight = null;
 let pumpStopCsvSessionKey = '';
-const downloadedCsvSessions = new Set();
 const demoViewApi = window.AutoTitrationDemoView || null;
-const demoViewState = demoViewApi ? demoViewApi.createState(600) : null;
+const demoViewState = demoViewApi ? demoViewApi.createState() : null;
 
 const AUTO_ROI_RETRY_MS = 1200;
 
@@ -121,9 +118,6 @@ function resetDemoViewForBackend() {
   remoteSettingsSyncing = false;
   stopAutoRoiSetup();
   autoRoiRequestInFlight = false;
-  cameraPowerStatus = null;
-  cameraPowerRequestInFlight = false;
-  updateCameraPowerButton();
   latestCsvStatus = null;
   latestCsvStatusSource = '';
   latestLiveMetadata = {};
@@ -258,7 +252,15 @@ function updateDemoCsvStatus(csv) {
 function updateDemoLiveSample(data, accepted) {
   if (!accepted || !demoViewApi || !demoViewState) return;
   demoViewState.connection = 'live';
-  demoViewApi.appendSample(demoViewState, data, hasTrustedCelsiusTemperature(data));
+  // Older collectors omit csv_session_id. Only join such a frame to an
+  // already-known session when its recording start timestamp matches exactly.
+  let sample = data;
+  const started = parseFiniteNumber(data.csv_recording_started_epoch_s ?? data.csv_started_epoch_s);
+  if (data.csv_session_id == null && demoViewState.sessionId
+      && Number.isFinite(started) && started === demoViewState.sessionStarted) {
+    sample = { ...data, csv_session_id: demoViewState.sessionId };
+  }
+  demoViewApi.appendSample(demoViewState, sample, hasTrustedCelsiusTemperature(data));
   renderDemoView();
 }
 
@@ -400,7 +402,7 @@ function updateCsvDownloadLinks(filename = 'auto-titration-live.csv') {
 }
 
 function setPreviewSources() {
-  if (compactViewMode || camerasUnavailable()) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
+  if (compactViewMode) { updateCsvDownloadLinks('auto-titration-live.csv'); return; }
   const visible = $('visiblePreview');
   if (visible) visible.src = endpoint('/stream/visible.mjpg');
   const thermal = $('thermalPreview');
@@ -469,25 +471,6 @@ function shouldAcceptCsvStatus(csv, source) {
     return !(latestCsvStatus.state === 'stopped' && csv?.state === 'recording');
   }
   return !(latestCsvStatus.state === 'stopped' && csv?.state === 'recording');
-}
-
-function triggerCsvAutoDownload(csv = latestCsvStatus) {
-  if (remoteControlMode) return false;
-  const downloadKey = csvSessionDownloadKey(csv);
-  if (!downloadKey || downloadedCsvSessions.has(downloadKey)) return false;
-  downloadedCsvSessions.add(downloadKey);
-  const filename = 'auto-titration-live.csv';
-  const href = updateCsvDownloadLinks(filename);
-
-  const autoLink = document.createElement('a');
-  autoLink.href = href;
-  autoLink.download = filename;
-  autoLink.style.display = 'none';
-  document.body.appendChild(autoLink);
-  autoLink.click();
-  autoLink.remove();
-  setText('previewStatus', 'CSV 자동 다운로드 시작 요청');
-  return true;
 }
 
 function shouldFailoverToDefaultBackend() {
@@ -988,7 +971,6 @@ function formatHealthAge(value) {
 
 function applyCollectorHealth(health) {
   if (!health?.ok) throw new Error(health?.error || 'collector health not ok');
-  applyCameraPowerStatus(health.camera_power || { supported: false });
   const latest = health.latest || {};
   const csv = health.csv || {};
   const visibleAge = formatHealthAge(health.visible_age_ms);
@@ -1119,7 +1101,6 @@ function applyCsvStatus(csv, { source = '' } = {}) {
   updateCsvDownloadLinks('auto-titration-live.csv');
   updateDemoCsvStatus(csv);
   if (['recording', 'finalizing'].includes(previousState) && csv.state === 'stopped') {
-    triggerCsvAutoDownload(csv);
     setAppMode('calculator');
   }
   return true;
@@ -1131,84 +1112,9 @@ function updateCsvControlButtons(csv = latestCsvStatus) {
   const busy = Boolean(csv?.recording || csv?.finalizing || csv?.state === 'finalizing');
   if (startButton) {
     startButton.disabled = busy || Boolean(csvStartInFlight || csvStopInFlight)
-      || !latestRoiRecordable || !latestRoiComplete || camerasUnavailable();
+      || !latestRoiRecordable || !latestRoiComplete;
   }
   if (stopButton) stopButton.disabled = !(csv?.recording || csvStartInFlight);
-  updateCameraPowerButton();
-}
-
-function camerasUnavailable() {
-  return cameraPowerStatus?.supported === true && cameraPowerStatus.state !== 'on';
-}
-
-function updateCameraPowerButton() {
-  const button = $('cameraPowerButton');
-  if (!button) return;
-  button.hidden = isAndroidWebViewBridge();
-  const state = cameraPowerStatus?.state;
-  const supported = cameraPowerStatus?.supported === true;
-  const recording = latestCsvStatus?.recording || latestCsvStatus?.finalizing || latestLiveMetadata.roi_state === 'recording';
-  button.disabled = !supported || Boolean(recording || csvStartInFlight || cameraPowerRequestInFlight || state === 'starting' || state === 'stopping');
-  button.textContent = !supported ? '카메라 제어 대기'
-    : state === 'starting' ? '카메라 켜는 중' : state === 'stopping' ? '카메라 끄는 중'
-    : cameraPowerStatus.enabled ? '카메라 끄기' : '카메라 켜기';
-  button.setAttribute('aria-pressed', cameraPowerStatus?.enabled === true ? 'true' : 'false');
-  button.title = !supported ? '수집기를 업데이트하거나 연결 상태를 확인하세요'
-    : recording ? '녹화가 끝난 뒤 카메라를 끌 수 있습니다'
-    : cameraPowerStatus.error || 'OFF는 실제 수집과 처리를 중지합니다. 다시 켠 뒤 ROI를 확인·고정하세요.';
-}
-
-function applyCameraPowerStatus(status) {
-  const wasUnavailable = camerasUnavailable();
-  cameraPowerStatus = status;
-  if (camerasUnavailable()) {
-    stopAutoRoiSetup();
-    roiDrag = null;
-    hideRoiOverlay('visibleRoiOverlay');
-    hideRoiOverlay('thermalRoiOverlay');
-    for (const id of ['visiblePreview', 'thermalPreview']) {
-      const image = $(id);
-      if (image?.getAttribute?.('src')) image.removeAttribute('src');
-      const placeholder = image?.closest('.camera-frame')?.querySelector('.stream-placeholder');
-      if (placeholder) placeholder.textContent = status.state === 'off' ? '카메라 꺼짐'
-        : status.state === 'error' ? '카메라 연결 오류' : '카메라 전환 중';
-    }
-  } else if (wasUnavailable && status?.state === 'on') {
-    setPreviewSources();
-    for (const id of ['visiblePreview', 'thermalPreview']) {
-      const placeholder = $(id)?.closest('.camera-frame')?.querySelector('.stream-placeholder');
-      if (placeholder) placeholder.textContent = '영상 연결 대기';
-    }
-  }
-  updateCameraPowerButton();
-  updateRoiButtons();
-  updateCsvControlButtons();
-}
-
-async function toggleCameraPower() {
-  if (!cameraPowerStatus?.supported || cameraPowerRequestInFlight || isAndroidWebViewBridge()) return;
-  if (latestCsvStatus?.recording || latestCsvStatus?.finalizing || csvStartInFlight || latestLiveMetadata.roi_state === 'recording') return;
-  const revision = backendRevision;
-  cameraPowerRequestInFlight = true;
-  updateCameraPowerButton();
-  try {
-    const response = await fetch(endpoint('/api/camera-power'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: !cameraPowerStatus.enabled }),
-    });
-    const data = await response.json();
-    if (revision !== backendRevision) return;
-    if (!response.ok || !data.ok) throw new Error(data.error || '카메라 전환 실패');
-    applyCameraPowerStatus(data.camera_power);
-    setText('previewStatus', data.camera_power.requested_enabled ? '카메라 다시 연결 중' : '카메라 수집 중지 중');
-  } catch (error) {
-    if (revision === backendRevision) setText('previewStatus', `카메라 전환 실패 · ${error.message}`);
-  } finally {
-    if (revision === backendRevision) {
-      cameraPowerRequestInFlight = false;
-      updateCameraPowerButton();
-    }
-  }
 }
 
 function readPositiveNumberInput(id, label) {
@@ -1544,8 +1450,15 @@ async function postCsvControl(path, pendingText, body, requestSequence) {
       const shared = await configResponse.json().catch(() => ({}));
       if (requestBackendRevision !== backendRevision) return null;
       if (requestSequence !== csvControlSequence) return null;
-      if (!configResponse.ok || !shared.ok || !shared.config) {
-        throw new Error('노트북의 실험 설정이 아직 동기화되지 않았습니다. 설정과 연결 상태를 확인하세요');
+      if (!configResponse.ok || !shared.ok) {
+        throw new Error('실험 설정을 불러오지 못했습니다. 백엔드 연결을 확인하세요');
+      }
+      if (!shared.config) {
+        if (shared.defaults_allowed === false) {
+          throw new Error('노트북의 실험 설정이 유효하지 않습니다. 노트북에서 입력값을 확인하세요');
+        }
+        // Desktop and mobile share these form defaults and this payload builder.
+        shared.config = buildPumpTimelineStartPayload();
       }
       body = shared.config;
     }
@@ -1735,7 +1648,6 @@ function startCsvRecording() {
 
 function completeCsvStop(csv) {
   if (csv?.state === 'stopped') {
-    triggerCsvAutoDownload();
     setAppMode('calculator');
   }
   return csv;
@@ -1871,11 +1783,6 @@ function roiStatusIsDrafting() {
 
 
 function refreshRoiOverlays() {
-  if (camerasUnavailable()) {
-    hideRoiOverlay('visibleRoiOverlay');
-    hideRoiOverlay('thermalRoiOverlay');
-    return;
-  }
   if (roiStatusIsDrafting()) return;
   // Size the frame to the video instead of letterboxing it into a short panel.
   for (const image of [$('visiblePreview'), $('thermalPreview')]) {
@@ -1985,13 +1892,12 @@ function updateRoiButtons(data = latestLiveMetadata) {
   const unlockButton = $('roiUnlockButton');
   const resetButton = $('roiResetButton');
   const startButton = $('csvStartButton');
-  if (setupButton) setupButton.disabled = recording || camerasUnavailable();
-  if (autoSetupButton) autoSetupButton.disabled = recording || locked || camerasUnavailable();
-  if (lockButton) lockButton.disabled = recording || locked || !complete || camerasUnavailable();
+  if (setupButton) setupButton.disabled = recording;
+  if (autoSetupButton) autoSetupButton.disabled = recording || locked;
+  if (lockButton) lockButton.disabled = recording || locked || !complete;
   if (unlockButton) unlockButton.disabled = recording || !locked;
   if (resetButton) resetButton.disabled = recording || autoRoiRequestInFlight || Number(data.pending_auto_candidate_requests || 0) > 0;
-  if (startButton) startButton.disabled = recording || !recordable || !complete || camerasUnavailable();
-  updateCameraPowerButton();
+  if (startButton) startButton.disabled = recording || !recordable || !complete;
 }
 
 function updateAutoRoiSetupButton() {
@@ -2108,10 +2014,6 @@ async function toggleAutoRoiSetup() {
 
 async function enterRoiSetupMode({ reset = false } = {}) {
   const requestBackendRevision = backendRevision;
-  if (!reset && camerasUnavailable()) {
-    setText('roiSettingsStatus', '카메라를 켠 뒤 ROI를 선택하세요');
-    return false;
-  }
   if (latestLiveMetadata.roi_state === 'recording') {
     setText('previewStatus', '녹화 중 ROI 변경 불가');
     return false;
@@ -2308,7 +2210,7 @@ function addRoiDragHandler(imageId, overlayId, target) {
   if (!image) return;
   const hitElement = image.closest('.camera-frame') || image;
   hitElement.addEventListener('pointerdown', async (event) => {
-    if (latestLiveMetadata.roi_state === 'recording' || camerasUnavailable()) return;
+    if (latestLiveMetadata.roi_state === 'recording') return;
     if (latestRoiLocked || latestLiveMetadata.roi_state === 'locked' || latestLiveMetadata.roi_state === 'stopped') {
       setText('previewStatus', 'ROI 선택 버튼을 누르세요');
       return;
@@ -2398,7 +2300,6 @@ function withoutRoiGeometry(data = {}) {
 }
 
 function applyLiveMetadata(data) {
-  if (data?.camera_power) applyCameraPowerStatus(data.camera_power);
   const ignoreRoiStatus = typeof window.AutoTitrationShouldIgnoreRoiStatus === 'function'
     && window.AutoTitrationShouldIgnoreRoiStatus(data);
   const effectiveData = ignoreRoiStatus ? withoutRoiGeometry(data) : data;
@@ -2818,7 +2719,6 @@ function addRoiSetupHandlers() {
 
 
 addStreamErrorHandlers();
-$('cameraPowerButton')?.addEventListener('click', toggleCameraPower);
 setupBackendControls();
 addModeHandlers();
 addChemistryHandlers();
@@ -2900,7 +2800,7 @@ function scheduleRemoteSettingsSync() {
 }
 
 if (remoteControlMode) {
-  setText('remoteSettingsStatus', '노트북에 저장된 설정 사용 · 설정 변경은 노트북에서');
+  setText('remoteSettingsStatus', '노트북 설정 사용 · 미설정 시 노트북과 같은 기본값 사용');
 }
 
 if (!remoteControlMode && !isAndroidWebViewBridge()) {
